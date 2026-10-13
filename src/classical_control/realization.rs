@@ -726,6 +726,27 @@ pub mod tests {
     }
 
     #[cfg_attr(test, test)]
+    /// Roots of equal magnitude keep their order: the sort is stable.
+    fn sort_keeps_equal_magnitudes_in_order() {
+        let mut roots = [
+            Complex::new(0.5, 0.0),
+            Complex::new(0.0, 2.0),
+            Complex::new(0.0, -2.0),
+            Complex::new(2.0, 0.0),
+        ];
+        sort_by_magnitude_desc(&mut roots, 4);
+        assert_eq!(
+            roots,
+            [
+                Complex::new(0.0, 2.0),
+                Complex::new(0.0, -2.0),
+                Complex::new(2.0, 0.0),
+                Complex::new(0.5, 0.0),
+            ]
+        );
+    }
+
+    #[cfg_attr(test, test)]
     /// Multilinear interpolation of a `Tensor` grid of stable sections is
     /// stable at 1,000 random query points (FR-20).
     fn interpolated_schedule_stable() {

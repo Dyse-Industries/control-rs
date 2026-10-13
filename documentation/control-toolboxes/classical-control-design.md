@@ -2,7 +2,7 @@
 
 ![Date Badge](https://img.shields.io/badge/Date-October_5,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
-![Approval Badge](https://img.shields.io/badge/Approval-Stale-lightgrey)
+![Approval Badge](https://img.shields.io/badge/In_Review-orange)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-No_Plan-lightgrey)
 
 ---
@@ -250,92 +250,113 @@ over $M$ frequencies writes `[ResponsePoint<T>; M]`, a direct form holds
 
 #### 4.2 Root Locus
 
-For each gain $k_i$, form $D (s) + k_i N (s)$ with `Polynomial` arithmetic and
-solve it with `Polynomial::roots`, as python-control computes the locus from
-the roots of $1 + kG (s)$ over a gain range [1]. `Polynomial::roots` uses
-the companion-matrix eigenvalue route that NumPy also uses [2]. The gain
-set is the caller's; python-control instead chooses gains to capture the
-main features of the locus [1], and continuation methods trace branches
-adaptively [3]. Both are rejected (§5). Root order across consecutive
-gains is not matched; each row is an unordered root set.
+`root_locus` returns a $K \times (D-1)$ array of complex roots, one row per
+caller gain. For each gain it copies the denominator into a stack array of
+length $D$, adds $k_i$ times the numerator coefficient by coefficient, and
+passes the sum to `ArrayPolynomial::roots`; the routine defines no
+polynomial type of its own. The roots of $D (s) + k_i N (s)$ are the locus
+points [1]. Rows are independent unordered sets, so branches are not
+matched across gains (continuation [3] and adaptive gain selection [1] are
+rejected, §5). A failed solve ends the sweep with `ClassicalError::Root`.
 
 #### 4.3 Routh-Hurwitz Count
 
-Build the Routh array from the coefficient slice by the tabular recurrence
-and count sign changes in the first column. Two special cases follow the
-standard handling [4]: a zero first-column entry with a nonzero remainder
-is replaced by $\varepsilon > 0$ and the count taken as
-$\varepsilon \to 0^+$; a row of zeros is replaced by the coefficients of the
-derivative of the auxiliary polynomial, and the result sets the
-imaginary-axis flag. The $\varepsilon$ limit is evaluated symbolically on
-signs, not with a numeric $\varepsilon$, so the count is exact for exact
-coefficients. A coefficient whose magnitude falls below a caller tolerance
-is treated as zero; the tolerance is part of the call.
+The Routh array is never stored whole: two adjacent rows are kept, and
+each new row replaces the older one. Every entry is a leading term, a
+coefficient with an integer power of $\varepsilon$, so the limit
+$\varepsilon \to 0^+$ [4] is carried in the data and no numeric
+$\varepsilon$ exists. Entries no larger than the caller's tolerance are
+set to exact zero when the first two rows are seeded and when each row is
+formed. At each step a row of zeros sets the imaginary-axis flag and is
+replaced by the derivative of the auxiliary polynomial of the row above,
+and a zero first entry becomes $\varepsilon$. The count is the number of
+sign changes of the first entry between consecutive rows, which equals the
+number of right-half-plane roots. The cost is $O (N^2)$ time and $O (N)$
+stack.
 
 #### 4.4 Frequency Response and Nichols Data
 
-`frequency_response` evaluates $G (j\omega)$ for continuous systems and
-$G (e^{j\omega T_s})$ for discrete systems, the conventions python-control
-documents [5]. Each `ResponsePoint` holds $\omega$, the complex value,
-the magnitude in dB and the phase in degrees. Phase is unwrapped along the
-sweep so consecutive samples differ by less than $180^\circ$. Bode data is
-(magnitude, phase) against $\omega$; Nyquist data is the complex value
-[6]; Nichols data is magnitude in dB against phase [7]. No routine
-samples frequencies itself.
+`frequency_response` returns one `ResponsePoint` per caller frequency,
+holding the frequency, the complex value, the magnitude in dB and the phase
+in degrees. The value is $G (j\omega)$ for a continuous system and
+$G (e^{j\omega T_s})$ for a discrete one [5]. Phase is unwrapped by a
+small running state that holds the previous principal phase and a multiple
+of $360^\circ$, adjusted whenever consecutive principal phases jump by
+more than $180^\circ$; the first sample keeps its principal value, so the
+result depends on the order of the sweep. One record type serves Bode data
+(magnitude and phase against frequency), Nyquist data (the complex value)
+[6] and Nichols data (magnitude against phase) [7]. The routine chooses no
+frequencies and cannot fail.
 
 #### 4.5 Nyquist Encirclements
 
-`nyquist_encirclements` returns the net number of encirclements of $-1$
-[6]. It evaluates $L (s)$ on the Nyquist contour: the imaginary axis from
-$-j\omega_{max}$ to $j\omega_{max}$, a semicircle at infinity resolved by
-properness, and small semicircular indentations around open-loop poles on
-or near the imaginary axis, as python-control does [6]. The count is the
-total winding angle of $1 + L$ divided by $2\pi$, accumulated over a
-caller-sized contour buffer. Open-loop poles come from
-`TransferFunction::poles`. The routine reports the count and the number of
-open-loop right-half-plane poles; it does not infer closed-loop stability
-on the caller's behalf. A discrete system returns
-`ClassicalError::NotContinuous`.
+`nyquist_encirclements` fills a caller-owned buffer of $M$ points with
+$L (s_k)$ and returns the net clockwise encirclement count $N$ of $-1$ with
+the number $P$ of open-loop right-half-plane poles; the caller forms
+$Z = N + P$, because the routine does not interpret the count. It first
+rejects a discrete system, an improper $L$ and non-positive $\omega_{max}$
+or indentation radius $r$. The contour closes from the last point back to
+the first, which stands in for the arc at infinity and is valid only when
+$L$ is proper. Poles come from `TransferFunction::poles`, and $P$ counts
+those with real part above $r$.
+
+The points lie at $\omega_k = \omega_{max} u_k^3$ with $u_k$ uniform on
+$[-1, 1]$, which places samples densely near $\omega = 0$. Each point
+$j\omega_k$ is moved right by the
+largest $\sqrt{r^2 - (\omega_k - \operatorname{Im} p)^2}$
+over the poles with $|\operatorname{Re} p| \le r$, so the contour follows a
+small semicircle around any near-axis pole [6]. A point within a relative
+$\sqrt{\epsilon}$ of $-1$, or with non-finite $L$, ends the call with
+`ContourThroughCriticalPoint`. The count is the signed number of crossings
+of the negative real axis by $1 + L$ over consecutive points and the
+closing pair; it needs only comparisons between neighbouring points, so it
+accumulates no angle and tracks no branch cut.
 
 #### 4.6 Stability and Delay Margins
 
-`stability_margins` brackets each crossing by a sign change between
-consecutive sweep samples, as the interpolating method of python-control
-does from frequency data [8]. The gain crossover is a sign change of
-$|L| - 1$. The phase crossover is a sign change of $\operatorname{Im} L$
-while $\operatorname{Re} L < 0$, which avoids the $\pm 180^\circ$ branch
-cut of a wrapped phase. Because the `TransferFunction` is available, each
-bracket is then refined by a const number $B$ of bisection steps on $L$
-itself, so the crossover error is the bracket width divided by $2^B$ and
-does not depend on the sweep density alone (NFR-3). Gain margin is $1/|L|$
-at the phase crossover, phase margin is $180^\circ + \angle L$ at the gain
-crossover and the stability margin is the minimum of $|1 + L|$ over the
-samples [8]. All crossings in the set are returned, since only margins in
-the swept region can be found [8]; a margin without a crossing is `None`.
+`stability_margins` makes one pass over an ascending sweep and keeps only
+the previous finite sample. A sign change of $\operatorname{Im} L$ with
+$\operatorname{Re} L < 0$ at both ends brackets a phase crossover, which
+avoids the $\pm 180^\circ$ branch cut of a wrapped phase, and a sign change
+of $|L| - 1$ brackets a gain crossover [8]. Each bracket is then refined by
+a compile-time number $B$ of bisection steps that evaluate $L$ itself, so
+the error is the bracket width over $2^B$ whatever the sweep density (NFR-3); a
+refined phase crossover must still satisfy
+$\operatorname{Re} L < 0$ or it is dropped. Crossings fill fixed arrays of
+$C$ slots per kind, in frequency order, and further crossings are
+discarded. The stability margin is the minimum of $|1 + L|$ over the
+samples. A non-finite sample, such as an integrator at $\omega = 0$, is
+skipped and clears the stored previous sample, so it cannot create a
+bracket or set the stability margin.
 
-The delay margin is the delay that destabilizes the loop at a gain
-crossover [9]. A pure delay $\tau$ adds phase $-\omega\tau$ at unit
-gain, so at gain crossover $\omega_{gc}$ with phase margin $\phi_m$ in
-radians, $\tau = \phi_m / \omega_{gc}$. For discrete systems the result is
-divided by $T_s$ and reported in samples, the unit MATLAB uses [9].
+Gain margin is $1/|L|$ at a phase crossover. Phase margin is
+$180^\circ + \angle L$ at a gain crossover. The delay margin is
+$\phi_m/\omega_{gc}$ with $\phi_m$ in radians [9], divided by $T_s$ for a
+discrete system so that it is reported in samples. A margin without a
+crossing is `None`, and the routine cannot fail.
 
 #### 4.7 Step-Response Metrics
 
-`step_info` evaluates the definitions of MATLAB `stepinfo` on caller
-samples [10]. With $y_{norm} = (y - y_{init})/ (y_{final} - y_{init})$:
-rise time is the time from 10% to 90% of the way to $y_{final}$; settling
-time is the first $T$ after which
-$|y - y_{final}| \le \theta |y_{final} - y_{init}|$ holds for every later
-sample, with $\theta = 0.02$ by default; overshoot is
-$\max (0, 100 \max_k (y_{norm,k} - 1))$; peak is $\max_k |y_k - y_{init}|$
-at peak time [10]. Defaults are $y_{init} = 0$ and $y_{final}$ the last
-sample [10]. Threshold crossings for rise time are interpolated
-linearly between bracketing samples. The routine takes response data only,
-so it applies equally to simulated and on-target logs.
+`step_info` reads caller time and response arrays and keeps no state, so it
+applies equally to simulated and on-target logs. It takes $y_{final}$ from
+the options or the last sample, normalizes
+$y_{norm} = (y - y_{init})/ (y_{final} - y_{init})$ and computes each metric
+by its own scan, following MATLAB `stepinfo` [10]. Rise time runs from the
+first sample reaching 0.1 to the first reaching 0.9, each time interpolated
+linearly between its bracketing samples. Settling time is the time of the
+sample after the last one outside $\theta\,|y_{final} - y_{init}|$ of
+$y_{final}$, with $\theta = 0.02$ by default, and is absent if the last
+sample is outside the band. Overshoot is $100 \max (0, \max_k y_{norm,k} - 1)$.
+Peak is the largest $|y_k - y_{init}|$ and peak time is the first sample
+that reaches it. Empty input, $y_{final} = y_{init}$ and a negative
+threshold return `InvalidParameter`.
 
 #### 4.8 Compensators
 
-`pid` builds the three forms as `TransferFunction` values [11]:
+Compensators are built by pure constructor functions that return an
+ordinary `TransferFunction`, so results compose through `series`,
+`parallel` and `feedback` and the module holds no compensator state. `pid`
+accepts three forms [11]:
 
 | Form     | Transfer function                            |
 |:---------|:---------------------------------------------|
@@ -344,17 +365,17 @@ so it applies equally to simulated and on-target logs.
 | Parallel | $K_p + \frac{K_i}{s} + K_d s$                |
 
 An ideal derivative has high gain at high frequency [12, Sec. 11.5], so
-`pid` accepts an optional filter time constant $T_f$ that replaces $s$ in
-the derivative term by $s/ (1 + T_f s)$, the first-order filter with time
-constant $T_d/N$ that Åström describes [13, Sec. 6.3]. Without $T_f$ the
-result is improper and is returned only where `TransferFunction` admits it
-(`transfer-function-design.md` C-1); otherwise `ClassicalError::Improper`.
-`lead` returns $K (1 + s/b)/ (1 + s/ (bN))$ and `lag` returns
-$M (1 + s/a)/ (1 + sM/a)$ [11]. Constructed compensators are ordinary
-`TransferFunction` data and compose through `series`, `parallel` and
-`feedback`. A discrete compensator is the Tustin image of the continuous
-one with prewarping at the design crossover, which matches the continuous
-response at that frequency [14], through
+`pid` takes an optional filter time constant $T_f$ that replaces $s$ in the
+derivative term by $s/ (1 + T_f s)$, the first-order filter of Åström
+[13, Sec. 6.3]. Each form expands to one degree-2 numerator and one
+degree-2 denominator array. Without a filter the result is improper
+unless the derivative term vanishes, and it is accepted only where the
+caller's capacities admit it (`transfer-function-design.md` C-1); otherwise
+the call returns `Improper`. A non-positive integral time or filter
+constant returns `InvalidParameter`. `lead` returns
+$K (1 + s/b)/ (1 + s/ (bN))$ and `lag` returns $M (1 + s/a)/ (1 + sM/a)$ [11].
+A discrete compensator is the Tustin image of the continuous one,
+with prewarping at the design crossover [14], through
 `TransferFunction::to_discrete_tustin` (C-7).
 
 #### 4.9 Firmware Realizations
@@ -376,18 +397,10 @@ outputs:
 y[k] = b_0 u[k] + b_1 u[k-1] + b_2 u[k-2] - a_1 y[k-1] - a_2 y[k-2].
 ```
 
-The two structures trade state for robustness. TDF-II places the zeros
-ahead of the poles in series order, so the large pole gain at some
-frequencies acts on a signal the zeros have already attenuated [16],
-and it needs half the state, two rather than four per biquad [17], [18]. DF1 is
-numerically more robust for fixed-point data, while TDF-II
-needs a wide dynamic range in its states [17]; in fixed point DF-II can
-overflow internally, where DF-I overflows only if the output does [19].
-DF1 also introduces minimal artifacts when its coefficients
-change online, while DF2T suits
-static filters [20]. The caller picks the structure per cascade: `Df2t`
-for floating-point static filters, `Df1` for fixed point and for
-scheduled sections.
+| Structure | State per biquad | Strength                                                                                       | Use                                |
+|:----------|:-----------------|:-----------------------------------------------------------------------------------------------|:-----------------------------------|
+| `Df2t`    | 2                | Half the state [17], [18]; zeros precede the poles in series order [16]                        | Floating-point static filters      |
+| `Df1`     | 4                | Overflows only if the output does [19]; minimal artifacts when coefficients change online [20] | Fixed point and scheduled sections |
 
 - **`DirectForm2T<T, ORDER>`** holds $b_0$, `[T; ORDER]` numerator and
   denominator tails and `[T; ORDER]` state, built from a discrete
@@ -438,10 +451,11 @@ closest to the unit circle, groups conjugate pairs into real second-order
 sections and, for odd order, keeps one first-order section with
 $b_2 = a_2 = 0$, following SciPy `zpk2sos` [22]. The pairing minimizes
 the peak gain of each section [22]. The overall gain is placed in the
-first section; section scaling beyond that is an assumption to review (§8).
+first section.
 
 **Fixed point.** `quantize` (FR-19) converts `f64` section coefficients,
-the input of `Df1` and `Df2t`, to `Fixed<Repr, SHIFT>` with round-to-nearest and refuses, with
+the input of `Df1` and `Df2t`, to `Fixed<Repr, SHIFT>` with round-to-nearest and
+refuses, with
 `ClassicalError::CoefficientRange { section }`, any coefficient outside the
 type's range. Stable second-order sections have $|a_1| < 2$, so the scale
 must leave integer bits; C-9 already requires
@@ -457,22 +471,19 @@ $|a_1| < 1 + a_2$, and a first-order section if and only if $|a_1| < 1$
 [23]. `is_stable` evaluates these comparisons; `all_stable` folds them
 over a slice of sections. For `Fixed` the comparisons are exact.
 
-**Gain schedules.** A schedule is a caller-side wrapper: a `Tensor` of
-section coefficients indexed by the scheduling variable, read each sample (or on
-change) and written with `set_coefficients` (FR-18). The realization
-keeps its state across the update, and DF1 sections keep it in signal
-units, which is why `Df1` is the scheduled structure [20]. The stability
-region above is an intersection of half-planes in $(a_1, a_2)$ and so is
-convex. Multilinear interpolation over a `Tensor` grid (`tensor-design.md` FR-2)
-returns a convex combination of grid-point
-coefficients. A schedule that interpolates section coefficients, and
-whose grid sections all pass `all_stable`, therefore yields a stable
-section at every frozen value of the scheduling variable. This holds per
-section, so it requires interpolating second-order sections, not
-`DirectForm2T` coefficients, and holds for any pairing that is consistent
-across the grid. Frozen-value stability does not bound the response when
-the scheduling variable moves quickly (§6.3, §8). The wrapper itself is not
-part of this module.
+**Gain schedules.** A schedule is a caller-side wrapper, outside this
+module: a `Tensor` of section coefficients indexed by the scheduling
+variable, written with `set_coefficients` (FR-18). State persists across
+the update, and `Df1` keeps it in signal units, so `Df1` is the scheduled
+structure [20].
+
+The stability region is an intersection of half-planes in $(a_1, a_2)$ and
+so is convex, and multilinear interpolation over a `Tensor` grid
+(`tensor-design.md` FR-2) returns a convex combination of grid-point
+coefficients. If every grid section passes `all_stable`, every frozen
+value is therefore stable. This requires interpolating second-order
+sections with a pairing consistent across the grid, not `DirectForm2T`
+coefficients. Fast variation is outside the guarantee (§6.3, §8).
 
 ```mermaid
 flowchart LR
@@ -481,9 +492,18 @@ flowchart LR
 
 #### 4.10 Discrete PID
 
-`Pid<T>` is constructed from $K_p$, $K_i$, $K_d$, $T_f$, a fixed sample
-period $h$, limits $u_{min} \le u_{max}$ and an `AntiWindup` mode, and
-computes its coefficients once so each `step` runs a fixed sequence (NFR-4).
+A `Pid` is a small `Copy` value holding the parameters, the coefficients
+derived from them, and the loop state: the integrator, the filtered
+derivative, the previous measurement and the last error. Its public
+operations are the constructor, `step(r, y) -> u`, `reset`, `set_gains`
+and `to_transfer_function`.
+
+`new` returns `InvalidParameter` unless $u_{min} \le u_{max}$, $h > 0$,
+$T_f \ge 0$ and, for `BackCalculation`, $T_t > 0$. It computes
+`ad`, `bd`, `kih` and `hbt` ($h/T_t$ or 0) once, so `step` is a fixed
+sequence of saturating operations with no branch except the limit
+selection and the anti-windup test (NFR-4). The controller is `Copy` and
+holds no heap state.
 The derivative acts on the measurement, not the error, with the filter
 $T_f \dot D + D = -K_d \dot y$ discretized by backward difference as in
 Wittenmark et al. [24]. Backward difference keeps the filter coefficient
@@ -503,17 +523,16 @@ the controller bandwidth [25]. One `step(r, y) -> u`:
 2. $v = K_p e + I + K_d \delta$; $u = \min (\max (v, u_{min}), u_{max})$.
 3. Update $I$ by the anti-windup mode, then store $y_{k-1}$ and return $u$.
 
-Output is computed before the state update so the delay from measurement
-to actuation is the computation of steps 1 and 2; this ordering is an
-assumption to check against the source (§8).
+Output is computed before the state update, so the measurement-to-actuation
+delay is steps 1 and 2 only (§8).
 
-Saturation breaks the loop and lets the integrator run away [12, Sec.].
-`AntiWindup` has two modes:
+`AntiWindup` has two modes, countering integrator runaway under
+saturation [12, Sec.]:
 
-| Mode                     | Integrator update                                                                           | Basis                                                                                                                                                                                                                                                 |
-|:-------------------------|:--------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `Clamping`               | $I \leftarrow I + K_i h e$ unless $u \ne v$ and $K_i h e$ has the sign of $v - u$, then $I$ holds | Conditional integration: integration stops when the output exceeds its limits and the integrator input has the sign of the saturation input [25]; comparing $K_i h e$ keeps the rule valid when $K_i < 0$; the test on $v - u$ is an assumption that keeps the rule valid for limits that do not straddle zero |
-| `BackCalculation { tt }` | $I \leftarrow I + h (K_i e + (u - v)/T_t)$                                                  | Feeds back the difference between saturated and unsaturated output so the integrator resets to the limit [24], [25]                                                                                                                                   |
+| Mode                     | Integrator update                                                                     | Basis                                                                     |
+|:-------------------------|:--------------------------------------------------------------------------------------|:--------------------------------------------------------------------------|
+| `Clamping`               | $I \leftarrow I + K_i h e$, held when $u \ne v$ and $K_i h e$ has the sign of $v - u$ | Conditional integration [25]; testing $K_i h e$ stays valid for $K_i < 0$ |
+| `BackCalculation { tt }` | $I \leftarrow I + h (K_i e + (u - v)/T_t)$                                            | Back-calculation [24], [25]                                               |
 
 $T_t$ is the caller's; Åström gives $T_d < T_t < T_i$ and
 $T_t = \sqrt{T_i T_d}$ as a rule of thumb [13, Sec. 6.5], with
@@ -524,45 +543,24 @@ the rule; the constructor does not default it.
 as DiscretePIDs.jl does [26]:
 $I \leftarrow I + (K_p - K_p') e_{k} + (K_d - K_d') \delta_k$, which keeps
 $v$ unchanged for the last sample (FR-13). `to_transfer_function` returns
-`compensator::pid` in parallel form with filter $T_f$ (FR-14). The design
-matches the deployable PID controllers in other ecosystems, which are
-allocation-free [26], parameterize anti-windup by $T_t$ [26] and
-advertise no derivative kick [27].
+`compensator::pid` in parallel form with filter $T_f$ (FR-14).
 
 #### 4.11 Error Handling
 
-```rust
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ClassicalError {
-    /// Root finding failed for a locus gain or a factorization (FR-1, FR-10).
-    Root(RootError),
-    /// The Routh leading coefficient is zero (FR-2).
-    ZeroLeadingCoefficient,
-    /// The Nyquist contour passes through -1 (FR-4).
-    ContourThroughCriticalPoint,
-    /// A parameter is non-positive where positivity is required, or
-    /// u_min > u_max (FR-6, FR-7, FR-11, FR-12).
-    InvalidParameter,
-    /// The requested PID form is improper and has no filter (FR-6).
-    Improper,
-    /// A realization was requested from a continuous system (FR-8, FR-10).
-    NotDiscrete,
-    /// A Nyquist count was requested for a discrete system (FR-4).
-    NotContinuous,
-    /// The section count does not match the factored order (FR-10).
-    SectionCount,
-    /// A coefficient of this section is outside the fixed-point range
-    /// (FR-19).
-    CoefficientRange { section: usize },
-}
-```
+`ClassicalError` is one flat enum. `InvalidParameter` covers every
+non-positive or out-of-order argument, including $u_{min} > u_{max}$.
+`Improper` covers a Nyquist or PID transfer function that is improper or
+does not fit its capacities. `NotContinuous` and `NotDiscrete` reject the
+wrong sampling domain for Nyquist counting and realization.
+`ZeroLeadingCoefficient` is raised by the Routh test and by a realization
+with $a_0 = 0$, `ContourThroughCriticalPoint` by the Nyquist sampler,
+`SectionCount` by `to_sections` and `CoefficientRange { section }` by
+`quantize`. `Root` wraps `RootError` from the locus, the Nyquist poles and
+the factorization.
 
 The enum has a hand-written `Display`, `impl core::error::Error` and
-`From<RootError>` (C-4). Errors arise at construction and quantization
-only: `update`, `step`, `reset` and `set_coefficients` are infallible, so the
-per-sample path has no error
-branch (NFR-4). Buffer-length mismatch is excluded by const generics
-(`error-design.md` FR-2).
+`From<RootError>` (C-4). `update`, `step`, `reset`, `set_coefficients`,
+`frequency_response` and `stability_margins` are infallible (NFR-4).
 
 ---
 
@@ -593,89 +591,89 @@ branch (NFR-4). Buffer-length mismatch is excluded by const generics
 
 #### 6.1 Verification
 
-| Condition | Requirement | Method       | Target                                                                             | Criterion                                                                                                                                                                                                    |
-|:----------|:------------|:-------------|:-----------------------------------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| VC-1.1    | FR-1        | `libtest`    | `control_rs::classical_control::locus::tests::locus_roots_satisfy_characteristic`  | Every returned root satisfies §6.2 for $D + k_i N$ over a 3-pole, 1-zero plant and 20 gains; FR-1 holds iff all conditions hold                                                                              |
-| VC-1.2    | FR-1        | `libtest`    | `control_rs::classical_control::locus::tests::locus_zero_gain`                     | At $k = 0$ the roots equal `TransferFunction::poles` within §6.2                                                                                                                                             |
-| VC-2.1    | FR-2        | `libtest`    | `control_rs::classical_control::routh::tests::routh_matches_known_roots`           | For polynomials built by `Polynomial::from_roots` with 0 to 4 right-half-plane roots, the count equals the constructed count exactly; FR-2 holds iff all conditions hold                                     |
-| VC-2.2    | FR-2        | `libtest`    | `control_rs::classical_control::routh::tests::routh_zero_first_column`             | $s^4 + s^3 + 2s^2 + 2s + 3$ returns 2 right-half-plane roots                                                                                                                                                 |
-| VC-2.3    | FR-2        | `libtest`    | `control_rs::classical_control::routh::tests::routh_zero_row`                      | $s^3 + s^2 + s + 1$ returns 0 right-half-plane roots and the imaginary-axis flag                                                                                                                             |
-| VC-3.1    | FR-3        | `libtest`    | `control_rs::classical_control::response::tests::first_second_order_closed_form`   | Magnitude and phase of first-order and second-order systems meet §6.2; FR-3 holds iff all conditions hold                                                                                                    |
-| VC-3.2    | FR-3        | `libtest`    | `control_rs::classical_control::response::tests::discrete_unit_circle`             | A discrete system is evaluated at $e^{j\omega T_s}$ and matches the closed form within §6.2                                                                                                                  |
-| VC-3.3    | FR-3        | `libtest`    | `control_rs::classical_control::response::tests::phase_unwrapped`                  | Consecutive phase samples of a fourth-order lag differ by less than $180^\circ$                                                                                                                              |
-| VC-4.1    | FR-4        | `libtest`    | `control_rs::classical_control::nyquist::tests::encirclements_known_cases`         | Stable, open-loop unstable and integrating plants return the encirclement counts implied by their known closed-loop pole locations; FR-4 holds iff all conditions hold                                       |
-| VC-4.2    | FR-4        | `libtest`    | `control_rs::classical_control::nyquist::tests::contour_through_critical_point`    | A loop with $L(j\omega_0) = -1$ returns `ContourThroughCriticalPoint`                                                                                                                                        |
-| VC-5.1    | FR-5        | `libtest`    | `control_rs::classical_control::margins::tests::third_order_margins`               | Gain margin, phase margin and both crossovers of $4/(s+1)^3$ meet §6.2; FR-5 holds iff all conditions hold                                                                                                   |
-| VC-5.2    | FR-5        | `libtest`    | `control_rs::classical_control::margins::tests::absent_crossover`                  | A first-order loop returns `None` for gain margin                                                                                                                                                            |
-| VC-5.3    | FR-5        | `libtest`    | `control_rs::classical_control::margins::tests::margins_cross_check`               | Margins on the cross-check cases meet their tolerance entries in §6.2                                                                                                                                        |
-| VC-6.1    | FR-6        | `libtest`    | `control_rs::classical_control::compensator::tests::pid_forms`                     | The three forms produce coefficient vectors equal to their closed-form expansions exactly; FR-6 holds iff all conditions hold                                                                                |
-| VC-6.2    | FR-6        | `libtest`    | `control_rs::classical_control::compensator::tests::pid_filtered_proper`           | A filtered PID is proper and an unfiltered derivative returns `Improper` where the capacity cannot hold it                                                                                                   |
-| VC-7.1    | FR-7        | `libtest`    | `control_rs::classical_control::compensator::tests::lead_lag`                      | Lead and lag coefficients equal their closed forms exactly and non-positive parameters return `InvalidParameter`; FR-7 holds iff all conditions hold                                                         |
-| VC-8.1    | FR-8        | `libtest`    | `control_rs::classical_control::realization::tests::df2t_matches_reference`        | `DirectForm2T` output sequences for orders 1 to 4 meet the §6.2 cross-check entries; FR-8 holds iff all conditions hold                                                                                      |
-| VC-8.2    | FR-8        | `libtest`    | `control_rs::classical_control::realization::tests::df2t_reset`                    | After `reset`, the output sequence equals that of a newly built realization exactly                                                                                                                          |
-| VC-8.3    | FR-8        | `libtest`    | `control_rs::classical_control::realization::tests::df2t_from_continuous`          | Building from a continuous `TransferFunction` returns `NotDiscrete`                                                                                                                                          |
-| VC-8.4    | FR-8        | `libtest`    | `control_rs::classical_control::realization::tests::df2t_fixed_total`              | `DirectForm2T<Fixed<i32, 29>, 2>` driven at full-scale input saturates without panic or wrap                                                                                                                 |
-| VC-9.1    | FR-9        | `libtest`    | `control_rs::classical_control::realization::tests::cascade_matches_reference`     | `BiquadCascade` output sequences of `Df1` and `Df2t` sections meet the §6.2 cross-check entries; FR-9 holds iff all conditions hold                                                                          |
-| VC-9.2    | FR-9        | `libtest`    | `control_rs::classical_control::realization::tests::cascade_reset`                 | After `reset`, every section state is zero                                                                                                                                                                   |
-| VC-10.1   | FR-10       | `libtest`    | `control_rs::classical_control::realization::tests::sections_reproduce_source`     | The frequency response of the factored cascade equals that of the source within §6.2 for even and odd orders up to 8; FR-10 holds iff all conditions hold                                                    |
-| VC-10.2   | FR-10       | `libtest`    | `control_rs::classical_control::realization::tests::sections_pairing_order`        | Each section's zeros are the remaining zeros nearest its poles, with poles taken in order of distance to the unit circle, and an odd order yields exactly one section with $b_2 = a_2 = 0$                   |
-| VC-11.1   | FR-11       | `libtest`    | `control_rs::classical_control::pid::tests::unsaturated_matches_recurrence`        | Within limits, outputs equal the closed-form recurrence of §4.10 within §6.2; FR-11 holds iff all conditions hold                                                                                            |
-| VC-11.2   | FR-11       | `libtest`    | `control_rs::classical_control::pid::tests::setpoint_step_no_derivative_kick`      | A setpoint step at constant measurement leaves $D$ unchanged exactly                                                                                                                                         |
-| VC-11.3   | FR-11       | `libtest`    | `control_rs::classical_control::pid::tests::output_within_limits`                  | Every output lies in $[u_{min}, u_{max}]$ and `new` returns `InvalidParameter` for $u_{min} > u_{max}$, $h \le 0$ or $T_f < 0$                                                                               |
-| VC-12.1   | FR-12       | `libtest`    | `control_rs::classical_control::pid::tests::clamping_holds_integrator`             | Under sustained saturation in `Clamping`, $I$ is constant exactly and resumes integrating when the error changes sign; FR-12 holds iff all conditions hold                                                   |
-| VC-12.1b  | FR-12       | `libtest`    | `control_rs::classical_control::pid::tests::clamping_reverse_acting_holds`         | Reverse-acting `Clamping` ($K_i < 0$) holds $I$ at zero under sustained saturation, and a later zero error returns zero output                                                                                |
-| VC-12.2   | FR-12       | `libtest`    | `control_rs::classical_control::pid::tests::back_calculation_fixed_point`          | Under sustained saturation in `BackCalculation`, $I$ converges to the closed-form fixed point within §6.2                                                                                                    |
-| VC-13.1   | FR-13       | `libtest`    | `control_rs::classical_control::pid::tests::bumpless_gain_change`                  | After `set_gains`, the recomputed unsaturated output differs from the previous one by at most the §6.2 bound                                                                                                 |
-| VC-14.1   | FR-14       | `libtest`    | `control_rs::classical_control::pid::tests::analysis_model_matches_compensator`    | `to_transfer_function` coefficients equal `compensator::pid` parallel form with filter exactly                                                                                                               |
-| VC-15.1   | FR-15       | `libtest`    | `control_rs::classical_control::step::tests::second_order_closed_form`             | Rise time, settling time, overshoot, peak and peak time of a sampled underdamped second-order step meet §6.2; FR-15 holds iff all conditions hold                                                            |
-| VC-15.2   | FR-15       | `libtest`    | `control_rs::classical_control::step::tests::defaults_and_threshold`               | Omitted $y_{final}$ uses the last sample and a 5% threshold yields the closed-form 5% settling time within one sample period                                                                                 |
-| VC-16.1   | FR-16       | `libtest`    | `control_rs::classical_control::margins::tests::delay_margin_closed_form`          | The delay margin of $4/(s+1)^3$ and of its discretization meets §6.2, in seconds and in samples respectively; FR-16 holds iff all conditions hold                                                            |
-| VC-17.1   | NFR-1       | `inspection` | —                                                                                  | The module imports no plotting or GUI crate                                                                                                                                                                  |
-| VC-18.1   | NFR-2       | `inspection` | —                                                                                  | No routine allocates; outputs are const-sized buffers                                                                                                                                                        |
-| VC-19.1   | NFR-3       | `analysis`   | —                                                                                  | Routh construction, response evaluation and margin refinement have loop bounds fixed by order, frequency count and $B$                                                                                       |
-| VC-20.1   | NFR-4       | `analysis`   | —                                                                                  | `update`, `step`, `reset` and `set_coefficients` contain no allocation, no fallible operation and only loops bounded by `ORDER` or `L`                                                                       |
-| VC-21.1   | C-1         | `review`     | —                                                                                  | The public API takes and returns `Polynomial`, `TransferFunction`, realizations and buffers only                                                                                                             |
-| VC-22.1   | C-2         | `review`     | —                                                                                  | Every const parameter is bounded as the cited constraints require                                                                                                                                            |
-| VC-23.1   | C-3         | `inspection` | —                                                                                  | The change adds no entry to `[dependencies]` in the root `Cargo.toml`                                                                                                                                        |
-| VC-24.1   | C-4         | `inspection` | —                                                                                  | `ClassicalError` derives the `error-design.md` NFR-1 traits and has hand-written `Display`                                                                                                                   |
-| VC-25.1   | C-5         | `review`     | —                                                                                  | The public API exposes no multivariable or interactive item, and the PID items bound `T: Float`                                                                                                              |
-| VC-26.1   | C-6         | `inspection` | —                                                                                  | The `realization` and `pid` test modules carry `#[cfg_attr(not(test), control_rs_macros::ets_suite)]`                                                                                                        |
-| VC-27.1   | C-7         | `review`     | —                                                                                  | The module defines no continuous-to-discrete transform                                                                                                                                                       |
-| VC-28.1   | FR-17       | `libtest`    | `control_rs::classical_control::realization::tests::df1_matches_df2t`              | For `f64` sections, `Df1` and `Df2t` outputs agree within §6.2 on the cross-check cases; FR-17 holds iff all conditions hold                                                                                 |
-| VC-28.2   | FR-17       | `libtest`    | `control_rs::classical_control::realization::tests::df1_fixed_matches_reference`   | `Df1<Fixed<i16, 13>>` and `Df1<Fixed<i32, 29>>` outputs meet the §6.2 fixed-point bound against the `f64` realization                                                                                        |
-| VC-28.3   | FR-17       | `kani`       | `control_rs::classical_control::realization::proofs::prove_df1_fixed_update_total` | For all `Fixed<i16, 13>` coefficients, states and inputs, `Df1::update` returns without panic                                                                                                                |
-| VC-28.4   | FR-17       | `libtest`    | `control_rs::classical_control::realization::tests::df1_fixed_single_rounding`     | Without saturation, each `Df1<Fixed<i16, 13>>` output equals the exact integer sum of its five products rounded once with ties to even                                                                       |
-| VC-29.1   | FR-18       | `libtest`    | `control_rs::classical_control::realization::tests::set_coefficients_keeps_state`  | After `set_coefficients`, state equals its value before the call and the next output equals that of a section built with the new coefficients and the same state; FR-18 holds iff all conditions hold        |
-| VC-30.1   | FR-19       | `libtest`    | `control_rs::classical_control::realization::tests::quantize_round_and_range`      | Each quantized coefficient is within $\Delta/2$ of its source and a coefficient outside the range returns `CoefficientRange` with its section index; FR-19 holds iff all conditions hold                     |
-| VC-31.1   | C-8         | `inspection` | —                                                                                  | Every recurrence in `realization` is a `MulAcc` chain with one `from_acc` per output, and the section types bound `T: Scalar + SaturatingNeg + MulAcc`                                                       |
-| VC-33.1   | FR-20       | `libtest`    | `control_rs::classical_control::realization::tests::stability_triangle`            | For sections built from pole pairs at radius $0.5$, $0.99$, $1.0$ and $1.01$ over a grid of angles, and for first-order sections, `is_stable` equals `max \|pole\| < 1`; FR-20 holds iff all conditions hold |
-| VC-33.2   | FR-20       | `libtest`    | `control_rs::classical_control::realization::tests::interpolated_schedule_stable`  | Every multilinear interpolation of a `Tensor` grid of stable sections at 1,000 random query points passes `is_stable`                                                                                        |
-| VC-32.1   | C-9         | `review`     | —                                                                                  | Fixed-point realizations are bounded `T: Scalar`, so only `fixed-num-design.md` FR-7 scales instantiate                                                                                                      |
+| Condition | Requirement | Method       | Target                                                                             | Criterion                                                                                                                                                                                  |
+|:----------|:------------|:-------------|:-----------------------------------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| VC-1.1    | FR-1        | `libtest`    | `control_rs::classical_control::locus::tests::locus_roots_satisfy_characteristic`  | Every returned root satisfies §6.2 for $D + k_i N$ over a 3-pole, 1-zero plant and 20 gains                                                                                                |
+| VC-1.2    | FR-1        | `libtest`    | `control_rs::classical_control::locus::tests::locus_zero_gain`                     | At $k = 0$ the roots equal `TransferFunction::poles` within §6.2                                                                                                                           |
+| VC-2.1    | FR-2        | `libtest`    | `control_rs::classical_control::routh::tests::routh_matches_known_roots`           | For polynomials built by `Polynomial::from_roots` with 0 to 4 right-half-plane roots, the count equals the constructed count exactly                                                       |
+| VC-2.2    | FR-2        | `libtest`    | `control_rs::classical_control::routh::tests::routh_zero_first_column`             | $s^4 + s^3 + 2s^2 + 2s + 3$ returns 2 right-half-plane roots                                                                                                                               |
+| VC-2.3    | FR-2        | `libtest`    | `control_rs::classical_control::routh::tests::routh_zero_row`                      | $s^3 + s^2 + s + 1$ returns 0 right-half-plane roots and the imaginary-axis flag                                                                                                           |
+| VC-3.1    | FR-3        | `libtest`    | `control_rs::classical_control::response::tests::first_second_order_closed_form`   | Magnitude and phase of first-order and second-order systems meet §6.2                                                                                                                      |
+| VC-3.2    | FR-3        | `libtest`    | `control_rs::classical_control::response::tests::discrete_unit_circle`             | A discrete system is evaluated at $e^{j\omega T_s}$ and matches the closed form within §6.2                                                                                                |
+| VC-3.3    | FR-3        | `libtest`    | `control_rs::classical_control::response::tests::phase_unwrapped`                  | Consecutive phase samples of a fourth-order lag differ by less than $180^\circ$                                                                                                            |
+| VC-4.1    | FR-4        | `libtest`    | `control_rs::classical_control::nyquist::tests::encirclements_known_cases`         | Stable, open-loop unstable and integrating plants return the encirclement counts implied by their known closed-loop pole locations                                                         |
+| VC-4.2    | FR-4        | `libtest`    | `control_rs::classical_control::nyquist::tests::contour_through_critical_point`    | A loop with $L(j\omega_0) = -1$ returns `ContourThroughCriticalPoint`                                                                                                                      |
+| VC-5.1    | FR-5        | `libtest`    | `control_rs::classical_control::margins::tests::third_order_margins`               | Gain margin, phase margin and both crossovers of $4/(s+1)^3$ meet §6.2                                                                                                                     |
+| VC-5.2    | FR-5        | `libtest`    | `control_rs::classical_control::margins::tests::absent_crossover`                  | A first-order loop returns `None` for gain margin                                                                                                                                          |
+| VC-5.3    | FR-5        | `libtest`    | `control_rs::classical_control::margins::tests::margins_cross_check`               | Margins on the cross-check cases meet their tolerance entries in §6.2                                                                                                                      |
+| VC-6.1    | FR-6        | `libtest`    | `control_rs::classical_control::compensator::tests::pid_forms`                     | The three forms produce coefficient vectors equal to their closed-form expansions exactly                                                                                                  |
+| VC-6.2    | FR-6        | `libtest`    | `control_rs::classical_control::compensator::tests::pid_filtered_proper`           | A filtered PID is proper and an unfiltered derivative returns `Improper` where the capacity cannot hold it                                                                                 |
+| VC-7.1    | FR-7        | `libtest`    | `control_rs::classical_control::compensator::tests::lead_lag`                      | Lead and lag coefficients equal their closed forms exactly and non-positive parameters return `InvalidParameter`                                                                           |
+| VC-8.1    | FR-8        | `libtest`    | `control_rs::classical_control::realization::tests::df2t_matches_reference`        | `DirectForm2T` output sequences for orders 1 to 4 meet the §6.2 cross-check entries                                                                                                        |
+| VC-8.2    | FR-8        | `libtest`    | `control_rs::classical_control::realization::tests::df2t_reset`                    | After `reset`, the output sequence equals that of a newly built realization exactly                                                                                                        |
+| VC-8.3    | FR-8        | `libtest`    | `control_rs::classical_control::realization::tests::df2t_from_continuous`          | Building from a continuous `TransferFunction` returns `NotDiscrete`                                                                                                                        |
+| VC-8.4    | FR-8        | `libtest`    | `control_rs::classical_control::realization::tests::df2t_fixed_total`              | `DirectForm2T<Fixed<i32, 29>, 2>` driven at full-scale input saturates without panic or wrap                                                                                               |
+| VC-9.1    | FR-9        | `libtest`    | `control_rs::classical_control::realization::tests::cascade_matches_reference`     | `BiquadCascade` output sequences of `Df1` and `Df2t` sections meet the §6.2 cross-check entries                                                                                            |
+| VC-9.2    | FR-9        | `libtest`    | `control_rs::classical_control::realization::tests::cascade_reset`                 | After `reset`, every section state is zero                                                                                                                                                 |
+| VC-10.1   | FR-10       | `libtest`    | `control_rs::classical_control::realization::tests::sections_reproduce_source`     | The frequency response of the factored cascade equals that of the source within §6.2 for even and odd orders up to 8                                                                       |
+| VC-10.2   | FR-10       | `libtest`    | `control_rs::classical_control::realization::tests::sections_pairing_order`        | Each section's zeros are the remaining zeros nearest its poles, with poles taken in order of distance to the unit circle, and an odd order yields exactly one section with $b_2 = a_2 = 0$ |
+| VC-11.1   | FR-11       | `libtest`    | `control_rs::classical_control::pid::tests::unsaturated_matches_recurrence`        | Within limits, outputs equal the closed-form recurrence of §4.10 within §6.2                                                                                                               |
+| VC-11.2   | FR-11       | `libtest`    | `control_rs::classical_control::pid::tests::setpoint_step_no_derivative_kick`      | A setpoint step at constant measurement leaves $D$ unchanged exactly                                                                                                                       |
+| VC-11.3   | FR-11       | `libtest`    | `control_rs::classical_control::pid::tests::output_within_limits`                  | Every output lies in $[u_{min}, u_{max}]$ and `new` returns `InvalidParameter` for $u_{min} > u_{max}$, $h \le 0$ or $T_f < 0$                                                             |
+| VC-12.1   | FR-12       | `libtest`    | `control_rs::classical_control::pid::tests::clamping_holds_integrator`             | Under sustained saturation in `Clamping`, $I$ is constant exactly and resumes integrating when the error changes sign                                                                      |
+| VC-12.1b  | FR-12       | `libtest`    | `control_rs::classical_control::pid::tests::clamping_reverse_acting_holds`         | Reverse-acting `Clamping` ($K_i < 0$) holds $I$ at zero under sustained saturation, and a later zero error returns zero output                                                             |
+| VC-12.2   | FR-12       | `libtest`    | `control_rs::classical_control::pid::tests::back_calculation_fixed_point`          | Under sustained saturation in `BackCalculation`, $I$ converges to the closed-form fixed point within §6.2                                                                                  |
+| VC-13.1   | FR-13       | `libtest`    | `control_rs::classical_control::pid::tests::bumpless_gain_change`                  | After `set_gains`, the recomputed unsaturated output differs from the previous one by at most the §6.2 bound                                                                               |
+| VC-14.1   | FR-14       | `libtest`    | `control_rs::classical_control::pid::tests::analysis_model_matches_compensator`    | `to_transfer_function` coefficients equal `compensator::pid` parallel form with filter exactly                                                                                             |
+| VC-15.1   | FR-15       | `libtest`    | `control_rs::classical_control::step::tests::second_order_closed_form`             | Rise time, settling time, overshoot, peak and peak time of a sampled underdamped second-order step meet §6.2                                                                               |
+| VC-15.2   | FR-15       | `libtest`    | `control_rs::classical_control::step::tests::defaults_and_threshold`               | Omitted $y_{final}$ uses the last sample and a 5% threshold yields the closed-form 5% settling time within one sample period                                                               |
+| VC-16.1   | FR-16       | `libtest`    | `control_rs::classical_control::margins::tests::delay_margin_closed_form`          | The delay margin of $4/(s+1)^3$ and of its discretization meets §6.2, in seconds and in samples respectively                                                                               |
+| VC-17.1   | NFR-1       | `inspection` | —                                                                                  | The module imports no plotting or GUI crate                                                                                                                                                |
+| VC-18.1   | NFR-2       | `inspection` | —                                                                                  | No routine allocates; outputs are const-sized buffers                                                                                                                                      |
+| VC-19.1   | NFR-3       | `analysis`   | —                                                                                  | Routh construction, response evaluation and margin refinement have loop bounds fixed by order, frequency count and $B$                                                                     |
+| VC-20.1   | NFR-4       | `analysis`   | —                                                                                  | `update`, `step`, `reset` and `set_coefficients` contain no allocation, no fallible operation and only loops bounded by `ORDER` or `L`                                                     |
+| VC-21.1   | C-1         | `review`     | —                                                                                  | The public API takes and returns `Polynomial`, `TransferFunction`, realizations and buffers only                                                                                           |
+| VC-22.1   | C-2         | `review`     | —                                                                                  | Every const parameter is bounded as the cited constraints require                                                                                                                          |
+| VC-23.1   | C-3         | `inspection` | —                                                                                  | The change adds no entry to `[dependencies]` in the root `Cargo.toml`                                                                                                                      |
+| VC-24.1   | C-4         | `inspection` | —                                                                                  | `ClassicalError` derives the `error-design.md` NFR-1 traits and has hand-written `Display`                                                                                                 |
+| VC-25.1   | C-5         | `review`     | —                                                                                  | The public API exposes no multivariable or interactive item, and the PID items bound `T: Float`                                                                                            |
+| VC-26.1   | C-6         | `inspection` | —                                                                                  | The `realization` and `pid` test modules carry `#[cfg_attr(not(test), control_rs_macros::ets_suite)]`                                                                                      |
+| VC-27.1   | C-7         | `review`     | —                                                                                  | The module defines no continuous-to-discrete transform                                                                                                                                     |
+| VC-28.1   | FR-17       | `libtest`    | `control_rs::classical_control::realization::tests::df1_matches_df2t`              | For `f64` sections, `Df1` and `Df2t` outputs agree within §6.2 on the cross-check cases                                                                                                    |
+| VC-28.2   | FR-17       | `libtest`    | `control_rs::classical_control::realization::tests::df1_fixed_matches_reference`   | `Df1<Fixed<i16, 13>>` and `Df1<Fixed<i32, 29>>` outputs meet the §6.2 fixed-point bound against the `f64` realization                                                                      |
+| VC-28.3   | FR-17       | `kani`       | `control_rs::classical_control::realization::proofs::prove_df1_fixed_update_total` | For all `Fixed<i16, 13>` coefficients, states and inputs, `Df1::update` returns without panic                                                                                              |
+| VC-28.4   | FR-17       | `libtest`    | `control_rs::classical_control::realization::tests::df1_fixed_single_rounding`     | Without saturation, each `Df1<Fixed<i16, 13>>` output equals the exact integer sum of its five products rounded once with ties to even                                                     |
+| VC-29.1   | FR-18       | `libtest`    | `control_rs::classical_control::realization::tests::set_coefficients_keeps_state`  | After `set_coefficients`, state equals its value before the call and the next output equals that of a section built with the new coefficients and the same state                           |
+| VC-30.1   | FR-19       | `libtest`    | `control_rs::classical_control::realization::tests::quantize_round_and_range`      | Each quantized coefficient is within $\Delta/2$ of its source and a coefficient outside the range returns `CoefficientRange` with its section index                                        |
+| VC-31.1   | C-8         | `inspection` | —                                                                                  | Every recurrence in `realization` is a `MulAcc` chain with one `from_acc` per output, and the section types bound `T: Scalar + SaturatingNeg + MulAcc`                                     |
+| VC-33.1   | FR-20       | `libtest`    | `control_rs::classical_control::realization::tests::stability_triangle`            | For sections built from pole pairs at radius $0.5$, $0.99$, $1.0$ and $1.01$ over a grid of angles, and for first-order sections, `is_stable` equals `max \|pole\| < 1`                    |
+| VC-33.2   | FR-20       | `libtest`    | `control_rs::classical_control::realization::tests::interpolated_schedule_stable`  | Every multilinear interpolation of a `Tensor` grid of stable sections at 1,000 random query points passes `is_stable`                                                                      |
+| VC-32.1   | C-9         | `review`     | —                                                                                  | Fixed-point realizations are bounded `T: Scalar`, so only `fixed-num-design.md` FR-7 scales instantiate                                                                                    |
 
 Coverage: 90% line coverage of `src/classical_control`, measured with
 `cargo coverage`. Excluded: none.
 
 #### 6.2 Acceptance
 
-| Claim                                | Oracle                                                                                                | Measure                                                                                   | Bound                                                                                     |
-|:-------------------------------------|:------------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------|
-| Routh count (FR-2)                   | Closed-form: polynomials constructed from known roots                                                 | Exact equality                                                                            | Equal                                                                                     |
-| Locus roots (FR-1)                   | Invariant: residual of $D + k N$ at each root                                                         | $\lvert D(p) + kN(p) \rvert / \sum_j \lvert c_j \rvert \lvert p \rvert^j$                 | $\le 10 n u$                                                                              |
-| Frequency response (FR-3)            | Closed-form first-order and second-order responses                                                    | Relative error of magnitude; absolute error of phase                                      | $\le 10 u$; $\le 10^{-9}$ deg                                                             |
+| Claim                                | Oracle                                                                                                | Measure                                                                                   | Bound                                                                                                                                       |
+|:-------------------------------------|:------------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------|
+| Routh count (FR-2)                   | Closed-form: polynomials constructed from known roots                                                 | Exact equality                                                                            | Equal                                                                                                                                       |
+| Locus roots (FR-1)                   | Invariant: residual of $D + k N$ at each root                                                         | $\lvert D(p) + kN(p) \rvert / \sum_j \lvert c_j \rvert \lvert p \rvert^j$                 | $\le 10 n u$                                                                                                                                |
+| Frequency response (FR-3)            | Closed-form first-order and second-order responses                                                    | Relative error of magnitude; absolute error of phase                                      | $\le 10 u$; $\le 10^{-9}$ deg                                                                                                               |
 | Margins (FR-5)                       | Closed form for $4/(s+1)^3$: $\omega_{pc} = \sqrt{3}$, $K_g = 2$, $\omega_{gc} = \sqrt{16^{1/3} - 1}$ | Relative error of each crossover and margin                                               | $\le \Delta_\omega / (2^B \omega) + 10 u$, with $\Delta_\omega$ the bracketing grid step; phase margin adds $10 u \cdot 180^\circ / \phi_m$ |
-| Margins (FR-5)                       | Independent reference implementation (`cross-check`)                                                  | Relative error of each margin and crossover                                               | Tolerance entries `classical-control/<case>/<margin>`                                     |
-| Delay margin (FR-16)                 | Closed form $\phi_m/\omega_{gc}$ from the FR-5 closed form                                            | Relative error                                                                            | Sum of the FR-5 relative bounds on $\phi_m$ and $\omega_{gc}$                             |
-| DF2T and cascade output (FR-8, FR-9) | Independent reference implementation (`cross-check`): SciPy `lfilter` and `sosfilt`                   | Maximum absolute output error over the sequence, relative to $\max_k \lvert y_k \rvert$   | Tolerance entries `classical-control/<case>/output`                                       |
-| Fixed-point DF1 rounding (FR-17)     | Closed form: exact integer accumulation of the five products                                          | Exact equality with the once-rounded sum                                                  | Equal                                                                                     |
-| Fixed-point sections (FR-17, FR-8)   | Independent reference: the same sections in `f64`                                                     | Maximum absolute output error over the sequence, in units of $\Delta = 2^{-\text{SHIFT}}$ | Tolerance entries `classical-control/<case>/fixed`                                        |
-| DF1 against DF2T (FR-17)             | Metamorphic: both structures on the same `f64` sections                                               | Maximum absolute output error relative to $\max_k \lvert y_k \rvert$                      | $\le 10 L u \cdot \max_k \sum_j \lvert h_j \rvert$, with $h$ the cascade impulse response |
-| Section factorization (FR-10)        | Metamorphic: response of the cascade against the source at $M$ frequencies                            | Relative error of $H(e^{j\omega T_s})$                                                    | Tolerance entries `classical-control/<case>/sections`                                     |
-| PID recurrence (FR-11)               | Manufactured: §4.10 recurrence evaluated in `f64` for an `f32` controller                             | Relative error per sample                                                                 | $\le 10 k u$ at sample $k$                                                                |
-| Back-calculation (FR-12)             | Closed-form fixed point $I^* = u_{lim} - K_p e - K_d \delta + T_t K_i e$ under constant $e$, $\delta$ | Relative error after $20 T_t / h$ samples                                                 | $\le 10^{-6}$ for `f64`                                                                   |
-| Bumpless change (FR-13)              | Invariant: $v$ before and after `set_gains`                                                           | $\lvert v' - v \rvert$                                                                    | $\le 4 u (\lvert K_p e \rvert + \lvert I \rvert + \lvert K_d \delta \rvert)$              |
-| PID model (FR-14)                    | Closed-form coefficient expansion                                                                     | Exact equality                                                                            | Equal                                                                                     |
-| Step metrics (FR-15)                 | Closed form for $\omega_n^2/(s^2 + 2\zeta\omega_n s + \omega_n^2)$ sampled at period $h$              | Absolute error of times; absolute error of overshoot (%)                                  | $\le h$; $\le 100 \lvert \ddot y(t_p) \rvert h^2 / 8$                                     |
-| Compensators (FR-6, FR-7)            | Closed-form coefficient expansion                                                                     | Exact equality                                                                            | Equal                                                                                     |
+| Margins (FR-5)                       | Independent reference implementation (`cross-check`)                                                  | Relative error of each margin and crossover                                               | Tolerance entries `classical-control/<case>/<margin>`                                                                                       |
+| Delay margin (FR-16)                 | Closed form $\phi_m/\omega_{gc}$ from the FR-5 closed form                                            | Relative error                                                                            | Sum of the FR-5 relative bounds on $\phi_m$ and $\omega_{gc}$                                                                               |
+| DF2T and cascade output (FR-8, FR-9) | Independent reference implementation (`cross-check`): SciPy `lfilter` and `sosfilt`                   | Maximum absolute output error over the sequence, relative to $\max_k \lvert y_k \rvert$   | Tolerance entries `classical-control/<case>/output`                                                                                         |
+| Fixed-point DF1 rounding (FR-17)     | Closed form: exact integer accumulation of the five products                                          | Exact equality with the once-rounded sum                                                  | Equal                                                                                                                                       |
+| Fixed-point sections (FR-17, FR-8)   | Independent reference: the same sections in `f64`                                                     | Maximum absolute output error over the sequence, in units of $\Delta = 2^{-\text{SHIFT}}$ | Tolerance entries `classical-control/<case>/fixed`                                                                                          |
+| DF1 against DF2T (FR-17)             | Metamorphic: both structures on the same `f64` sections                                               | Maximum absolute output error relative to $\max_k \lvert y_k \rvert$                      | $\le 10 L u \cdot \max_k \sum_j \lvert h_j \rvert$, with $h$ the cascade impulse response                                                   |
+| Section factorization (FR-10)        | Metamorphic: response of the cascade against the source at $M$ frequencies                            | Relative error of $H(e^{j\omega T_s})$                                                    | Tolerance entries `classical-control/<case>/sections`                                                                                       |
+| PID recurrence (FR-11)               | Manufactured: §4.10 recurrence evaluated in `f64` for an `f32` controller                             | Relative error per sample                                                                 | $\le 10 k u$ at sample $k$                                                                                                                  |
+| Back-calculation (FR-12)             | Closed-form fixed point $I^* = u_{lim} - K_p e - K_d \delta + T_t K_i e$ under constant $e$, $\delta$ | Relative error after $20 T_t / h$ samples                                                 | $\le 10^{-6}$ for `f64`                                                                                                                     |
+| Bumpless change (FR-13)              | Invariant: $v$ before and after `set_gains`                                                           | $\lvert v' - v \rvert$                                                                    | $\le 4 u (\lvert K_p e \rvert + \lvert I \rvert + \lvert K_d \delta \rvert)$                                                                |
+| PID model (FR-14)                    | Closed-form coefficient expansion                                                                     | Exact equality                                                                            | Equal                                                                                                                                       |
+| Step metrics (FR-15)                 | Closed form for $\omega_n^2/(s^2 + 2\zeta\omega_n s + \omega_n^2)$ sampled at period $h$              | Absolute error of times; absolute error of overshoot (%)                                  | $\le h$; $\le 100 \lvert \ddot y(t_p) \rvert h^2 / 8$                                                                                       |
+| Compensators (FR-6, FR-7)            | Closed-form coefficient expansion                                                                     | Exact equality                                                                            | Equal                                                                                                                                       |
 
 $u$ is the unit roundoff of `T`. The locus residual normalization is the
 standard backward-error scaling for polynomial roots; the bound assumes the
@@ -772,8 +770,8 @@ target (C-6).
 
 ### 9. Development Plan
 
-| Phase                             | Delivers                                                                                                                                                                                 | Requirements                                                                             | Effort | Status  |
-|:----------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------------------------------------------------------------------------------|:-------|:--------|
+| Phase                             | Delivers                                                                                                                                                                                 | Requirements                                                                             | Effort | Status   |
+|:----------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------------------------------------------------------------------------------|:-------|:---------|
 | 1. Module, Routh and compensators | `src/classical_control` (stub renamed), `ClassicalError`, `routh`, `compensator`                                                                                                         | FR-2, FR-6, FR-7, C-1, C-3, C-4, C-7                                                     | 3 days | Complete |
 | 2. Frequency domain               | `response`, `nyquist`, `margins` with bisection refinement and delay margin, cross-check tolerances                                                                                      | FR-3, FR-4, FR-5, FR-16, NFR-1, NFR-2, NFR-3                                             | 4 days | Complete |
 | 3. Locus and step metrics         | `locus`, `step`                                                                                                                                                                          | FR-1, FR-15, C-2                                                                         | 2 days | Complete |
@@ -787,12 +785,12 @@ Phase 4 starts from the prior `classical_tools` realization and PID code (commit
 
 ### 10. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                                                                                                                                                                                                                                                              |
-|:---------|:----------------|:----------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | October 4, 2026 | @MitchellDScott | Initial design document: FR-1 to FR-7, NFR-1 to NFR-3, C-1 to C-5.                                                                                                                                                                                                                                                                                       |
-| 2.0      | October 5, 2026 | @MitchellDScott | Adds firmware execution and analysis extensions: FR-8 to FR-20, NFR-4, C-6 to C-9. DF1 and DF2T sections over `T: Scalar + MulAcc` with one narrowing per output, fixed-point quantization, coefficient update and section stability for gain schedules. Changes NFR-3 (margin refinement) and C-5 (run-time PID and fixed-point realizations in scope). |
-| 2.1      | October 6, 2026 | @MitchellDScott | Implementation: inline test module per submodule (§4.1), `quantize` takes section coefficients (§4.9), `ClassicalError::NotContinuous` for discrete Nyquist input (§4.5, §4.11), phase-margin bound scaled by $180^\circ / \phi_m$ (§6.2); phases 1 to 5 complete. |
-| 2.2 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending review. |
+| Revision | Date             | Author            | Description                                                                                                                                                                                                                                                                                                                                              |
+|:---------|:-----------------|:------------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | October 4, 2026  | @MitchellDScott   | Initial design document: FR-1 to FR-7, NFR-1 to NFR-3, C-1 to C-5.                                                                                                                                                                                                                                                                                       |
+| 2.0      | October 5, 2026  | @MitchellDScott   | Adds firmware execution and analysis extensions: FR-8 to FR-20, NFR-4, C-6 to C-9. DF1 and DF2T sections over `T: Scalar + MulAcc` with one narrowing per output, fixed-point quantization, coefficient update and section stability for gain schedules. Changes NFR-3 (margin refinement) and C-5 (run-time PID and fixed-point realizations in scope). |
+| 2.1      | October 6, 2026  | @MitchellDScott   | Implementation: inline test module per submodule (§4.1), `quantize` takes section coefficients (§4.9), `ClassicalError::NotContinuous` for discrete Nyquist input (§4.5, §4.11), phase-margin bound scaled by $180^\circ / \phi_m$ (§6.2); phases 1 to 5 complete.                                                                                       |
+| 2.2      | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending review.                                                                                                                                                                                                                                                      |
 
 ---
 
