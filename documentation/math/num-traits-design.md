@@ -639,7 +639,8 @@ for Complex<T>`). Every implementor must name `Real` and provide
 | 1.4      | August 24, 2026 | @MitchellDScott | Full implementation and verification of numeric traits and complex number primitives.                                                     |
 | 1.5      | September 23, 2026 | @MitchellDScott | FR-6 total arithmetic contract: `Scalar` requires the saturating traits, added `SaturatingDiv`/`SaturatingNeg`, §4.4, Alternative 8. `Quantized` implements `SaturatingDiv` (`fixed-num-design.md` §4.3). |
 | 1.6      | September 24, 2026 | @MitchellDScott | §4.2 and §4.3: `Quantized` is `Scalar` only where `1` is representable (`fixed-num-design.md` FR-7); `Q7`/`Q15`/`Q31`/`Q63` are not. |
-| 1.7 | October 13, 2026 | Claude Sonnet 5.5 | Adds FR-7 MulAcc and section 4.5 for the classical-control realizations; header migrated to the Approval and Doc Status badge grammar. |
+| 1.7 | October 13, 2026 | Claude Sonnet 5.5 | Test-suite verification table, retargeted Complex MulAcc bounds and retitle. |
+| 1.8 | October 13, 2026 | Claude Sonnet 5.5 | Adds FR-7 MulAcc and section 4.5 for the classical-control realizations; header migrated to the Approval and Doc Status badge grammar. |
 
 ---
 
