@@ -3,9 +3,7 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use control_rs_ets::comms::{
-    Command as CommCommand, PROTOCOL_VERSION, TestState,
-};
+use control_rs_ets::comms::{PROTOCOL_VERSION, TestState};
 
 use crate::bridge::ETSBridge;
 use crate::error::HostError;
@@ -396,8 +394,7 @@ pub fn run_headless_ets_with_options(
 /// closed. `TryReset` is a no-op in the normal server command loop, so pairing
 /// it with every discovery attempt is safe.
 fn send_discovery(bridge: &mut ETSBridge) -> Result<(), HostError> {
-    bridge.send_command(&CommCommand::TryReset)?;
-    bridge.send_command(&CommCommand::ListSuites)
+    crate::link::discover(bridge)
 }
 
 /// Builds the [`RunRecord`] for a finished session.
@@ -427,7 +424,7 @@ fn finish_record(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use control_rs_ets::comms::Telemetry;
+    use control_rs_ets::comms::{Command as CommCommand, Telemetry};
     use control_rs_ets::settings::SettingValue;
 
     use crate::bridge::BridgeMessage;
