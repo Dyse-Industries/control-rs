@@ -24,8 +24,7 @@ use control_rs_ci::ets::{TargetResult, case_line};
 use control_rs_ci::ui;
 use control_rs_ets_host::target::parse_targets;
 use control_rs_ets_host::{
-    RunOptions, RunRecord, Target, TestState, build_target_elf,
-    run_headless_ets_with_options,
+    RunOptions, RunRecord, Target, TestState, build_target_elf, run_headless,
 };
 
 /// Default result file, inside the CI artifact directory.
@@ -140,7 +139,7 @@ fn run_target(target: &Target, options: RunOptions) -> TargetResult {
         }
     }
     ui::status("Running", &name);
-    match run_headless_ets_with_options(target, options) {
+    match run_headless(target, options) {
         Ok(record) => TargetResult::from_record(name, record),
         Err(e) => TargetResult::from_error(name, e.to_string()),
     }
