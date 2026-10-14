@@ -1,6 +1,6 @@
 # Embedded Test Server (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-May_23,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 ![Design Status Badge](https://img.shields.io/badge/Design%20Status-Stale-lightgrey)
 
@@ -8,13 +8,23 @@
 
 ### 1. Introduction
 
-While host-based unit tests execute quickly, they cannot capture physical timing
-constraints, register configurations or real-time hardware behaviors. The
-Embedded Test Server (ETS) bridges this gap by executing compiled firmware
-directly on the target Microcontroller Unit (MCU), operating as an interactive,
-persistent test server. Rather than running a static, sequential test suite that
-requires restarting the board every run, the Server remains idle on the device,
-waiting for commands.
+While host-based unit tests execute quickly, they cannot capture physical timing constraints, register configurations or real-time hardware behavior. The Embedded Test Server (ETS) bridges this gap by operating directly on the target microcontroller (MCU) as a persistent execution substrate. Rather than running a static test binary that requires restarting the board between runs, the server stays resident on the device, servicing host commands, profiling kernels and running continuous lifecycle tasks. This document owns the ETS requirements, layers and component map. The target execution model is specified in `ets-executive-design.md`, which this document defers to for the server, runner, modes, settings, fault path and board binding; transport and framing are specified in `ets-link-design.md`.
+
+Verification spans a multi-tier hierarchy:
+
+- **Layer 0 (Host Algorithmic Math)**: Pure unit tests on host (`cargo test`) for matrix math, transfer functions and solvers.
+- **Layer 0/1 (Target Kernel Benchmarking)**: Atomic cases executed on the MCU with interrupts masked to measure cycle budgets and stack watermarks.
+- **Layer 1 (Real-Time In-the-Loop HIL and SysId)**: Target control kernels executing lifecycle tasks against a host plant simulation or frequency-response stimulus generator.
+- **Layer 1/2 (Firmware Integration HIL)**: Complete target application firmware running with an internal ETS server between the hardware abstraction layer (HAL) and the control tasks.
+- **Layer 1/2+ (Unmodified Firmware HIL)**: The device under test (DUT) runs production firmware with no on-target server and connects through its physical peripherals to a hardware test harness. The harness firmware implements `LifecycleTask`: its step writes stimulus to the DUT peripheral inputs and samples the DUT outputs. Harness design is outside this document.
+
+Primary usage scenarios:
+
+- **Atomic verification and profiling (Layer 0/1)**: A developer triggers a control kernel or math routine on target; failure is an assertion crash, a stack overflow or a cycle count above the timing budget.
+- **Closed-loop HIL simulation (Layer 1)**: A developer runs a target controller against a host plant simulation over the link; failure is a mispaired step, a lost packet, a link loss or numerical divergence.
+- **Online setting tuning (Layer 1 and 1/2)**: A developer inspects and changes gains or filter settings while idle or between steps; failure is an interrupted run, a value outside its bounds or an inconsistent setting.
+- **Fault containment and recovery (all layers)**: Target firmware panics, faults, blocks or loses its host link; failure is an actuator left energized, a fault left unreported or a target that never recovers.
+- **Unmodified DUT peripheral HIL (Layer 1/2+)**: An unmodified controller is validated against a host plant model through an external harness; failure is signal timing divergence, a peripheral lockup or a controller that does not stabilize the simulated dynamics.
 
 ---
 
@@ -22,420 +32,242 @@ waiting for commands.
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Interactive Server Execution**: The target Server must run
-  persistently as an idle loop, listening for host commands and executing tests
-  on command without restarting the device between test cases.
-- **FR-2 — Distributed Test Discovery**: The system must automatically collect
-  and register test cases across multiple modules via linker metadata without a
-  centralized runtime registry.
-- **FR-3 — Telemetry Stream**: The target must transmit execution status,
-  assertions, performance metrics and debugging logs back to the host over the
-  active transport interface.
-- **FR-4 — Crash Recovery**: On a test panic or hardware exception, the Server
-  must capture diagnostic details (a "Firmware Black Box") and transmit them
-  before initiating system recovery.
-- **FR-5 — Cooperative lockup recovery**: If a test stops responding, the target
-  services a cooperative reset request from the host. Hardware watchdog
-  recovery is out of scope (§6.3).
+- **FR-1 — Interactive Server Execution**: The target server runs persistently as an idle loop, listening for host commands and executing cases and tasks on command.
+- **FR-2 — Distributed Test Discovery**: The system collects and registers test cases across modules through linker metadata without a centralized runtime registry.
+- **FR-3 — Telemetry Stream**: The target transmits execution status, assertions, performance metrics and logs to the host over the active transport.
+- **FR-4 — Crash Recovery**: On a panic or hardware exception the target drives the active task to its safe state and reports the fault when the transport is free; otherwise the host detects the unreported fault before recovery.
+- **FR-5 — Lockup Recovery**: If a test stops responding, the target services a cooperative reset request from the host; if it is blocked and cannot, a board watchdog started in `#[ets_setup]` and fed through the board binding, or a host-triggered external reset, recovers it.
+- **FR-6 — Lifecycle Task Execution**: The target supports continuous execution of `LifecycleTask` implementations with setup, reset, teardown and a fault-path safe state, at line rate, synchronized to input arrival, on a fixed period or released by a board event.
+- **FR-7 — Online Setting Reflection**: The target exposes named primitive settings, discoverable with type, value and bounds, readable by name or index and writable by name while idle and between steps of an active task.
+- **FR-8 — Multi-Layer Fixture Compatibility**: The execution interface decouples data exchange from transport mechanics, allowing execution against an internal firmware server over USB, UART or Ethernet (Layers 1 and 1/2).
+- **FR-9 — Concurrent Out-of-Band Monitoring**: The ETS transport and host architecture support running an independent target monitor (for example, bootloader logs, panic traces, or hardware UART monitor) in a separate terminal concurrently with the interactive TUI or headless runner, either over separate physical/virtual interfaces (such as dual USB/UART on ESP32-C6) or via detached host log streams, without communication interference or port contention.
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Real-Time Determinism**: Telemetry and control operations must
-  maintain microsecond-level timing budgets so they do not induce jitter in
-  the test under execution.
-- **NFR-2 — Timing-Critical Logging**: The logging system must format without
-  blocking the CPU or performing expensive on-target string formatting during tests.
+- **NFR-1 — Real-Time Determinism**: Telemetry and control operations keep microsecond-level timing budgets so they do not induce jitter in the test under execution.
+- **NFR-2 — Timing-Critical Logging**: The logging system formats without blocking the CPU or performing expensive on-target string formatting during tests.
+- **NFR-3 — Task Step Overhead**: In lifecycle task execution, round-trip processing and dispatch overhead on the target does not exceed $2.1\ \text{ms}$ per step on USB Full-Speed (12 Mbps) or serial links ($\le 2\times$ the USB 1 ms frame period); on High-Speed USB 2.0 (480 Mbps) links, dispatch overhead is $\le 250\ \mu\text{s}$ per step; on CAN / CAN-FD links, transport framing conforms to bus bitrates (for example, 500 kbps to 5 Mbps).
 
 #### 2.3 Constraints
 
-- **C-1 — Zero Dynamic Allocation**: The target Server must compile under
-  `#![no_std]` with strictly zero dynamic heap allocation.
-- **C-2 — Memory & Flash Efficiency**: The target Server (excluding tests) must
-  consume under 32 KB Flash and 8 KB RAM, with test suite descriptors residing
-  in ROM.
+- **C-1 — Zero Dynamic Allocation**: The target server compiles under `#![no_std]` with zero dynamic heap allocation.
+- **C-2 — Memory and Flash Efficiency**: The target server, excluding tests, consumes under 32 KB Flash and 8 KB RAM, with descriptors residing in ROM.
+- **C-3 — Unsupported Small Targets**: Targets below the C-2 budget, including 8-bit parts, are not verified; fitting the ETS to them is the user's responsibility (`ets-executive-design.md` C-8).
+- **C-4 — Transport-Owned Bandwidth**: Conforms to `ets-executive-design.md` C-7; the link (`ets-link-design.md`) owns link bandwidth, framing and any receive queue.
+- **C-5 — CI Runs Cases Only**: `control-rs-ci` runs atomic cases and no lifecycle tasks; QEMU task capability stays available to other frontends.
 
 ---
 
 ### 3. Technical Overview
 
-The ETS framework is structured as a dual-targeted system. `control-rs-tui`
-and `control-rs-ci` are host frontends; `control-rs-ets-host::ETSBridge`
-drives both. The target-side `Server` is ETS on a physical board and virtual
-Embedded Test Server (virtual ETS) under QEMU.
-
-1. **Host-Side (PC)**:
-    - **`control-rs-ets-host`**: Reusable host library providing
-      `ETSBridge`, framing protocols (`postcard`, `crc`), transport drivers,
-      and headless test-runner state machines.
-    - **`control-rs-tui`**: Standalone interactive terminal console
-      (`control-rs-tui` → virtual ETS or `control-rs-tui` → ETS).
-    - **`control-rs-ci`**: Repository quality-gate runner; drives headless ETS
-      tests via `control-rs-ets-host` and writes `ci-report.md` and
-      `ets-results.json`.
-2. **Target-Side (MCU or emulator)**:
-    - **ETS / virtual ETS**: The main loop that receives commands, dispatches
-      test functions and manages the test state machine. ETS is the board
-      path; virtual ETS is the same `Server` under QEMU.
-    - **HostComms Concrete Drivers**: Drivers implementing UART (with DMA) or
-      SEGGER RTT for data transport.
-    - **Distributed Test Sections**: Test functions compiled into a dedicated
-      ELF memory section.
-    - **Panic Handler**: Diagnostic capture, then a reset once the host sends
-      `Command::TryReset` (FR-5). No hardware watchdog is armed in this
-      release (§4.3).
+The ETS splits into data and behavior on both sides of one message link. On the target, suite modules compile into descriptors in flash; a `Server` dispatches host commands to a `Runner` parameterized by an execution mode, and a fault path settles any active run (`ets-executive-design.md`). On the host, one `Session` owns the link, runs one case or task at a time and lends the link to a run object (`ets-host-design.md`). Frontends sit above the session: `control-rs-tui` for interactive use and `control-rs-ci` for headless gates. The command and telemetry schema, version check and transport links are in `ets-link-design.md`; registration is in `test-suite-design.md` and `macros-design.md`; profiling is in `cpu-profiler-design.md`.
 
 ```mermaid
-flowchart TD
-    Host <==>|" Serial (UART / RTT ) "| MCU["Target Microcontroller"]
-
-    subgraph Host ["Host Environment"]
-        direction TB
-        TUI["control-rs-tui"]
-        CI["control-rs-ci"]
-        Bridge["control-rs-ets-host (ETSBridge)"]
-        TUI <--> Bridge
-        CI <--> Bridge
+flowchart LR
+    subgraph HOST["Host (std)"]
+        FE["Frontend<br/>control-rs-tui / control-rs-ci / script"]
+        SES["Session&lt;L: HostLink&gt;<br/>single writer, discovery"]
+        RUNS["CaseRun / TaskRun&lt;S, O&gt;<br/>TaskSim, RunObserver"]
+        FE --> SES --> RUNS
     end
-
-    subgraph MCU ["Target Microcontroller (control-rs-ets)"]
-        direction TB
-        Server["Server"]
-        Registry[".ets_test_suites Section"]
-        Server -->|Polls/Executes| Registry
+    LINK[["Message link<br/>stream / USB bulk / CAN"]]
+    SES <--> LINK
+    subgraph TARGET["Target (no_std)"]
+        COMMS["Link implementation<br/>reference or user"]
+        SRV["Server<br/>dispatcher"]
+        RUN["Runner&lt;L, P, B, M&gt;<br/>Atomic / Lockstep / FreeRunning / Periodic / Triggered"]
+        DESC["Descriptors in flash<br/>suites, executables, settings"]
+        FLT["Fault path"]
+        WDT["Board binding<br/>feed, wait, releases"]
+        COMMS --> SRV --> RUN
+        RUN --> DESC
+        FLT --> DESC
+        RUN -.-> WDT
     end
+    LINK <--> COMMS
 ```
+
+The ETS lives in `control-rs-ets` (target), `control-rs-ets-host` (host), `control-rs-tui`, `control-rs-ci` and `control-rs-macros`.
 
 ---
 
 ### 4. Architecture
 
-#### 4.1. Workspace Structure & Cross-Compilation
+#### 4.1 Workspace Structure
 
-To prevent compilation friction, `control-rs` implements a dual-targeted nested
-Cargo workspace structure. This separates platform-independent business logic
-from target-specific peripheral drivers:
+The workspace is a nested Cargo workspace split by target environment:
 
 ```
-control-rs (Root Workspace)
-├── control-rs-ets/       # Target-side server event loop, settings registry and profiling (no_std)
-├── control-rs-ets-host/  # Host transport, framing, and headless runner library (publish = false)
-├── control-rs-tui/       # Standalone interactive terminal console binary (publish = false)
+control-rs (root workspace)
+├── control-rs-ets/       # Target server, runner, param table, board binding, links and fault path (no_std)
+├── control-rs-ets-host/  # Host session, link, run objects and headless runner (publish = false)
+├── control-rs-tui/       # Interactive terminal console binary (publish = false)
 ├── control-rs-ci/        # Repository quality-gate runner binary (publish = false)
-├── control-rs-macros/    # Procedural macros for test suite setup and registry generation
-├── examples/             # Target binary examples (qemu/teensy4) executing on-device
-└── src/                  # Standard host-side library algorithms and modules
+├── control-rs-macros/    # #[ets_suite], #[ets_setup] and derive macros
+├── examples/             # Target binaries (qemu, teensy4, esp32c6, uno_r4, xiao_nrf52840)
+└── src/                  # Host-side library algorithms
 ```
 
-Because serial ports and USB debug bridges are exclusive resources, parallel
-host execution will deadlock. Host-side integration tests (via `cargo test`)
-must claim exclusive access and run in a single-threaded configuration using
-the `--test-threads=1` flag in Cargo.
+#### 4.2 Object Ownership
 
-#### 4.2. Test Discovery via Linker Metaprogramming
+Each object has one owning document; other documents link to it.
 
-To avoid the overhead of runtime registration or unstable nightly custom test
-harnesses, test discovery is implemented as a "distributed slice" inside a
-dedicated linker section named `.ets_test_suites`.
+| Object | Owner |
+|:-------|:------|
+| `Server`, `Context`, `Runner`, `Mode`, descriptors, settings, fault path, board binding | `ets-executive-design.md` |
+| `Command`, `Telemetry`, payload encoding, version check, `Link`, `ByteStream`, reference links | `ets-link-design.md` |
+| `#[ets_suite]` expansion, linker sections, `LifecycleTask` registration | `test-suite-design.md`, `macros-design.md` |
+| Cycle, time and stack measurement (`CPUProfiler`) | `cpu-profiler-design.md` |
+| `Session`, `HostLink`, `CaseRun`, `TaskRun`, `TaskSim`, `RunObserver` | `ets-host-design.md` |
+| Frontend views | `tui-design.md` |
 
-This mechanism is implemented today: `control-rs-macros` emits
-`#[unsafe(link_section = ".ets_test_suites")]` static descriptors and
-`control-rs-ets/build.rs` generates a linker script reserving the section with
-`KEEP` and exposing `__ets_test_suites_start`/`__ets_test_suites_end` boundary
-symbols.
+Layers are defined here once; other documents link to this section.
 
-Each test is declared using static structs:
+#### 4.3 Target-Side Flow
 
-```rust
-pub struct ExecDescriptor {
-    pub description: &'static str,
-    pub name: &'static str,
-    pub test_fn: fn(),
-}
-
-pub struct SuiteDescriptor {
-    pub description: &'static str,
-    pub executables: &'static [ExecDescriptor],
-    pub name: &'static str,
-    pub settings: &'static [&'static dyn Setting],
-}
-```
-
-#### 4.3. Execution Model & Watchdog
-
-The Server's runner executes test suites in a non-preemptive executive loop.
-Once a test function is invoked, it retains total program control until
-finished.
-
-##### Vulnerability to Lockups
-
-If a test enters an infinite loop or blocks waiting for an interrupt that never
-fires, the MCU will freeze. The host will register a timeout, but the target
-will remain unresponsive, requiring physical intervention.
-
-##### Future Extension: Mitigation via Task Watchdogs
-
-While cooperative tests run in a non-preemptive environment and can
-theoretically lock up the target MCU, the current MVP executes without active
-watchdog timers to simplify initial deployment.
-
-To prevent target freezes in production, a future extension will introduce
-**Task Watchdog**:
-
-1. The hardware Watchdog Timer (WDT) is initialized on boot.
-2. Individual test sub-tasks dynamically register virtual watchdogs with a
-   central multiplexer.
-3. The hardware WDT is fed only if *all* registered virtual watchdogs check in
-   within their individual timeouts.
-
-#### 4.4. Panic Handling, Firmware Black Box and State Recovery
-
-When a test assertion fails, the custom `#[panic_handler]` takes over to capture
-debugging forensic data and return the system to a clean state.
-
-##### Firmware Black Box
-
-Before rebooting, the panic handler constructs a diagnostic payload:
-
-- Panic line number and file.
-- Hardware interlock states.
-- System Handler Control and State Register to capture fault details.
-
-##### Reset Path
-
-After sending the black box, the handler disables interrupts, polls for
-`Command::TryReset` and then calls `CPUProfiler::reset()`, which on Cortex-M
-is `SCB::sys_reset` (`control-rs-ets/src/util.rs` `handle_failure`). A soft
-reset restarts the core but can leave a peripheral such as DMA active, which
-may corrupt RAM after the reboot. The hardware-reset path that avoids this
-is the task watchdog of §4.3, deferred with it.
-
-If the system requires recovery from board-level power failures, external
-supervisor ICs and bulk capacitors are integrated to allow the MCU to gracefully
-shut down and prevent NVRAM corruption.
-
-#### 4.5. Target-Side Execution Flow
+The server is idle between commands and holds no execution logic. A case is a one-step `Atomic` executable: interrupts are masked, cycles and stack are measured and the run returns to idle. A lifecycle task runs `Lockstep`, `FreeRunning`, `Periodic` or `Triggered` with interrupts live, regains control at each step boundary and ends with one verdict. A fault from any state is settled from the run phase alone.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Init: Power On / Reset
-    Init --> Idle: Init Peripherals
-    Idle --> Executing: Command (IRQs disabled)
-    Executing --> Idle: Test Success
-    Executing --> PanicHandler: Panic / Fault
-    Executing --> [*]: Hang → host session timeout
-
-    state PanicHandler {
-        [*] --> Capture: SHCSR & Line Info
-        Capture --> SendBox: Framed Black Box
-        SendBox --> AwaitReset: poll for TryReset
-    }
-    PanicHandler --> Init: CPUProfiler::reset (SCB soft reset)
+    [*] --> Idle: reset, TargetInfo sent
+    Idle --> Running: RunExecutable(mode)
+    Running --> Idle: verdict, teardown, report
+    Running --> Fault: panic or exception
+    Idle --> Idle: ListSuites, Param
+    Fault --> [*]: safe_state, report if transport free, reset
+    Running --> Hung: step does not return
+    Hung --> [*]: watchdog or external reset
 ```
+
+#### 4.4 Component Modularity and Custom Tooling Substitution
+
+The ETS architecture enforces strict component modularity, allowing any subsystem to be used in isolation or substituted with custom user tooling without breaking the server or runner:
+
+1. **Custom Transports (`Link` & `ByteStream`)**:
+   The `Link` trait (`ets-link-design.md`) encapsulates all packetizing, framing, and transport buffering. A user with a custom telemetry radio, shared-memory buffer, multi-drop RS-485 bus, or proprietary CAN stack implements `Link` directly without modifying `Server`, `Runner`, or the test discovery macro.
+2. **Custom Profiling (`CPUProfiler`)**:
+   Silicon timing and stack watermarking hook into the `CPUProfiler` trait (`cpu-profiler-design.md`). Targets lacking DWT/CSRs or utilizing proprietary hardware trace buffers (for example, ETM, CoreSight, external logic analyzer GPIO toggles) substitute a custom profiler or use the zeroed `HostCPUProfiler`.
+3. **Custom Board Bindings (`BoardBinding`)**:
+   Watchdog servicing, low-power sleep hooks (`wfi`), and hardware release events (for example, ADC completion or timer ISRs) interface via `BoardBinding` (`ets-executive-design.md`). A user can substitute a proprietary hardware watchdog or event scheduler while retaining the standard ETS executive.
+4. **Standalone Task Execution ("Franken-Prototypes")**:
+   `LifecycleTask` implementations are pure `#![no_std]` algorithms decoupled from `Server`. A user can extract and execute an ETS lifecycle task directly inside an external RTOS thread (for example, FreeRTOS, Zephyr, RTIC) or a bare-metal custom cyclic loop without linking `Server` or `control-rs-ets-host`.
 
 ---
 
 ### 5. Alternatives
 
-#### 5.1. Debug-Probe-Driven execution (probe-rs + embedded-test)
-
-* Instead of UART communication, the host uses `probe-rs` to flash tests and
-  direct execution using ARM semihosting (`SYS_GET_CMDLINE`).
-    - *Reason for Rejection*: Semihosting halts the CPU pipeline during I/O
-      operations [1]. This introduces millisecond-level timing overhead,
-      destroying the real-time determinism.
-
-#### 5.2. Soft Reset (SCB::sys_reset) vs. Watchdog Starvation
-
-* Using the CPU System Control Block to reboot.
-    - *Status*: Shipped as the MVP reset (§4.4), triggered by the host's
-      `TryReset`. It can leave peripherals (like DMA) active, risking
-      post-reboot memory corruption. Watchdog starvation gives a clean state
-      and is deferred with the task watchdog (§4.3).
-
-#### 5.3. Third-Party Distributed Slice (`linkme`)
-
-* A distributed slice is "a collection of static elements that are gathered into a contiguous section of the binary by the linker", whose elements "may be defined individually from anywhere in the dependency graph of the final binary" [2]. Adopting `linkme::DistributedSlice` in place of the hand-rolled
-  `.ets_test_suites` linker section.
-    - *Reason Not Adopted*: `linkme` 0.3.37 is `#![no_std]` and handles `target_os = "none"` through the ELF `__start_`/`__stop_` section symbols (source of `linkme-impl` `declaration.rs`), so neither `std` nor element homogeneity rules it out: the `.ets_test_suites` section already holds a homogeneous slice of `&'static SuiteDescriptor`. The custom mechanism is
-      already implemented, tested and shipped (§4.2), and a bare-metal
-      `SECTIONS` script must place the section either way, so `linkme` would
-      add a dependency without removing linker-script work. Decided; not
-      revisited (`macros-design.md` §5).
-
-#### 5.4. COBS Byte-Stuffed Framing
-
-* Delimiting frames with COBS byte-stuffing (escaping the frame boundary byte
-  out of the payload) instead of a length-prefixed header.
-    - *Reason for Rejection*: The `HostComms` design
-      (`documentation/ets/host-comm-design.md`, §4.4–§5) selected
-      a sync-byte (`0xAA 0x55`) + big-endian length prefix + CRC-16-IBM-SDLC
-      trailer to minimize target-side processing and framing overhead and
-      this is what `control-rs-ets/src/comms.rs` implements. The tradeoff is a
-      weaker resynchronization guarantee than COBS provides (§7).
+| Alternative | Rejected Because | Reference |
+|:------------|:-----------------|:----------|
+| Disjoint HIL and ETS frameworks | Duplicates board bring-up, clocks and drivers across two firmware images | ADR-0002 |
+| Channelized framing (control plane and raw data plane) | A payload-level encoding flag declared at discovery gives the same raw option without a second framing layer or a framing break | ADR-0002 |
+| Framing inside the server | Duplicates transport delimiting and integrity on USB bulk and CAN | `ets-link-design.md` |
+| Lifecycle branches inside the server | Couples every execution model to the dispatcher; violates FR-1 | `ets-executive-design.md` |
+| Coupling visualization into the simulation loop | Terminal redraws take tens of milliseconds and delay lockstep plant integration | ADR-0002 |
+| `dyn Trait` in linker sections | Fat pointers and associated types are not dyn-compatible; violates C-1 | (linkme, 2026) |
+| Hosted integration into an RTOS scheduler | Production firmware owns preemption; out of scope | (rtic, 2026) |
+| Retained-RAM fault record in the server | Board-specific; the host detects unreported faults from session state | (panic-persist, 2026) |
 
 ---
 
 ### 6. Verification & Validation
 
-#### 6.1 Approach
+#### 6.1 Verification
 
-The implementation must produce evidence that the server discovers every
-registered suite, executes cases on command without restarting between them,
-reports profiling telemetry the host can attribute to a case, and recovers from
-a target fault with a diagnosable record rather than a silent reset.
+Each requirement is discharged by conditions that share targets with the owning design documents.
 
-| Method | Mechanism |
-|:-------|:----------|
-| Requirements-based test | `#[test]` over the server state machine on the host with a mocked transport |
-| Requirements-based test | Descriptor set recovered from the linked ELF compared against source annotations |
-| On-target execution | ETS suites under QEMU across every triple in the matrix |
-| On-target execution | Physical Teensy 4.1 session, including deliberate panic capture and cooperative reset |
-| Resource usage evaluation | Stack painting and high-water measurement |
-| Static analysis | `cargo clippy-ci`; inspection for allocation and for `core::fmt` on the hot path |
-| Metamorphic relation | Frame resynchronization after injected line corruption |
-| Coverage measurement | `cargo coverage` on host-testable modules |
+| Condition | Requirement | Method | Target | Criterion |
+|:----------|:------------|:-------|:-------|:----------|
+| VC-1.1 | FR-1 | `libtest` | `control_rs_ets::server::tests::atomic_run_reports_state_and_stats` | A case and a task start through the same command and the server returns to idle after each; FR-1 holds iff all conditions hold |
+| VC-2.1 | FR-2 | `libtest` | `control_rs_ets::server::tests::discovery_reports_cases_tasks_and_params_with_metadata` | Discovery returns exactly the set of annotated suites, cases and tasks |
+| VC-3.1 | FR-3 | `libtest` | `control_rs_ets::server::tests::atomic_run_reports_state_and_stats` | Status, metrics and log messages reach the host in order |
+| VC-4.1 | FR-4 | `libtest` | `control_rs_ets::fault::tests::phase_transition_calls_safe_state_once` | `safe_state` runs once from `Armed` and never from other phases; FR-4 holds iff all conditions hold |
+| VC-5.1 | FR-5 | `libtest` | `control_rs_ets::run::tests::feed_at_boundaries_and_wait_only_when_nothing_is_runnable` | The feed hook runs at idle, at each boundary and around each wait and never during a step; FR-5 holds iff all conditions hold |
+| VC-6.1 | FR-6 | `libtest` | `control_rs_macros::tests::missing_lifecycle_fn_fails_to_compile` | Omitting any of the five lifecycle functions is a compile error |
+| VC-7.1 | FR-7 | `libtest` | `control_rs_ets::server::tests::param_table_get_set_echo` | In-bounds writes store, out-of-bounds writes fail and both echo the stored value; FR-7 holds iff all conditions hold |
+| VC-9.1 | NFR-1 | `analysis` | — | DWT-measured boundary cost on Teensy 4.1 stays within the NFR-1 budget |
+| VC-10.1 | NFR-2 | `inspection` | — | No on-target string formatting appears on the telemetry hot path |
+| VC-11.1 | NFR-3 | `analysis` | — | DWT-measured round-trip dispatch overhead on Teensy 4.1 is at most $2.1\ \text{ms}$ per step |
+| VC-12.1 | C-1 | `inspection` | — | The target crate builds `no_std` with no allocator symbols in the firmware disassembly |
+| VC-13.1 | C-2 | `inspection` | — | The measured server footprint stays under 32 KB Flash and 8 KB RAM |
+| VC-14.1 | C-3 | `review` | — | The documentation states that targets below C-2 are the user's responsibility |
+| VC-15.1 | C-4 | `inspection` | — | No framing, receive interrupt, queue or link rate limiter exists in the server code |
 
-Stack measurement uses painting, which is "very common in embedded systems and
-is used by both FreeRTOS and Zephyr RTOS" and works by painting the stack with a
-known value and measuring the highest location disturbed [3]. Its
-complement, per-function static usage from `-fstack-usage`, is "difficult to use
-when trying to analyze nested function calls" [3], which is why
-the runtime high-water mark is the primary measure here. No static stack
-analysis gate exists (the static-analyzer design and its `analyze` gate were withdrawn on 2026-09-14).
-
-Target: 80% line coverage of host-testable server logic, measured with
-`cargo coverage`.
-
-Excluded: target-specific driver and profiler implementations, which require
-hardware or an emulator and are covered by on-target execution; the panic
-handler, which is reachable only from a real fault; and generated descriptor
-statics, which are data.
-
-1. **Hardware run**: Execute the full suite on a Teensy 4.1, including a
-   deliberate panic, and confirm the host receives a diagnosable record.
-2. **Emulated matrix**: Execute the same suite under QEMU on every supported
-   triple.
-3. **Third-party adoption**: Build a downstream firmware project that declares
-   its own suites and drives them through `control-rs-ets-host`.
+Coverage: 90% line coverage of `control-rs-ets` `server`, `run`, `params` and `fault`, measured with `cargo coverage`. Excluded: architecture-specific fault entry and interrupt masking.
 
 #### 6.2 Acceptance
 
 | Claim | Oracle | Measure | Bound |
 |:------|:-------|:--------|:------|
-| Discovery completeness | Source annotations | Suites and cases reported to the host | Exact set equality |
-| Persistent execution | A suite of *n* cases | Target restarts during the suite | 0, absent an injected fault |
-| Cycle telemetry attribution | Host-side case boundaries | Reports attributed to the running case | 1:1, no orphans |
-| Panic capture | Deliberate panic on target | Panic record received by the host before reset | Received, with location |
-| Cooperative reset | Target command listener | Reset request serviced via `Command::TryReset` | Acknowledged, clean reboot |
-| Frame resynchronization | Injected corrupted bytes | Frames lost before the stream recovers | At most one |
-| Allocation freedom | Disassembly of a target build | Allocator symbols | 0 |
-| Hot-path formatting | Disassembly of a target build | `core::fmt` reachable from telemetry emission | None outside the `SetSetting` error path |
+| Discovery completeness | Source annotations | Suites, cases and tasks discovered | Exact set equality |
+| Persistent execution | Mixed case and task suite | Target restarts during a suite run | 0, absent an injected fault |
+| Task step overhead | 1 kHz lockstep simulation on Teensy 4.1 | Target processing overhead per step | At most $2.1\ \text{ms}$ (NFR-3) |
+| Setting reflection | Setting write between steps | Steps until the new value is used | 1 |
+| Fault containment | Injected panic during a task run | `safe_state` executions before reset | Exactly 1 |
+| Allocation freedom | Firmware disassembly | Allocator symbols | 0 |
 
 #### 6.3 Limits
 
-- Active hardware watchdog timer lockup recovery. Target operates in a
-  cooperative executive loop without an active WDT; lockup recovery is FR-5
-  cooperative reset plus host session timeout.
-- **NFR-1 (microsecond telemetry jitter)**: no measured on-target jitter
-  bound is recorded; QEMU cycle figures are indicative per `ci-design.md` C-6.
-- **C-2 (32 KB flash / 8 KB RAM)**: no size gate enforces the bound; it
-  remains a design cap.
-- Panic capture across a brownout, and descriptor-section corruption at
-  runtime, are not established.
+QEMU timing is indicative; hardware timing is verified across the target fleet (Cortex-M7 Teensy 4.1, RISC-V ESP32-C6 DevKitC-1, Cortex-M4F Seeed XIAO nRF52840, and Cortex-M4 Arduino Uno R4 Minima). Emulator runs verify computation, not runtime behavior. Watchdog behavior is verified against a fake and on hardware only. Layer 1/2+ harness design is not verified here.
+
+---
 
 ### 7. Performance & Resource Considerations
 
-* **Flash/RAM Footprint**: The target-side Server must consume less than 32
-  KB of Flash and 8 KB of RAM. Descriptors are stored strictly in ROM.
-* **Real-Time Telemetry Jitter**: Telemetry transmission must not induce jitter
-  in the 1000 Hz control loop. Hot-path telemetry is serialized as postcard
-  enums with no on-target string formatting; `core::fmt` is confined to the
-  `SetSetting` error path. `defmt` is not currently a dependency; adopting its
-  deferred host-side formatting (sub-5 µs print overhead) remains an option if
-  formatted logging is ever needed on the hot path.
-* **DMA vs. Polling**: UART communications must use DMA to free CPU cycles
-  during test runs.
-* **Resynchronization Latency**: The implemented framing (sync-byte
-  `0xAA 0x55` + big-endian length prefix + CRC-16-IBM-SDLC trailer)
-  resynchronizes by scanning for the next sync-byte pair with a matching
-  length and checksum, typically within one frame duration (< 1ms at 115200
-  baud) under isolated bit errors. This is a weaker guarantee than COBS's
-  escape-based delimiter, which can never appear mid-payload: a corrupted
-  length field can produce a false frame boundary that a sync-byte scan alone
-  cannot detect.
+The server stays under 32 KB Flash and 8 KB RAM (C-2) with descriptors and setting metadata in ROM. Task step overhead is one command poll, two clock reads and one encode per step (`ets-executive-design.md`). Link implementations use DMA buffers to avoid CPU starvation at high link rates. Stack watermarking paints the stack and scans it after a case (Pendleton, 2023); the technique is weakly corroborated and is verified against `cargo-call-stack` bounds. Link bandwidth, framing and any receive queue belong to the link (C-4).
 
 ---
 
 ### 8. Risks & Open Questions
 
-* **RTT Buffer Overflow**: In non-blocking RTT mode, high-frequency logging can
-  overflow the target buffer if the debug probe doesn't read it quickly enough,
-  leading to lost logs.
-* **Watchdog Library Adoption**: `task-watchdog` multiplexes multiple task
-  watchdogs into a single hardware watchdog timer [6], and `mwdg` provides a
-  `no_std` software multi-watchdog library where tasks register nodes with
-  individual timeouts [7]. Both address task watchdog multiplexing (§4.3);
-  evaluating them against this crate's driver model remains an open task.
-* **Preemptive Scheduling Alternative**: RTIC provides prioritization and
-  preemptive multitasking with compile-time deadlock freedom [4]. Its
-  priority-based preemptive model addresses the cooperative multitasking
-  lockup hazard (§2) at the scheduler level rather than via watchdog
-  multiplexing. Adopting it would represent a broader change to the target
-  execution model and is deferred.
-* **CI Orchestration Precedent**: Golioth's self-hosted-runner-with-hardware-labels
-  pattern [8] is the primary reference model for CI integration with attached
-  hardware, informing the host-side dependency partitioning across
-  `control-rs-ets-host` and `control-rs-ci`.
-* **TUI Distribution**: The console is the standalone binary
-  `control-rs-tui`, intended for `cargo install`. It is `publish = false`
-  today, so users build it from this repository until the release pipeline
-  (roadmap PR10) publishes it. See `documentation/tui/tui-design.md`.
+- **Small targets (C-3)**: Footprint on Cortex-M0 class and 8-bit parts is unmeasured; atomics and cycle counters differ there (`ets-executive-design.md` §8).
+- **Blocking user code (FR-5)**: Recovery needs a fed board watchdog or a host-side external reset (`ets-executive-design.md` §4.6).
+- **Layer 1/2+ harness**: Harness firmware and fixture design are deferred.
+- **Link rate (NFR-3)**: Task step overhead scales with transport bandwidth: $\le 250\ \mu\text{s}$ for High-Speed USB (Teensy 4.0/4.1), $\le 2.1\ \text{ms}$ for Full-Speed USB (XIAO nRF52840, ESP32-C6 USB-JTAG), and transport-bounded rates for UART and CAN (Uno R4, ESP32-C6 TWAI).
 
 ---
 
 ### 9. Development Plan
 
-| Task / Feature                                                 | Description                                                                                                                                                                      | Estimated Effort |
-|:---------------------------------------------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
-| **Step 1: Test Discovery (Linker)** — *Shipped*                | `.ets_test_suites` section discovery and linker `KEEP` directive, implemented in `control-rs-macros` and `control-rs-ets/build.rs`.                                              | Complete         |
-| **Step 2: Postcard Messaging & Sync-Byte Framing** — *Shipped* | Postcard message schemas and sync-byte + length + CRC-16 framing, implemented per the `HostComms` design.                                                                        | Complete         |
-| **Step 3: ETS & Driver Integration**                           | Implement target-side server loop with UART DMA / RTT drivers. Blocking-HAL vs. Embassy driver model undecided — no `embassy` dependency currently exists in the workspace (§8). | 3 days           |
-| **Step 4: Watchdog & Panic Recovery**                          | Integrate multiplexed virtual task watchdogs (custom or adopted, §8) and custom HardFault panic handler.                                                                         | 2 days           |
-| **Step 5: Host Orchestrator (`control-rs-ci`)** — *Shipped*    | `ets` gate binary: CLI parser, wire-discovery session and headless test driver using `control-rs-ets-host` (`ci-design.md` §4.9).                                                               | 3 days           |
+| Phase | Delivers | Requirements | Effort | Status |
+|:------|:---------|:-------------|:-------|:-------|
+| 1. Target refactor | `Context`, `Server` dispatcher and `Runner` with `Atomic`, existing cases migrated | FR-1, FR-2, C-1 | 4 days | Planned |
+| 2. Settings and lifecycle | Settings, `LifecycleTask`, `Lockstep`, `FreeRunning` (`Periodic` and `Triggered` in phase 3), wire revision 2, macros | FR-6, FR-7, FR-3 | 7 days | Planned |
+| 3. Fault, recovery and board integration | Fault path, host unreported-fault detection, board binding, `Periodic` and `Triggered` | FR-4, FR-5, NFR-1 | 5 days | Planned |
+| 4. Links, host and frontends | Reference links (`ets-link-design.md`), `Session`, `CaseRun`, `TaskRun`, TUI and CI on `Session`, examples and hardware timing | FR-8, NFR-3, C-2 | 8 days | Planned |
 
 ---
 
 ### 10. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                            |
-|:---------|:----------------|:----------------|:-----------------------------------------------------------------------------------------------------------------------|
-| 1.0      | May 23, 2026    | @MitchellDScott | Initial specification for the embedded hardware-in-the-loop test harness.                                              |
-| 1.1      | July 18, 2026   | @MitchellDScott | Architecture & framing: integrated linker-section test discovery, watchdog multiplexing, and binary telemetry framing. |
-| 1.2      | August 6, 2026  | @MitchellDScott | Wire protocol: adopted sync-byte/CRC-16 framing with `postcard`-encoded payloads and zero-copy dispatch.               |
-| 1.3      | August 25, 2026 | @MitchellDScott | Module renaming: retitled Embedded Test Server (ETS) and renamed crate `control-rs-hil` → `control-rs-ets`.            |
-| 1.4      | September 9, 2026 | @MitchellDScott | Packaging split: restructured host architecture into `control-rs-ets-host`, `control-rs-tui`, and private `control-rs-xtask`. |
-| 1.5      | September 9, 2026 | @MitchellDScott | Project split: relocated to `documentation/ets/`; host frontends retargeted to `control-rs-ci` and `control-rs-tui`; research pair `embedded-test-server.json` + `.bib` restored. |
-| 1.6      | September 9, 2026 | @MitchellDScott | Citation pass: converted numeric cites to author-year, replaced the mid-document reference list with a full IEEE list at the end, grounded the watchdog, linker and stack-measurement claims, restructured §6 per `vv-standards.md`. |
-| 1.7      | September 9, 2026 | @MitchellDScott | Hardening pass: demoted status badge to Draft, rebuilt §6.4 traceability table (mapped FR-4/FR-5, eliminated phantom NFR-3), deferred watchdog to §6.7, removed TUI console from §9 Step 5, and standardized References. |
-| 1.8      | September 15, 2026 | @MitchellDScott | Locator-only §6.4; FR-5 is cooperative reset; NFR-1 and C-2 listed in 6.7 until measured. |
-| 1.9      | September 24, 2026 | @MitchellDScott | §6.3 cites `ci-design.md` C-6 (indicative emulation timing), renumbered from C-2 in its revision 1.26. No watchdog in diagrams or §4.4/§4.5 (reset is `SCB::sys_reset` after `TryReset`); §5.3 `linkme` decided (`no_std`, not adopted); Step 5 shipped as the `ets` gate; tooling crates `publish = false`; static-analyzer and `budget:` references removed. |
+| Revision | Date               | Author          | Description |
+|:---------|:-------------------|:----------------|:------------|
+| 1.0      | May 23, 2026       | @MitchellDScott | Initial specification for the embedded hardware-in-the-loop test harness.                                                                                                                                                                                                                               |
+| 1.1      | July 18, 2026      | @MitchellDScott | Architecture & framing: integrated linker-section test discovery, watchdog multiplexing, and binary telemetry framing.                                                                                                                                                                                  |
+| 1.2      | August 6, 2026     | @MitchellDScott | Wire protocol: adopted sync-byte/CRC-16 framing with `postcard`-encoded payloads and zero-copy dispatch.                                                                                                                                                                                                |
+| 1.3      | August 25, 2026    | @MitchellDScott | Module renaming: retitled Embedded Test Server (ETS) and renamed crate `control-rs-hil` → `control-rs-ets`.                                                                                                                                                                                             |
+| 1.4      | September 9, 2026  | @MitchellDScott | Packaging split: restructured host architecture into `control-rs-ets-host`, `control-rs-tui`, and private `control-rs-xtask`.                                                                                                                                                                           |
+| 1.5      | September 9, 2026  | @MitchellDScott | Project split: relocated to `documentation/ets/`; host frontends retargeted to `control-rs-ci` and `control-rs-tui`.                                                                                                                                                                                    |
+| 1.6      | September 9, 2026  | @MitchellDScott | Citation pass: converted numeric cites to author-year, standard IEEE reference list.                                                                                                                                                                                                                    |
+| 1.7      | September 9, 2026  | @MitchellDScott | Hardening pass: demoted status badge to Draft, rebuilt traceability table.                                                                                                                                                                                                                              |
+| 1.8      | September 15, 2026 | @MitchellDScott | Locator-only §6.4; FR-5 is cooperative reset; NFR-1 and C-2 listed in 6.7 until measured.                                                                                                                                                                                                               |
+| 1.9      | September 24, 2026 | @MitchellDScott | Shipped `PROTOCOL_VERSION` = 1 and `TargetInfo`; tooling crates `publish = false`.                                                                                                                                                                                                                      |
+| 2.0      | October 11, 2026   | @MitchellDScott | Architectural overhaul (ADR-0002): unified ETS and HIL/SysId substrate across Layer 0 to 1/2+; added FR-6 (lifecycle tasks), FR-7 (parameter reflection), FR-8 (multi-layer fixture compatibility), NFR-3 (low latency streaming), dual execution engines, and decoupled host simulation/visualization. |
+| 3.0 | October 12, 2026 | @MitchellDScott | Replaced the channelized architecture with the single-job executive (`ets-executive-design.md`): FR-4 to FR-7 reworded, NFR-3 reworded, C-3 and C-4 added, section 4 reduced to ownership and flow, verification conditions restored. |
+| 3.1 | October 12, 2026 | @MitchellDScott | Aligned to `ets-executive-design.md` rev 1.4 and `ets-link-design.md`: FR-5, FR-6 and C-4 reworded; board binding, `Triggered` and message links in the overview and ownership table. |
+| 3.2 | October 12, 2026 | @MitchellDScott | Phase 2 notes that `Periodic` and `Triggered` follow in phase 3. |
+| 3.3 | October 12, 2026 | @MitchellDScott | FR-7 reworded for named primitive settings; cites aligned to the research bibliography. |
+| 3.4 | October 12, 2026 | @MitchellDScott | State diagram includes `Param`. |
+| 3.5 | October 12, 2026 | @MitchellDScott | Host sessions are generic over `HostLink`. |
+| 3.6 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. Affects C-1, C-2, C-3, C-4, C-5, FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, NFR-1, NFR-2, NFR-3. |
 
 ---
 
 ## References
 
-[1] embedded-test, "embedded_test," *docs.rs*. [Online]. Available: https://docs.rs/embedded-test/latest/embedded_test/. Accessed: Aug. 7, 2026.
+[1] D. Tolnay, "linkme," *dtolnay/linkme*. [Online]. Available: https://docs.rs/linkme/latest/linkme/struct.DistributedSlice.html. Accessed: Aug. 7, 2026.
 
-[2] David Tolnay, "linkme," *dtolnay/linkme*. [Online]. Available: https://docs.rs/linkme/latest/linkme/struct.DistributedSlice.html. Accessed: Aug. 7, 2026.
+[2] RTIC project, "Real-Time Interrupt-driven Concurrency (RTIC)," *rtic-rs/rtic*. [Online]. Available: https://github.com/rtic-rs/rtic. Accessed: Aug. 7, 2026.
 
-[3] Noah Pendleton, "Measuring Stack Usage the Hard Way," *Interrupt (Memfault blog)*. [Online]. Available: https://interrupt.memfault.com/blog/measuring-stack-usage. Accessed: Aug. 7, 2026.
+[3] J. Munns, *panic-persist* (Version 0.3.0). [Online]. Available: https://docs.rs/panic-persist/latest/panic_persist/. Accessed: Aug. 7, 2026.
 
-[4] RTIC project, "Real-Time Interrupt-driven Concurrency (RTIC)," *rtic-rs/rtic*. [Online]. Available: https://github.com/rtic-rs/rtic. Accessed: Aug. 7, 2026.
-
-[5] James Munns, *panic-persist* (Version 0.3.0 (Jul. 17, 2026)). [Online]. Available: https://docs.rs/panic-persist/latest/panic_persist/. Accessed: Aug. 7, 2026.
-
-[6] Piers Finlayson, *task-watchdog* (Version 0.1.2 (Mar. 30, 2025)). [Online]. Available: https://crates.io/crates/task-watchdog/0.1.1. Accessed: Aug. 7, 2026.
-
-[7] vpetrigo, *mwdg* (Version 0.3.0 (Jul. 26, 2026)). [Online]. Available: https://docs.rs/mwdg/latest/mwdg/. Accessed: Aug. 7, 2026.
-
-[8] Nick Miller, "How Golioth uses Hardware-in-the-Loop (HIL) Testing: Part 2," *The Golioth Developer Blog*. [Online]. Available: https://blog.golioth.io/golioth-hil-testing-part2/. Accessed: Aug. 7, 2026.
+[4] N. Pendleton, "Measuring Stack Usage the Hard Way," *Interrupt (Memfault blog)*. [Online]. Available: https://interrupt.memfault.com/blog/measuring-stack-usage. Accessed: Aug. 7, 2026.
