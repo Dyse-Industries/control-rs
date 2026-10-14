@@ -3,11 +3,9 @@
 use std::thread;
 use std::time::{Duration, Instant};
 
-use control_rs_ets::comms::{
-    Command as CommCommand, PROTOCOL_VERSION, TestState,
-};
+use control_rs_ets::wire::{Command as CommCommand, PROTOCOL_VERSION};
 
-use crate::bridge::ETSBridge;
+use crate::bridge::{ETSBridge, TestState};
 use crate::error::HostError;
 use crate::session::{SessionAction, SessionState, TestIndex};
 use crate::target::Target;
@@ -427,8 +425,10 @@ fn finish_record(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use control_rs_ets::comms::Telemetry;
-    use control_rs_ets::settings::SettingValue;
+    use control_rs_ets::wire::Param;
+    use control_rs_ets::wire::{
+        ItemState, PacketInfo, PayloadEncoding, Telemetry, Verdict,
+    };
 
     use crate::bridge::BridgeMessage;
 
@@ -489,13 +489,14 @@ mod tests {
                     board_id: 0,
                     core_clock_hz: 0,
                     fpu_flags: 0,
+                    release_source: false,
                 },
                 Telemetry::SuiteInfo {
-                    suite_id: 0,
+                    suite: 0,
                     name: "s",
                     description: "",
-                    test_count: 0,
-                    setting_count: 0,
+                    executable_count: 0,
+                    param_count: 0,
                 },
                 Telemetry::DiscoveryComplete,
             ] {
@@ -589,11 +590,16 @@ mod tests {
         }
     }
 
+    const PACKET: PacketInfo<'static> = PacketInfo {
+        type_name: "",
+        encoding: PayloadEncoding::Postcard,
+    };
+
     /// A session that already received a matching `TargetInfo` (FR-8).
     fn matched() -> SessionState {
         let mut s = SessionState::new();
         s.target_info = Some(crate::session::TargetInfo {
-            protocol_version: control_rs_ets::comms::PROTOCOL_VERSION,
+            protocol_version: control_rs_ets::wire::PROTOCOL_VERSION,
             board_id: 0,
             core_clock_hz: 0,
             fpu_flags: 0,
@@ -604,36 +610,47 @@ mod tests {
     fn discover_two(state: &mut SessionState) {
         let _ = state.handle_message(BridgeMessage::telemetry(
             &Telemetry::SuiteInfo {
-                suite_id: 0,
+                suite: 0,
                 name: "suite",
                 description: "",
-                test_count: 2,
-                setting_count: 1,
+                executable_count: 2,
+                param_count: 1,
             },
         ));
         let _ = state.handle_message(BridgeMessage::telemetry(
-            &Telemetry::TestInfo {
-                suite_id: 0,
-                test_id: 0,
+            &Telemetry::ExecutableInfo {
+                suite: 0,
+                item: 0,
                 name: "t0",
                 description: "",
+                modes: 1,
+                input: PACKET,
+                output: PACKET,
+                link_timeout_ms: 0,
             },
         ));
         let _ = state.handle_message(BridgeMessage::telemetry(
-            &Telemetry::TestInfo {
-                suite_id: 0,
-                test_id: 1,
+            &Telemetry::ExecutableInfo {
+                suite: 0,
+                item: 1,
                 name: "t1",
                 description: "",
+                modes: 1,
+                input: PACKET,
+                output: PACKET,
+                link_timeout_ms: 0,
             },
         ));
         let _ = state.handle_message(BridgeMessage::telemetry(
-            &Telemetry::SettingInfo {
-                suite_id: 0,
-                setting_id: 0,
+            &Telemetry::ParamValue {
+                suite: 0,
+                index: 0,
+                count: 1,
                 name: "gain",
                 description: "",
-                value: SettingValue::U8(0),
+                value: Param::U8(0),
+                min: Param::U8(0),
+                max: Param::U8(u8::MAX),
             },
         ));
         let _ = state.handle_message(BridgeMessage::telemetry(
@@ -664,10 +681,11 @@ mod tests {
         let mut state = matched();
         discover_two(&mut state);
         let _ = state.handle_message(BridgeMessage::telemetry(
-            &Telemetry::TestStateChange {
-                suite_id: 0,
-                test_id: 0,
-                state: TestState::Failed,
+            &Telemetry::ItemState {
+                suite: 0,
+                item: 0,
+                state: ItemState::Faulted,
+                message: None,
             },
         ));
         assert_eq!(state.current_running, Some((0, 0)));
@@ -688,19 +706,25 @@ mod tests {
         let mut state = matched();
         discover_two(&mut state);
         let _ = state.handle_message(BridgeMessage::telemetry(
-            &Telemetry::TestStateChange {
-                suite_id: 0,
-                test_id: 0,
-                state: TestState::Passed,
+            &Telemetry::ItemState {
+                suite: 0,
+                item: 0,
+                state: ItemState::Done(Verdict::Pass),
+                message: None,
             },
         ));
         let _ = state.handle_message(BridgeMessage::telemetry(
-            &Telemetry::MetricReport {
-                suite_id: 0,
-                test_id: 0,
+            &Telemetry::RunStats {
+                suite: 0,
+                item: 0,
+                steps: 1,
+                time_ns: 5000,
+                step_min_ns: 0,
+                step_max_ns: 0,
                 cycles: 10,
-                time_us: 5,
                 stack_peak: 64,
+                jitter_max_ns: 0,
+                missed_releases: 0,
             },
         ));
         assert_eq!(state.current_running, Some((0, 1)));
@@ -765,20 +789,26 @@ mod tests {
         let mut state = matched();
         discover_two(&mut state);
         let _ = state.handle_message(BridgeMessage::telemetry(
-            &Telemetry::MetricReport {
-                suite_id: 0,
-                test_id: 0,
+            &Telemetry::RunStats {
+                suite: 0,
+                item: 0,
+                steps: 1,
+                time_ns: 1000,
+                step_min_ns: 0,
+                step_max_ns: 0,
                 cycles: 1,
-                time_us: 1,
                 stack_peak: 8,
+                jitter_max_ns: 0,
+                missed_releases: 0,
             },
         ));
         assert_eq!(state.current_running, Some((0, 1)));
         let _ = state.handle_message(BridgeMessage::telemetry(
-            &Telemetry::TestStateChange {
-                suite_id: 0,
-                test_id: 1,
-                state: TestState::Failed,
+            &Telemetry::ItemState {
+                suite: 0,
+                item: 1,
+                state: ItemState::Faulted,
+                message: None,
             },
         ));
         let actions = state.handle_message(BridgeMessage::telemetry(
@@ -786,6 +816,9 @@ mod tests {
                 message: "boom",
                 file: "t.rs",
                 line: 1,
+                fault_status: 0,
+                suite: None,
+                item: None,
             },
         ));
         assert!(state.exit_loop);
