@@ -1,0 +1,17 @@
+[package]
+name = "uno-r4"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+control-rs = { path = "../../", default-features = false }
+control-rs-ets = { path = "../../control-rs-ets", default-features = false }
+control-rs-macros = { path = "../../control-rs-macros" }
+postcard = { version = "1.0", default-features = false }
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+cortex-m = "0.7"
+cortex-m-rt = "0.7"
+arduino-uno-r4-hal = "0.2.0"
+nb = "1.1"
