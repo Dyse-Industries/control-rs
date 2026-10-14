@@ -3,6 +3,8 @@
 
 extern crate control_rs;
 
+mod gain_task;
+
 use control_rs_ets::link::{ByteStream, CountOf, StreamLink};
 use control_rs_ets::server::Context;
 use control_rs_macros::ets_setup;
