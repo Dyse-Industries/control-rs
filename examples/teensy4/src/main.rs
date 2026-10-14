@@ -3,6 +3,9 @@
 
 extern crate control_rs;
 
+#[path = "../../qemu/src/gain_task.rs"]
+mod gain_task;
+
 use bsp::board;
 use bsp::hal::usbd::{BusAdapter, EndpointMemory, EndpointState, Speed};
 use teensy4_bsp as bsp;
