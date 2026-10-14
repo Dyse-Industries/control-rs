@@ -944,6 +944,13 @@ ptimer
 rustc
 seqlock
 symbolication
+respawn
+respawns
+backpressure
+demux
+unpaced
+setting_count
+test_count
 Gehrd
 Orghr
 Hseqr
