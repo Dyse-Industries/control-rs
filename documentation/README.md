@@ -108,15 +108,16 @@ record and its status.
 
 [Overview](ets/ets-overview.md)
 
-| Design                                                                   | Status | Implementation                                           |
-|:-------------------------------------------------------------------------|:-------|:---------------------------------------------------------|
-| [Host ETS Library](ets/ets-host-design.md)                               | Stale  | `control-rs-ets-host/`                                   |
-| [Embedded Test Server](ets/embedded-test-server-design.md)               | Stale  | `control-rs-ets/src/server.rs`                           |
-| [ETS Executive](ets/ets-executive-design.md)                             | Stale  | `control-rs-ets/src/{exec,run,board,fault,cell}.rs`      |
-| [ETS Link](ets/ets-link-design.md)                                       | Draft  | `control-rs-ets/src/link/`, `control-rs-ets/src/wire.rs` |
-| [`CPUProfiler`](ets/cpu-profiler-design.md)                              | Stale  | `control-rs-ets/src/profiler.rs`                         |
-| [Exportable Test Suites](ets/test-suite-design.md)                       | Stale  | `src/**/tests/` (`ets` feature)                          |
-| [Procedural Macros for Distributed Test Discovery](ets/macros-design.md) | Stale  | `control-rs-macros/`                                     |
+| Design | Status | Implementation |
+|:--|:--|:--|
+| [Board Examples](ets/board-examples-design.md) | Draft | `examples/esp32c6/`, `examples/uno_r4/`, `examples/xiao_nrf52840/` |
+| [Host ETS Library](ets/ets-host-design.md) | Stale | `control-rs-ets-host/` |
+| [Embedded Test Server](ets/embedded-test-server-design.md) | Stale | `control-rs-ets/src/server.rs` |
+| [ETS Executive](ets/ets-executive-design.md) | Stale | `control-rs-ets/src/{exec,run,board,fault,cell}.rs` |
+| [ETS Link](ets/ets-link-design.md) | Draft | `control-rs-ets/src/link/`, `control-rs-ets/src/wire.rs` |
+| [`CPUProfiler`](ets/cpu-profiler-design.md) | Stale | `control-rs-ets/src/profiler.rs` |
+| [Exportable Test Suites](ets/test-suite-design.md) | Stale | `src/**/tests/` (`ets` feature) |
+| [Procedural Macros for Distributed Test Discovery](ets/macros-design.md) | Stale | `control-rs-macros/` |
 
 ## tui
 
