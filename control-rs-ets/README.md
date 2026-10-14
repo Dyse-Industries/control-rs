@@ -2,7 +2,7 @@
 
 Target-side `no_std` Embedded Test Server (ETS): transport and profiler
 traits, the message link, the command and telemetry schema, and the server event loop.
-[Design](../documentation/ets/embedded-test-server-design.md) · [Overview](../documentation/ets/ets-overview.md) · [Workspace](../README.md)
+[Design](../documentation/ets/embedded-test-server-design.md) · [Executive](../documentation/ets/ets-executive-design.md) · [Overview](../documentation/ets/ets-overview.md) · [Workspace](../README.md)
 
 | Module | Contents | Design |
 |:--|:--|:--|
@@ -10,6 +10,7 @@ traits, the message link, the command and telemetry schema, and the server event
 | `link` | `Link`, `ByteStream`, `StreamLink`, `usb` and `can` utilities | [ets-link-design](../documentation/ets/ets-link-design.md) |
 | `profiler` | `CPUProfiler` cycle and stack measurement | [cpu-profiler-design](../documentation/ets/cpu-profiler-design.md) |
 | `params` | Host-adjustable parameter table (`ParamEntry`) | [test-suite-design](../documentation/ets/test-suite-design.md) |
+| `exec`, `run`, `board`, `fault`, `cell` | `ExecDescriptor`, `LifecycleTask`, the runner and its modes, the board binding, the fault path and `StateCell` | [ets-executive-design](../documentation/ets/ets-executive-design.md) |
 | `server` | `Context` and the event loop | [embedded-test-server-design](../documentation/ets/embedded-test-server-design.md) |
 
 ## End-User Example
