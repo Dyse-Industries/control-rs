@@ -10,8 +10,9 @@
 
 #[cfg(all(any(test, feature = "fake-link"), unix))]
 pub use bridge::FakeBridge;
-pub use bridge::{BridgeMessage, ETSBridge, OwnedTelemetry};
+pub use bridge::{BridgeMessage, ETSBridge, OwnedTelemetry, TestState};
 pub use error::HostError;
+pub use link::{HostLink, LinkEvent, Polled};
 pub use runner::{
     Completion, RunOptions, RunRecord, TestOutcome, run_headless_ets,
     run_headless_ets_with_options,
@@ -28,6 +29,7 @@ pub use target::{
 
 pub mod bridge;
 pub mod error;
+pub mod link;
 pub mod runner;
 pub mod session;
 pub mod target;

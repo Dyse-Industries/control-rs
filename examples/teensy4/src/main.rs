@@ -7,9 +7,7 @@ use bsp::board;
 use bsp::hal::usbd::{BusAdapter, EndpointMemory, EndpointState, Speed};
 use teensy4_bsp as bsp;
 
-use control_rs_ets::comms::{
-    frame_telemetry, Command, FrameReader, HostComms, Telemetry,
-};
+use control_rs_ets::link::{ByteStream, CountOf, StreamLink};
 use control_rs_ets::server::Context;
 use control_rs_ets::CortexMProfiler;
 use control_rs_macros::{ets_setup, ets_suite};
@@ -24,6 +22,8 @@ use usb_device::device::{
 use usbd_serial::SerialPort;
 
 type UsbBus = UsbBusAllocator<BusAdapter>;
+/// ETS link: `StreamLink` framing over the USB CDC port.
+type UsbLink = StreamLink<TeensyUsb>;
 
 // --- Millisecond Counter & SysTick Interrupt Handler ---
 
@@ -36,28 +36,23 @@ fn SysTick() {
 
 // --- Communication Implementation ---
 //
-// The ETS testing framework uses the `HostComms` trait to define target-to-host
-// communication. On the Teensy 4.0, this is implemented using a USB CDC virtual serial
-// port. Telemetry is serialized using Postcard and framed with `frame_telemetry`,
-// then transmitted over USB. Incoming bytes are passed to `FrameReader` to reassemble
-// host commands.
+// The ETS server exchanges whole messages over a `Link`. On the Teensy this is a
+// `StreamLink` (sync, length and CRC-16 frame) over a USB CDC virtual serial port.
+// `TeensyUsb` is the non-blocking byte stream: every read and write first drives the
+// USB device state machine.
 
-struct TeensyComms {
+struct TeensyUsb {
     /// USB CDC class representing the virtual serial port.
     usb_class: SerialPort<'static, BusAdapter>,
     /// USB device manager driving the overall USB descriptor and state.
     usb_device: UsbDevice<'static, BusAdapter>,
-    /// State machine to decode incoming byte stream into Commands.
-    reader: FrameReader,
     /// Flag indicating whether the host has configured the USB connection.
     configured: bool,
 }
 
-impl HostComms for TeensyComms {
-    type Error = ();
-
-    fn poll_command(&mut self) -> Result<Option<Command>, ()> {
-        // 1. Poll the USB device stack to process CDC events
+impl TeensyUsb {
+    /// Polls the USB device stack and tracks the configured state.
+    fn service(&mut self) {
         if self.usb_device.poll(&mut [&mut self.usb_class]) {
             if self.usb_device.state() == UsbDeviceState::Configured {
                 if !self.configured {
@@ -68,61 +63,31 @@ impl HostComms for TeensyComms {
                 self.configured = false;
             }
         }
+    }
+}
 
-        // 2. Read bytes from the CDC virtual serial port
-        if self.configured {
-            let mut buf = [0u8; 64];
-            match self.usb_class.read(&mut buf) {
-                Ok(count) if count > 0 => {
-                    for &byte in &buf[..count] {
-                        if let Some(payload) = self.reader.handle_byte(byte) {
-                            if let Ok(cmd) = postcard::from_bytes(payload) {
-                                return Ok(Some(cmd));
-                            }
-                        }
-                    }
-                }
-                _ => {}
-            }
+impl ByteStream for TeensyUsb {
+    type Error = ();
+
+    fn read(&mut self, buf: &mut [u8]) -> CountOf<Self> {
+        self.service();
+        if !self.configured {
+            return Ok(0);
         }
-        Ok(None)
+        Ok(self.usb_class.read(buf).unwrap_or(0))
     }
 
-    fn send_telemetry(&mut self, telemetry: &Telemetry<'_>) -> Result<(), ()> {
-        let mut buf = [0u8; 512];
-        if let Ok(len) = frame_telemetry(telemetry, &mut buf) {
-            if self.configured {
-                let mut data = &buf[..len];
-                while !data.is_empty() {
-                    // Drive the USB CDC state machine
-                    self.usb_device.poll(&mut [&mut self.usb_class]);
-                    match self.usb_class.write(data) {
-                        Ok(written) => {
-                            data = &data[written..];
-                        }
-                        Err(usb_device::UsbError::WouldBlock) => {
-                            core::hint::spin_loop();
-                        }
-                        Err(_) => return Err(()),
-                    }
-                }
-                Ok(())
-            } else {
-                Ok(()) // Gracefully do nothing if host hasn't connected
-            }
-        } else {
-            Err(())
+    fn write(&mut self, buf: &[u8]) -> CountOf<Self> {
+        self.service();
+        if !self.configured {
+            // Gracefully discard output while no host is connected.
+            return Ok(buf.len());
         }
-    }
-
-    fn flush(&mut self) -> Result<(), ()> {
-        if self.configured {
-            for _ in 0..10_000 {
-                self.usb_device.poll(&mut [&mut self.usb_class]);
-                core::hint::spin_loop();
-            }
+        match self.usb_class.write(buf) {
+            Ok(written) => Ok(written),
+            Err(usb_device::UsbError::WouldBlock) => Ok(0),
+            Err(_) => Err(()),
         }
-        Ok(())
     }
 }
 
@@ -141,7 +106,7 @@ pub use control_rs::classical_control::suites::*;
 #[ets_suite]
 /// PID controller hardware-in-the-loop test suite.
 pub mod teensy_pid_suite {
-    use control_rs_ets::settings::{Setting, SettingValue};
+    use control_rs_ets::wire::Param;
 
     /// Proportional gain setting. Scales the magnitude of controller response to system error.
     pub static PROPORTIONAL_GAIN: u32 = 1500;
@@ -153,15 +118,15 @@ pub mod teensy_pid_suite {
     /// Verifies that Proportional > Integral > Derivative gains constraint holds.
     fn test_gain_inequality() {
         let kp = match PROPORTIONAL_GAIN.get() {
-            SettingValue::U32(v) => v,
+            Param::U32(v) => v,
             _ => 0,
         };
         let ki = match INTEGRAL_GAIN.get() {
-            SettingValue::U32(v) => v,
+            Param::U32(v) => v,
             _ => 0,
         };
         let kd = match DERIVATIVE_GAIN.get() {
-            SettingValue::U32(v) => v,
+            Param::U32(v) => v,
             _ => 0,
         };
 
@@ -171,7 +136,7 @@ pub mod teensy_pid_suite {
 
     fn test_kp_bounds() {
         let kp = match PROPORTIONAL_GAIN.get() {
-            SettingValue::U32(v) => v,
+            Param::U32(v) => v,
             _ => 0,
         };
         assert!((500..=5000).contains(&kp));
@@ -208,7 +173,7 @@ fn enable_dwt_cycle_counter() {
 
 #[ets_setup]
 #[allow(dead_code)]
-fn setup() -> Context<TeensyComms, CortexMProfiler> {
+fn setup() -> Context<UsbLink, CortexMProfiler> {
     let p = cortex_m::Peripherals::take().unwrap();
     let d = board::instances();
 
@@ -259,12 +224,11 @@ fn setup() -> Context<TeensyComms, CortexMProfiler> {
     syst.enable_counter();
     syst.enable_interrupt();
 
-    let comms = TeensyComms {
+    let link = StreamLink::new(TeensyUsb {
         usb_class,
         usb_device,
-        reader: FrameReader::new(),
         configured: false,
-    };
+    });
     let cpu_utils = CortexMProfiler::new(board::ARM_FREQUENCY, &MILLISECONDS);
-    Context::new(comms, cpu_utils)
+    Context::new(link, cpu_utils)
 }
