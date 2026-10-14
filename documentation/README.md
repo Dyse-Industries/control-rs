@@ -41,7 +41,7 @@ Design documents, standards and planning for the `control-rs` workspace.
 | Design | Status | Implementation |
 |:--|:--|:--|
 | [Embedded Test Server](ets/embedded-test-server-design.md) | Approved | `control-rs-ets/src/server.rs` |
-| [`HostComms`](ets/host-comm-design.md) | Approved | `control-rs-ets/src/comms.rs` |
+| [ETS Link](ets/ets-link-design.md) | Draft | `control-rs-ets/src/link/`, `control-rs-ets/src/wire.rs` |
 | [`CPUProfiler`](ets/cpu-profiler-design.md) | Approved | `control-rs-ets/src/profiler.rs` |
 | [Exportable Test Suites](ets/test-suite-design.md) | Approved | `src/**/tests/` (`ets` feature) |
 
