@@ -65,6 +65,9 @@ pub enum ClassicalError {
     Root(RootError),
     /// A required leading coefficient is zero (FR-2, FR-8).
     ZeroLeadingCoefficient,
+    /// The Routh array needs `eps` and a cancellation cannot be resolved
+    /// (FR-2).
+    RouthIndeterminate,
     /// The Nyquist contour passes through -1 (FR-4).
     ContourThroughCriticalPoint,
     /// A parameter is non-positive where positivity is required, or
@@ -92,6 +95,9 @@ impl fmt::Display for ClassicalError {
             Self::Root(e) => write!(f, "root finding failed: {e}"),
             Self::ZeroLeadingCoefficient => {
                 write!(f, "leading coefficient is zero")
+            }
+            Self::RouthIndeterminate => {
+                write!(f, "Routh array is indeterminate for this polynomial")
             }
             Self::ContourThroughCriticalPoint => {
                 write!(f, "Nyquist contour passes through -1")

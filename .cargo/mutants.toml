@@ -50,6 +50,9 @@ exclude_re = [
     # Test modules compiled into the library for on-target execution
     # (`cfg(any(test, feature = "ets"))`) are not recognized as test code.
     "tests::",
+    # The test constant `U = f64::EPSILON / 2.0` has no enclosing function,
+    # so its mutants carry no `tests::` name. The `$` anchor excludes every
+    # mutant that names a function, `quantize` among them.
     "realization\\.rs:\\d+:\\d+: replace / with [%*]$",
     # Boundary cases whose result is identical, pinned by column so a new
     # comparison on the same line or function is not hidden:
@@ -64,6 +67,15 @@ exclude_re = [
     "pid\\.rs:\\d+:(26|23): replace [<>] with [<>]= in Pid<T>::step",
     # - A zero error integrates to zero either way.
     "pid\\.rs:\\d+:(28|58): replace (>|<) with (>=|<=) in Pid<T>::integrator_step",
+    # - The insertion sort loop test `pos > 0` with `>=`: at `pos = 0` the
+    #   index `pos - 1` saturates to 0, the element compares against itself
+    #   and the strict `>` guard breaks before any swap.
+    "realization\\.rs:\\d+:19: replace > with >= in sort_by_magnitude_desc",
+    # - Clamping the closest-point parameter at 0 or 1 is idempotent: at the
+    #   boundary both branches yield the same point, so no test can tell
+    #   `<` from `<=` (and `>` from `>=`).
+    "nyquist\\.rs:\\d+:14: replace < with <= in clear_of_origin",
+    "nyquist\\.rs:\\d+:21: replace > with >= in clear_of_origin",
     # - Negating a zero magnitude yields zero.
     "realization\\.rs:\\d+:27: replace < with <= in is_stable",
     "math/fixed_num\\.rs:\\d+:10: replace < with <= in round_shift_signed",

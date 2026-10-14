@@ -117,9 +117,7 @@ where
         // Non-finite `L` (for example an integrator at `w = 0`) must not seed
         // `stability_margin` or invent a gain-crossing bracket: NaN never
         // compares less than a prior distance, and `above(NaN)` is false.
-        if l.re.partial_cmp(&l.re).is_none()
-            || l.im.partial_cmp(&l.im).is_none()
-        {
+        if !is_finite(l) {
             prev = None;
             continue;
         }
@@ -177,7 +175,7 @@ where
     if !brackets {
         return None;
     }
-    let omega = bisect::<T, N, D, B>(sys, a.0, b.0, im_sign);
+    let omega = bisect::<T, N, D, B>(sys, a.0, b.0, im_sign)?;
     let l = sys.eval_frequency(omega);
     // Both endpoints can lie in `Re L < 0` while the refined Im-zero root
     // sits in `Re L >= 0`. FR-5 requires `Re L < 0` at that root.
@@ -209,8 +207,12 @@ where
     if above(a.1) == above(b.1) {
         return None;
     }
-    let omega = bisect::<T, N, D, B>(sys, a.0, b.0, above);
+    let omega = bisect::<T, N, D, B>(sys, a.0, b.0, above)?;
     let l = sys.eval_frequency(omega);
+    // A refined crossover must still be a finite point of `L`.
+    if !is_finite(l) {
+        return None;
+    }
     let neg = Complex::new(
         T::ZERO.saturating_sub(&l.re),
         T::ZERO.saturating_sub(&l.im),
@@ -228,30 +230,54 @@ where
 }
 
 /// `B` bisection steps on `[lo, hi]` for a change of `side(L(w))`; returns
-/// the final midpoint.
+/// the final midpoint, or `None` when a pole of `L` cannot be stepped around.
+///
+/// A midpoint where `L` is not finite (a pole of `L` on the imaginary axis)
+/// carries no side. It is moved a third of the way toward `hi`; if `L` is
+/// still not finite there, the bracket is abandoned. Reading a non-finite
+/// `L` as one side lets the interval shrink onto the pole (FR-5).
 fn bisect<T, const N: usize, const D: usize, const B: usize>(
     sys: &ArrayTransferFunction<T, N, D>,
     lo: T,
     hi: T,
     side: impl Fn(Complex<T>) -> bool,
-) -> T
+) -> Option<T>
 where
     T: Float + Copy,
     Const<N>: Dim,
     Const<D>: Dim,
 {
     let two = T::ONE.saturating_add(&T::ONE);
-    let lo_side = side(sys.eval_frequency(lo));
+    let three = two.saturating_add(&T::ONE);
+    let probe = |w: T| {
+        let l = sys.eval_frequency(w);
+        is_finite(l).then(|| side(l))
+    };
+    let lo_side = probe(lo)?;
     let (mut lo, mut hi) = (lo, hi);
     for _ in 0..B {
         let mid = lo.saturating_add(&hi).saturating_div(&two);
-        if side(sys.eval_frequency(mid)) == lo_side {
-            lo = mid;
+        let (w, s) = if let Some(s) = probe(mid) {
+            (mid, s)
         } else {
-            hi = mid;
+            let w = mid.saturating_add(
+                &hi.saturating_sub(&mid).saturating_div(&three),
+            );
+            (w, probe(w)?)
+        };
+        if s == lo_side {
+            lo = w;
+        } else {
+            hi = w;
         }
     }
-    lo.saturating_add(&hi).saturating_div(&two)
+    Some(lo.saturating_add(&hi).saturating_div(&two))
+}
+
+/// Whether both parts of `z` are finite (not NaN; infinities compare equal
+/// to themselves and are caught by the magnitude tests).
+fn is_finite<T: Float + Copy>(z: Complex<T>) -> bool {
+    z.re.partial_cmp(&z.re).is_some() && z.im.partial_cmp(&z.im).is_some()
 }
 
 #[cfg(test)]
@@ -259,6 +285,15 @@ mod tests {
     use super::*;
 
     const U: f64 = f64::EPSILON / 2.0;
+
+    #[test]
+    fn is_finite_requires_both_parts() {
+        let nan = f64::NAN;
+        assert!(is_finite(Complex::new(1.0, 2.0)));
+        assert!(!is_finite(Complex::new(nan, 2.0)));
+        assert!(!is_finite(Complex::new(1.0, nan)));
+        assert!(!is_finite(Complex::new(nan, nan)));
+    }
 
     fn plant() -> ArrayTransferFunction<f64, 1, 4> {
         ArrayTransferFunction::continuous([4.0], [1.0, 3.0, 3.0, 1.0])
@@ -402,5 +437,89 @@ mod tests {
         let pm = 90.0 - w_gain.atan().to_degrees();
         assert!(((gc.phase_margin_deg - pm) / pm).abs() <= 1e-9);
         assert!(m.stability_margin.is_finite() && m.stability_margin > 0.0);
+    }
+
+    /// Brute-force `min_k |1 + L(w_k)|` over the finite samples.
+    fn brute_stability_margin<const M: usize>(
+        sys: &ArrayTransferFunction<f64, 4, 4>,
+        w: &[f64; M],
+    ) -> f64 {
+        w.iter()
+            .map(|&x| {
+                let l = sys.eval_frequency(x);
+                Complex::new(l.re + 1.0, l.im).magnitude()
+            })
+            .fold(f64::INFINITY, f64::min)
+    }
+
+    #[test]
+    fn stability_margin_is_minimum_over_samples() {
+        // FR-5: the margin is the minimum, not the first or last sample.
+        // For `4/(s+1)^3` the minimum lies strictly inside the sweep.
+        let sys = plant().to_discrete_tustin(0.05, None);
+        let w = grid();
+        let m = stability_margins::<_, 4, 4, 61, 1, 40>(&sys, &w);
+        let want = brute_stability_margin(&sys, &w);
+        assert_eq!(m.stability_margin.to_bits(), want.to_bits());
+        let last = sys.eval_frequency(w[60]);
+        let last = Complex::new(last.re + 1.0, last.im).magnitude();
+        assert!(m.stability_margin < last);
+        // A single finite sample seeds the margin.
+        let one = stability_margins::<_, 1, 4, 1, 1, 40>(&plant(), &[1.0]);
+        let l = plant().eval_frequency(1.0);
+        let d = Complex::new(l.re + 1.0, l.im).magnitude();
+        assert_eq!(one.stability_margin.to_bits(), d.to_bits());
+    }
+
+    #[test]
+    fn reported_crossovers_satisfy_their_definition_near_poles() {
+        // FR-5: for poles on the axis placed at, near and away from the
+        // bracket midpoints, every reported crossover is a finite point with
+        // |L| = 1 (gain) or Re L < 0 and Im L = 0 (phase).
+        for k in 0..=20u8 {
+            let p = 0.7 + 0.04 * f64::from(k);
+            let sys = ArrayTransferFunction::<f64, 1, 4>::continuous(
+                [2.0],
+                [p * p, p * p, 1.0, 1.0],
+            );
+            for sweep in [[0.5, 1.5], [0.25, 1.75], [0.6, 1.4]] {
+                let m = stability_margins::<_, 1, 4, 2, 2, 40>(&sys, &sweep);
+                for gc in m.gain_crossings.iter().flatten() {
+                    let l = sys.eval_frequency(gc.omega);
+                    assert!(l.magnitude().is_finite(), "p = {p}");
+                    assert!((l.magnitude() - 1.0).abs() <= 1e-6, "p = {p}");
+                }
+                for pc in m.phase_crossings.iter().flatten() {
+                    let l = sys.eval_frequency(pc.omega);
+                    assert!(l.re < 0.0 && l.im.abs() <= 1e-6 * l.re.abs());
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn bisection_does_not_converge_onto_a_pole() {
+        // FR-5: L = 2 / ((s^2 + 1)(s + 1)) has poles at +/- j. The bracket
+        // [0.5, 1.5] has |L| > 1 at the left end and < 1 at the right, and
+        // its first midpoint is the pole, where L is NaN. A reported
+        // crossover must satisfy | |L| - 1 | within the tolerance and be finite.
+        let sys = ArrayTransferFunction::<f64, 1, 4>::continuous(
+            [2.0],
+            [1.0, 1.0, 1.0, 1.0],
+        );
+        let m = stability_margins::<_, 1, 4, 2, 2, 40>(&sys, &[0.5, 1.5]);
+        let gc = m.gain_crossings[0].expect("crossover inside the sweep");
+        let l = sys.eval_frequency(gc.omega);
+        assert!(l.magnitude().is_finite());
+        assert!(
+            (l.magnitude() - 1.0).abs() <= 1e-6,
+            "|L| = {}",
+            l.magnitude()
+        );
+        assert!((gc.omega - 1.0).abs() > 1e-3, "converged onto the pole");
+        let pm = 180.0 + l.arg().to_degrees();
+        let wrapped = (pm + 180.0).rem_euclid(360.0) - 180.0;
+        assert!((gc.phase_margin_deg - wrapped).abs() <= 1e-6);
+        assert!(gc.delay_margin.is_finite());
     }
 }

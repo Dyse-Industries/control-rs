@@ -820,6 +820,39 @@ pub mod tests {
     }
 
     #[cfg_attr(test, test)]
+    /// The nearest `f64` to `Fixed::MAX` and `Fixed::MIN` quantize for every
+    /// `Repr`, including `i64` where `MAX` has no exact `f64` (FR-19).
+    fn quantize_accepts_representable_extremes() {
+        fn extremes<R: FixedRepr, const S: usize>() -> [f64; 2]
+        where
+            Const<S>: Dim + DimMax<R::BitsDim, Output = R::BitsDim>,
+            Fixed<R, S>: Scalar,
+        {
+            [Fixed::<R, S>::MIN.to_num(), Fixed::<R, S>::MAX.to_num()]
+        }
+        for v in extremes::<i64, 30>() {
+            assert!(quantize::<i64, 30, 1>(&with_b0(v)).is_ok(), "{v}");
+        }
+        for v in extremes::<i64, 2>() {
+            assert!(quantize::<i64, 2, 1>(&with_b0(v)).is_ok(), "{v}");
+        }
+        for v in extremes::<i32, 29>() {
+            assert!(quantize::<i32, 29, 1>(&with_b0(v)).is_ok(), "{v}");
+        }
+        let bad = Err(ClassicalError::CoefficientRange { section: 0 });
+        // The neighbours of the `i64` images lie beyond the range.
+        let [min, max] = extremes::<i64, 30>();
+        let above = f64::from_bits(max.to_bits() + 1);
+        let below = f64::from_bits(min.to_bits() + 1);
+        assert_eq!(quantize::<i64, 30, 1>(&with_b0(above)), bad);
+        assert_eq!(quantize::<i64, 30, 1>(&with_b0(below)), bad);
+        assert_eq!(quantize::<i64, 30, 1>(&with_b0(f64::NAN)), bad);
+        assert_eq!(quantize::<i64, 30, 1>(&with_b0(f64::INFINITY)), bad);
+        assert_eq!(quantize::<i64, 30, 1>(&with_b0(1e10)), bad);
+        assert_eq!(quantize::<i64, 30, 1>(&with_b0(-1e10)), bad);
+    }
+
+    #[cfg_attr(test, test)]
     /// The imaginary tolerance of `is_real` scales with `max(1, |z|)`.
     fn real_tolerance_scales_with_magnitude() {
         assert!(is_real(Complex::new(1000.0, 1e-6)));
@@ -911,6 +944,9 @@ pub mod tests {
         assert!((cascade.update(1.0) - 1.5).abs() < 1e-15);
     }
 }
+
+/// `2^52`: from here every `f64` is an integer.
+const EXACT_INTEGERS: f64 = 4_503_599_627_370_496.0;
 
 /// `L` section coefficient sets, first section first.
 pub type SectionArray<T, const L: usize> = [SectionCoefficients<T>; L];
@@ -1326,7 +1362,9 @@ pub fn all_stable<T: Scalar + SaturatingNeg + PartialOrd + Copy>(
 /// # Errors
 /// [`ClassicalError::CoefficientRange`] naming the first section with a
 /// coefficient that does not round into the representable range; no
-/// coefficient is saturated.
+/// coefficient is saturated. The comparison is made in raw units, so the
+/// `f64` image of `Fixed::MIN` and `Fixed::MAX` is accepted for every
+/// `Repr`, including `i64`, where `MAX` has no exact `f64`.
 pub fn quantize<Repr: FixedRepr, const SHIFT: usize, const L: usize>(
     sections: &SectionArray<f64, L>,
 ) -> QuantizeResult<Repr, SHIFT, L>
@@ -1334,9 +1372,23 @@ where
     Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
     Fixed<Repr, SHIFT>: Scalar,
 {
-    let half = Fixed::<Repr, SHIFT>::DELTA.to_num() / 2.0;
-    let lo = Fixed::<Repr, SHIFT>::MIN.to_num() - half;
-    let hi = Fixed::<Repr, SHIFT>::MAX.to_num() + half;
+    let delta = Fixed::<Repr, SHIFT>::DELTA.to_num();
+    // Bounds in raw units (multiples of delta). Scaling by a power of two is
+    // exact, so the only inexact bound is `MAX` of a type wider than the f64
+    // significand, whose nearest f64 is `MAX + 1` and is accepted: it is the
+    // image of `MAX` and saturates to it.
+    let max_raw = Fixed::<Repr, SHIFT>::MAX.to_num() / delta;
+    let min_raw = Fixed::<Repr, SHIFT>::MIN.to_num() / delta;
+    let in_range = |v: f64| {
+        let x = v / delta;
+        // Above 2^52 every f64 is an integer and half-way points do not
+        // exist, so the rounding margin is dropped there.
+        if x.abs() >= EXACT_INTEGERS {
+            x >= min_raw && x <= max_raw
+        } else {
+            x >= min_raw - 0.5 && x < max_raw + 0.5
+        }
+    };
     let mut out = [SectionCoefficients {
         b0: Fixed::ZERO,
         b1: Fixed::ZERO,
@@ -1346,7 +1398,7 @@ where
     }; L];
     for ((dst, src), section) in out.iter_mut().zip(sections).zip(0usize..) {
         let all = [src.b0, src.b1, src.b2, src.a1, src.a2];
-        if !all.iter().all(|v| *v >= lo && *v < hi) {
+        if !all.iter().all(|v| in_range(*v)) {
             return Err(ClassicalError::CoefficientRange { section });
         }
         let [b0, b1, b2, a1, a2] = all.map(Fixed::from_num);

@@ -164,6 +164,32 @@ pub mod tests {
     }
 
     #[cfg_attr(test, test)]
+    /// Each gain alone, and a change before the first sample, keeps the
+    /// recomputed unsaturated output (FR-13). `K_i` needs no correction
+    /// because `I` already holds `K_i h e` increments; the terms the
+    /// requirement excludes are the next sample's `Delta K_p (e' - e)`.
+    fn bumpless_each_gain_alone() {
+        let changes = [(5.0, 0.5, 0.2), (2.0, 0.9, 0.2), (2.0, 0.5, 0.9)];
+        for (kp, ki, kd) in changes {
+            let mut c = Pid::new(params(AntiWindup::Clamping, 1e6)).unwrap();
+            for k in 0..30u8 {
+                c.step(1.0, 0.1 * Trig::sin(f64::from(k)));
+            }
+            let v = unsaturated(&c);
+            let scale = (c.params.kp * c.e_last).abs()
+                + c.integral.abs()
+                + (c.params.kd * c.delta).abs();
+            c.set_gains(kp, ki, kd);
+            let v2 = unsaturated(&c);
+            assert!((v2 - v).abs() <= 4.0 * (f64::EPSILON / 2.0) * scale);
+        }
+        let mut fresh = Pid::new(params(AntiWindup::Clamping, 1e6)).unwrap();
+        let v = unsaturated(&fresh);
+        fresh.set_gains(9.0, 0.1, 3.0);
+        assert_eq!(unsaturated(&fresh).to_bits(), v.to_bits());
+    }
+
+    #[cfg_attr(test, test)]
     /// `to_transfer_function` equals the parallel form with filter exactly
     /// (FR-14).
     fn analysis_model_matches_compensator() {

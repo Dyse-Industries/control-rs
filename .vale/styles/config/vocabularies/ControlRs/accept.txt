@@ -776,6 +776,7 @@ serde
 serde_json
 serializer
 serializer's
+significand
 signoff
 signum
 size_of
@@ -914,3 +915,5 @@ Trsyl
 Gesvd
 Uno
 Seeed
+Hurwitz
+Hadamard

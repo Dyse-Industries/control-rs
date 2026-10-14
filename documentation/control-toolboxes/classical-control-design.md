@@ -1,6 +1,6 @@
 # Classical Control Toolbox (classical-control)
 
-![Date Badge](https://img.shields.io/badge/Date-October_5,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_14,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 ![Approval Badge](https://img.shields.io/badge/In_Review-orange)
 ![Status Badge](https://img.shields.io/badge/Doc%20Status-No_Plan-lightgrey)
@@ -19,18 +19,21 @@ fixed point, second-order-section cascades with coefficient update for gain
 schedules, and a discrete PID controller with anti-windup, so a compensator
 designed on the host runs unchanged on the target and is tested there
 through ETS. Every routine writes into caller-owned, statically sized buffers;
-no dependence on GUIs or plots.
+no dependence on a graphical interface or plotting library.
 The module replaces the stub `src/classical_tools`.
 
 Primary usage scenarios:
 
 - **Stability screening**: A user checks a characteristic polynomial for
   right-half-plane roots without solving for them. Failure is a wrong count,
-  or a silent result on a degenerate Routh array.
+  a false imaginary-axis flag after a cancellation in the Routh array, or a
+  silent result on a degenerate array.
 - **Loop shaping**: A user sweeps an open-loop transfer function over
   frequency and reads gain, phase and delay margins and crossover
-  frequencies. Failure is a margin outside the stated refinement bound, or a
-  reported crossover that does not exist.
+  frequencies, or counts Nyquist encirclements of $-1$. Failure is a margin
+  outside the stated refinement bound, a reported crossover that does not
+  exist (including one refined onto a pole on the imaginary axis), or an
+  encirclement count that depends on where the frequency samples fall.
 - **Gain selection**: A user computes closed-loop pole loci over a gain set
   to choose a proportional gain and checks the closed-loop step response.
   Failure is a locus point that is not a root of the closed-loop
@@ -64,7 +67,12 @@ Primary usage scenarios:
 - **FR-2 — Routh-Hurwitz count**: For a real characteristic polynomial,
   returns the number of roots in the open right half plane and whether roots
   lie on the imaginary axis, without computing roots, including the
-  zero-first-column and zero-row cases.
+  zero-first-column and zero-row cases. When leading terms of an entry
+  cancel, the next-order term survives, so the imaginary-axis flag is set
+  only by a row that is zero in exact arithmetic and the count is unchanged
+  by positive scaling of the polynomial. When no stage can decide the count
+  (§4.3), the routine returns `RouthIndeterminate` and never a guessed
+  count.
 - **FR-3 — Frequency response**: For a continuous or discrete
   `TransferFunction` and a caller-supplied frequency set, returns
   $G (j\omega)$ or $G (e^{j\omega T_s})$ as complex values and as magnitude in
@@ -73,10 +81,22 @@ Primary usage scenarios:
 - **FR-4 — Nyquist encirclement count**: For a continuous open-loop
   `TransferFunction`, returns the net number of encirclements of $-1$ by the
   Nyquist contour, indenting around open-loop poles on the imaginary axis.
+  The count and the pole count $P$ do not depend on where the samples fall:
+  every near-axis pole is indented whether or not a sample lies within the
+  indentation radius, and a contour that passes through $-1$ at a sample or
+  between two samples returns `ContourThroughCriticalPoint`. A numerator
+  or denominator padded with trailing zero coefficients is read by its
+  degree, and a zero denominator returns `Improper`.
 - **FR-5 — Stability margins**: From an open-loop `TransferFunction` and a
   frequency set, returns gain margin, phase margin, their crossover
-  frequencies and the stability margin $\min_\omega |1 + L (j\omega)|$, and
-  reports a margin as absent when its crossover does not occur in the set.
+  frequencies and the stability margin $\min_\omega |1 + L (j\omega)|$, the
+  minimum over every finite sample of the set, and reports a margin as
+  absent when its crossover does not occur in the set. A reported crossover
+  satisfies its defining condition at the refined frequency: $L$ is finite
+  and $\lvert |L| - 1 \rvert$ is within the refinement bound for a gain
+  crossover, and $\operatorname{Re} L < 0$ with $\operatorname{Im} L$ within the
+  refinement bound for a phase crossover. A refinement that lands on a pole
+  or fails the condition is dropped, never reported.
 - **FR-6 — PID compensator**: Constructs a PID `TransferFunction` in
   standard, series or parallel form, with an optional first-order
   derivative filter.
@@ -99,13 +119,23 @@ Primary usage scenarios:
   $u = \operatorname{sat} (K_p e + I + D)$ between output limits
   $u_{min} \le u_{max}$, with the derivative acting on the measurement
   through a first-order filter discretized by backward difference and the
-  integral discretized by forward Euler.
+  integral discretized by forward Euler. A setpoint step at constant
+  measurement leaves $D$ unchanged (VC-11.2); the literature basis for
+  measurement derivative is open (§8).
 - **FR-12 — Integrator anti-windup**: Under output saturation, updates the
   integrator by a caller-selected mode: conditional integration (clamping)
-  or back-calculation with tracking time constant $T_t$.
-- **FR-13 — Bumpless gain change**: Changing a PID gain between samples
+  or back-calculation with tracking time constant $T_t$. Back-calculation
+  adds the tracking term $h (u - v)/T_t$ and is zero when unsaturated, so it
+  keeps exact integral action; it is not a discount of the error or a leak
+  of the integrator (§5).
+- **FR-13 — Bumpless gain change**: Changing $K_p$ or $K_d$ between samples
   corrects the integrator so the unsaturated output recomputed from the last
-  sample's error and derivative state is unchanged.
+  sample's error and derivative state is unchanged, for each gain alone and
+  together, and also before the first sample. A change of $K_i$ needs no
+  correction because the integrator holds accumulated $K_i h e$ increments
+  and only later increments use the new gain. The next sample's output
+  differs by the intended response $\Delta K_p\, \Delta e + \Delta K_d\, \Delta \delta$;
+  changes of $T_f$, $h$, $T_t$ and the limits are not bumpless.
 - **FR-14 — PID analysis model**: Returns the continuous-time transfer
   function of the unsaturated controller, coefficient-identical to the
   FR-6 parallel form with derivative filter.
@@ -124,7 +154,13 @@ Primary usage scenarios:
 - **FR-19 — Coefficient quantization**: Converts floating-point section
   coefficients to `Fixed<Repr, SHIFT>` with round-to-nearest, and returns
   an error naming the section when a coefficient lies outside the
-  representable range instead of saturating it.
+  representable range instead of saturating it. The range comparison does
+  not round its bounds through `f64`: the `f64` image of `Fixed::MIN` and
+  `Fixed::MAX` is accepted for every `Repr`, including `i64`, where `MAX`
+  has no exact `f64`. The comparison is made in raw units, $v / \Delta$
+against the raw bounds, with a $\pm 0.5$ rounding margin below $2^{52}$,
+above which every `f64` is an integer and the margin is dropped; `NaN` and
+infinities are rejected.
 - **FR-20 — Section stability test**: Reports whether a first- or
   second-order section, or every section in a caller-supplied set, has its
   poles strictly inside the unit circle, from its denominator coefficients
@@ -274,6 +310,57 @@ sign changes of the first entry between consecutive rows, which equals the
 number of right-half-plane roots. The cost is $O (N^2)$ time and $O (N)$
 stack.
 
+**Two-row recurrence.** With $u$ and $l$ the upper and lower rows, entry
+$j$ of the next row is $(l_0 u_{j+1} - u_0 l_{j+1}) / l_0$, so only $u$ and
+$l$ are live. The first two rows hold the even-indexed and odd-indexed
+coefficients from the leading one. After $N - 1$ steps the first entries of
+the rows form the first column.
+
+**Tolerance.** One absolute tolerance $\mathrm{tol}$ is applied to the
+given coefficients and to each computed entry, as a zero test only. A
+leading coefficient within $\mathrm{tol}$ of zero returns
+`ZeroLeadingCoefficient`. A relative or scaled tolerance is an open
+question (§8).
+
+**Zero first entry and zero row.** A zero first entry with a nonzero
+remainder becomes $\varepsilon$ and later entries carry powers of
+$\varepsilon$; the sign of an entry is the sign of its dominant term. A row
+whose entries are all zero sets the imaginary-axis flag, and the next row is
+the coefficient list of the derivative of the auxiliary polynomial formed
+from the row above. Roots of the auxiliary polynomial are symmetric about
+the origin, so they include any imaginary-axis roots, but the flag alone
+does not say how many lie on the axis.
+
+**Cancellation.** A difference of two entries of equal $\varepsilon$ order
+whose leading coefficients cancel is not zero: its value is set by the
+next-order terms. An entry stored as one term cannot represent it, and
+treating it as zero can empty a row, raise a false imaginary-axis flag and
+drop sign changes (VC-2.4). Each entry is therefore a truncated series of
+four coefficients with a known-until exponent. Subtraction, product and
+quotient promote the next order on cancellation, and an entry whose
+known terms all vanish while its tail is unknown is reported as
+indeterminate instead of being read as zero.
+
+**Three stages.** An $\varepsilon$ perturbation also moves imaginary-axis
+roots, so it cannot be trusted when roots are symmetric about the origin.
+The count runs in three stages, each used only if the earlier one meets a
+zero first entry. Stage 1 forms the exact array with no $\varepsilon$ and
+stops at the first zero first entry. Stage 2 repeats it on the reversed
+polynomial $s^n p (1/s)$, which preserves the sign of $\operatorname{Re}$
+and maps imaginary roots to imaginary roots. Stage 3 runs the
+$\varepsilon$ series, and is allowed only when a Hurwitz-determinant gate
+shows that symmetric roots are impossible: the determinant $\Delta_n$ of
+the Hurwitz matrix, formed by Gaussian elimination with partial pivoting,
+must exceed $\sqrt{\epsilon}$ times the Hadamard bound on its row norms.
+If the gate fails or the series cannot decide, the call returns
+`RouthIndeterminate` (FR-2, VC-2.4). Trailing zero low-order coefficients
+are stripped first and set the imaginary-axis flag (a root at the origin).
+
+**Sign changes.** The count adds one whenever the first entry of the new row
+has a sign different from the first entry of the previous row, starting
+from the sign of the leading coefficient, so a negative leading coefficient
+does not change the count.
+
 #### 4.4 Frequency Response and Nichols Data
 
 `frequency_response` returns one `ResponsePoint` per caller frequency,
@@ -305,9 +392,25 @@ $[-1, 1]$, which places samples densely near $\omega = 0$. Each point
 $j\omega_k$ is moved right by the
 largest $\sqrt{r^2 - (\omega_k - \operatorname{Im} p)^2}$
 over the poles with $|\operatorname{Re} p| \le r$, so the contour follows a
-small semicircle around any near-axis pole [6]. A point within a relative
+small semicircle around any near-axis pole [6]. The semicircle belongs to
+the contour, not to the grid: a grid spaced wider than $2r$ has no sample on
+the arc, or a pole between samples would be counted by $N$ but not by $P$
+and $Z = N + P$ would be wrong (VC-4.5). Between each pair of consecutive
+grid samples the routine therefore evaluates $L$ at 15 additional arc
+points per near-axis pole, spaced as $x = (3v - v^3) / 2$ with $v$ uniform
+in $[-1, 1]$ so that they cluster where the arc turns fastest, and merges
+them in ascending frequency. The count is odd so that no arc point sits
+at the apex, where a pole with $\operatorname{Re} p = r$ lies. Arc points
+feed the winding count only: the caller buffer holds the $M$ grid samples. A point within a relative
 $\sqrt{\epsilon}$ of $-1$, or with non-finite $L$, ends the call with
-`ContourThroughCriticalPoint`. The count is the signed number of crossings
+`ContourThroughCriticalPoint`, and so does a segment between consecutive
+points (including arc points and the closing segment) whose distance from
+$-1$ is within $\sqrt{\epsilon} (1 + \max (|L_a|, |L_b|))$, measured as a
+segment-to-point distance, since a
+crossing of the negative real axis through $-1$ is not an encirclement
+either way (VC-4.4). The degrees used to reject an improper $L$ are those of
+the last nonzero coefficients, so zero padding above the degree is ignored
+(VC-4.3). The count is the signed number of crossings
 of the negative real axis by $1 + L$ over consecutive points and the
 closing pair; it needs only comparisons between neighbouring points, so it
 accumulates no angle and tracks no branch cut.
@@ -320,9 +423,17 @@ $\operatorname{Re} L < 0$ at both ends brackets a phase crossover, which
 avoids the $\pm 180^\circ$ branch cut of a wrapped phase, and a sign change
 of $|L| - 1$ brackets a gain crossover [8]. Each bracket is then refined by
 a compile-time number $B$ of bisection steps that evaluate $L$ itself, so
-the error is the bracket width over $2^B$ whatever the sweep density (NFR-3); a
-refined phase crossover must still satisfy
-$\operatorname{Re} L < 0$ or it is dropped. Crossings fill fixed arrays of
+the error is the bracket width over $2^B$ whatever the sweep density (NFR-3).
+Bisection assumes one sign change in the bracket. A pole of $L$ inside the
+bracket breaks that: $L$ is non-finite there, the side test reads it as
+"below", and the interval can shrink onto the pole. The bisection steps
+around a non-finite midpoint by one third of the remaining interval, and
+abandons the bracket if the nudged point is also non-finite. A refined
+crossover is
+therefore re-evaluated and kept only if $L$ is finite and meets its defining
+condition (FR-5, VC-5.5): a phase crossover must satisfy
+$\operatorname{Re} L < 0$ and a gain crossover $\lvert |L| - 1 \rvert$ within
+the bound, or it is dropped. Crossings fill fixed arrays of
 $C$ slots per kind, in frequency order, and further crossings are
 discarded. The stability margin is the minimum of $|1 + L|$ over the
 samples. A non-finite sample, such as an integrator at $\omega = 0$, is
@@ -457,7 +568,11 @@ first section.
 the input of `Df1` and `Df2t`, to `Fixed<Repr, SHIFT>` with round-to-nearest and
 refuses, with
 `ClassicalError::CoefficientRange { section }`, any coefficient outside the
-type's range. Stable second-order sections have $|a_1| < 2$, so the scale
+type's range. The check runs in raw units: $x = v / \Delta$ must lie in
+$[\mathrm{MIN}_{raw} - 1/2, \mathrm{MAX}_{raw} + 1/2)$, so a value that
+rounds to `MAX` is accepted (the `f64` image of `i64::MAX` is $2^{63}$) and
+a value that would round past it is not; from $2^{52}$ upward the margin is
+dropped because every `f64` is an integer. Stable second-order sections have $|a_1| < 2$, so the scale
 must leave integer bits; C-9 already requires
 $\text{SHIFT} \le \text{BITS} - 2$ for `Scalar`. This plays the role of
 the CMSIS `postShift`, which lets coefficients exceed $[-1, 1)$ [18],
@@ -554,6 +669,8 @@ does not fit its capacities. `NotContinuous` and `NotDiscrete` reject the
 wrong sampling domain for Nyquist counting and realization.
 `ZeroLeadingCoefficient` is raised by the Routh test and by a realization
 with $a_0 = 0$, `ContourThroughCriticalPoint` by the Nyquist sampler,
+`RouthIndeterminate` by the Routh test when the array needs $\varepsilon$
+and a cancellation cannot be resolved,
 `SectionCount` by `to_sections` and `CoefficientRange { section }` by
 `quantize`. `Root` wraps `RootError` from the locus, the Nyquist poles and
 the factorization.
@@ -569,6 +686,7 @@ The enum has a hand-written `Display`, `impl core::error::Error` and
 | Alternative                                           | Rejected Because                                                                                                                                                                     | Reference            |
 |:------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:---------------------|
 | Automatic gain selection for the root locus           | Needs heuristics over locus features and a variable-length output, which conflicts with NFR-2. Callers supply the gain set.                                                          | [1]                  |
+| Equally spaced locus pole map by arc-length gain selection | Each gain step depends on the previous roots, so the step count is data dependent (NFR-3). Planned as a host-only wrapper outside this module that calls `root_locus` on refined gain sets (§8). | [3]                  |
 | Continuation tracing of locus branches                | Integrates a differential equation per branch; step count is data-dependent, which conflicts with NFR-3.                                                                             | [3]                  |
 | Polynomial (exact) margin computation                 | Needs polynomial root finding per call, and python-control falls back from it when it is inaccurate in discrete time. Bisection on $L$ reaches a stated bound at fixed cost (NFR-3). | [8]                  |
 | Linear interpolation of crossings only                | Accuracy is tied to sweep density; bisection on $L$ costs $B$ extra evaluations per crossing and removes that dependence.                                                            | [8]                  |
@@ -581,6 +699,7 @@ The enum has a hand-written `Display`, `impl core::error::Error` and
 | Single high-order direct form as the only realization | Second-order sections have fewer numerical problems at high order; `DirectForm2T` is kept for low orders and caller choice.                                                          | [15], [21]           |
 | Link CMSIS-DSP                                        | Adds a C library dependency (C-3) and ties the realization to Arm targets; the native sections cover its DF1 and DF2T structures generically.                                        | [17]                 |
 | Run the PID through `DirectForm2T`                    | A linear realization cannot saturate or stop integration; windup is an execution concern under actuator limits.                                                                      | [12, Sec. 11.4]      |
+| Discount the error or an EMA of the integrator for anti-windup | A leak $I \leftarrow \gamma I + K_i h e$ has fixed point $K_i h e / (1 - \gamma)$, so at zero error the integrator decays to zero and cannot hold a nonzero steady-state output. Back-calculation adds a term only while $u \ne v$ and leaves unsaturated integral action exact. | [25]                 |
 | Integrator leak factor $\gamma$ while saturated       | No cited basis; clamping and back-calculation are the documented modes, and $\gamma = 1$ is clamping without its sign condition.                                                     | [25]                 |
 | Velocity (incremental) PID                            | Bumpless by construction, but the actuator or a downstream accumulator must integrate the output; the positional form with integrator correction gives the same bumpless property.   | [13, Sec. 6.7], [26] |
 | Discrete compensator constructors                     | Duplicates `transfer-function-design.md` FR-4 (C-7); Tustin with prewarping already matches the continuous response at the design frequency.                                         | [14]                 |
@@ -598,14 +717,25 @@ The enum has a hand-written `Display`, `impl core::error::Error` and
 | VC-2.1    | FR-2        | `libtest`    | `control_rs::classical_control::routh::tests::routh_matches_known_roots`           | For polynomials built by `Polynomial::from_roots` with 0 to 4 right-half-plane roots, the count equals the constructed count exactly                                                       |
 | VC-2.2    | FR-2        | `libtest`    | `control_rs::classical_control::routh::tests::routh_zero_first_column`             | $s^4 + s^3 + 2s^2 + 2s + 3$ returns 2 right-half-plane roots                                                                                                                               |
 | VC-2.3    | FR-2        | `libtest`    | `control_rs::classical_control::routh::tests::routh_zero_row`                      | $s^3 + s^2 + s + 1$ returns 0 right-half-plane roots and the imaginary-axis flag                                                                                                           |
+| VC-2.4 | FR-2 | `libtest` | `control_rs::classical_control::routh::tests::epsilon_row_cancellation_keeps_coefficients` | Polynomials with a zero first-column entry whose later entries cancel at leading order return the `numpy.roots` right-half-plane count and no imaginary-axis flag, for example $s^5 - 3s^3 - 3s^2 - 3s - 3$ returns 3 |
+| VC-2.5 | FR-2 | `libtest` | `control_rs::classical_control::routh::tests::routh_count_is_invariant_to_positive_scaling` | The epsilon-row cancellation cases scaled by 0.5 and 4 return the same count and flag |
+| VC-2.6 | FR-2 | `libtest` | `control_rs::classical_control::routh::tests::routh_agrees_with_roots_on_integer_polynomials` | Over 4000 pseudo-random integer polynomials the count equals the number of roots with positive real part, or the call returns `RouthIndeterminate` in at most 2 % of cases |
 | VC-3.1    | FR-3        | `libtest`    | `control_rs::classical_control::response::tests::first_second_order_closed_form`   | Magnitude and phase of first-order and second-order systems meet §6.2                                                                                                                      |
 | VC-3.2    | FR-3        | `libtest`    | `control_rs::classical_control::response::tests::discrete_unit_circle`             | A discrete system is evaluated at $e^{j\omega T_s}$ and matches the closed form within §6.2                                                                                                |
 | VC-3.3    | FR-3        | `libtest`    | `control_rs::classical_control::response::tests::phase_unwrapped`                  | Consecutive phase samples of a fourth-order lag differ by less than $180^\circ$                                                                                                            |
 | VC-4.1    | FR-4        | `libtest`    | `control_rs::classical_control::nyquist::tests::encirclements_known_cases`         | Stable, open-loop unstable and integrating plants return the encirclement counts implied by their known closed-loop pole locations                                                         |
 | VC-4.2    | FR-4        | `libtest`    | `control_rs::classical_control::nyquist::tests::contour_through_critical_point`    | A loop with $L(j\omega_0) = -1$ returns `ContourThroughCriticalPoint`                                                                                                                      |
+| VC-4.3 | FR-4 | `libtest` | `control_rs::classical_control::nyquist::tests::padded_proper_loop_is_accepted` | A proper loop whose numerator is padded with trailing zero coefficients is accepted |
+| VC-4.3b | FR-4 | `libtest` | `control_rs::classical_control::nyquist::tests::zero_denominator_is_improper` | A zero denominator returns `Improper` |
+| VC-4.3c | FR-4 | `libtest` | `control_rs::classical_control::nyquist::tests::pole_on_indent_radius_is_not_counted` | With no sample on the pole, a pole at $\operatorname{Re} p = r$ is not counted in $P$ and one at $1.01 r$ is |
+| VC-4.4 | FR-4 | `libtest` | `control_rs::classical_control::nyquist::tests::critical_point_between_samples_is_rejected` | $L = 1/s^2$, which passes through $-1$ at $\omega = 1$ between grid samples, returns `ContourThroughCriticalPoint` |
+| VC-4.5 | FR-4 | `libtest` | `control_rs::classical_control::nyquist::tests::sparse_grid_still_indents_near_axis_pole` | For $L = 1/((s^2 + 1/4)(s + 1))$ with 101 samples spaced wider than $2r$, $(N, P) = (2, 0)$, equal to the count of a 1001-sample grid |
 | VC-5.1    | FR-5        | `libtest`    | `control_rs::classical_control::margins::tests::third_order_margins`               | Gain margin, phase margin and both crossovers of $4/(s+1)^3$ meet §6.2                                                                                                                     |
 | VC-5.2    | FR-5        | `libtest`    | `control_rs::classical_control::margins::tests::absent_crossover`                  | A first-order loop returns `None` for gain margin                                                                                                                                          |
 | VC-5.3    | FR-5        | `libtest`    | `control_rs::classical_control::margins::tests::margins_cross_check`               | Margins on the cross-check cases meet their tolerance entries in §6.2                                                                                                                      |
+| VC-5.4 | FR-5 | `libtest` | `control_rs::classical_control::margins::tests::stability_margin_is_minimum_over_samples` | The stability margin equals the brute-force minimum of $\lvert 1 + L \rvert$ over the samples exactly and is below the last sample's value; one finite sample seeds it |
+| VC-5.6 | FR-5 | `libtest` | `control_rs::classical_control::margins::tests::reported_crossovers_satisfy_their_definition_near_poles` | For a pole swept from 0.7 to 1.5 in 21 steps, every reported crossover satisfies its defining condition |
+| VC-5.5 | FR-5 | `libtest` | `control_rs::classical_control::margins::tests::bisection_does_not_converge_onto_a_pole` | For $L = 2/((s^2+1)(s+1))$ swept over $[0.5, 1.5]$ the reported gain crossover has finite $L$, $\lvert |L| - 1 \rvert \le 10^{-6}$, is not within $10^{-3}$ of the pole and has a phase margin equal to $180^\circ + \angle L$ |
 | VC-6.1    | FR-6        | `libtest`    | `control_rs::classical_control::compensator::tests::pid_forms`                     | The three forms produce coefficient vectors equal to their closed-form expansions exactly                                                                                                  |
 | VC-6.2    | FR-6        | `libtest`    | `control_rs::classical_control::compensator::tests::pid_filtered_proper`           | A filtered PID is proper and an unfiltered derivative returns `Improper` where the capacity cannot hold it                                                                                 |
 | VC-7.1    | FR-7        | `libtest`    | `control_rs::classical_control::compensator::tests::lead_lag`                      | Lead and lag coefficients equal their closed forms exactly and non-positive parameters return `InvalidParameter`                                                                           |
@@ -624,6 +754,7 @@ The enum has a hand-written `Display`, `impl core::error::Error` and
 | VC-12.1b  | FR-12       | `libtest`    | `control_rs::classical_control::pid::tests::clamping_reverse_acting_holds`         | Reverse-acting `Clamping` ($K_i < 0$) holds $I$ at zero under sustained saturation, and a later zero error returns zero output                                                             |
 | VC-12.2   | FR-12       | `libtest`    | `control_rs::classical_control::pid::tests::back_calculation_fixed_point`          | Under sustained saturation in `BackCalculation`, $I$ converges to the closed-form fixed point within §6.2                                                                                  |
 | VC-13.1   | FR-13       | `libtest`    | `control_rs::classical_control::pid::tests::bumpless_gain_change`                  | After `set_gains`, the recomputed unsaturated output differs from the previous one by at most the §6.2 bound                                                                               |
+| VC-13.2 | FR-13 | `libtest` | `control_rs::classical_control::pid::tests::bumpless_each_gain_alone` | Changing $K_p$ alone, $K_i$ alone or $K_d$ alone, and changing gains before the first sample, keeps the recomputed unsaturated output within the §6.2 bound |
 | VC-14.1   | FR-14       | `libtest`    | `control_rs::classical_control::pid::tests::analysis_model_matches_compensator`    | `to_transfer_function` coefficients equal `compensator::pid` parallel form with filter exactly                                                                                             |
 | VC-15.1   | FR-15       | `libtest`    | `control_rs::classical_control::step::tests::second_order_closed_form`             | Rise time, settling time, overshoot, peak and peak time of a sampled underdamped second-order step meet §6.2                                                                               |
 | VC-15.2   | FR-15       | `libtest`    | `control_rs::classical_control::step::tests::defaults_and_threshold`               | Omitted $y_{final}$ uses the last sample and a 5% threshold yields the closed-form 5% settling time within one sample period                                                               |
@@ -645,6 +776,7 @@ The enum has a hand-written `Display`, `impl core::error::Error` and
 | VC-28.4   | FR-17       | `libtest`    | `control_rs::classical_control::realization::tests::df1_fixed_single_rounding`     | Without saturation, each `Df1<Fixed<i16, 13>>` output equals the exact integer sum of its five products rounded once with ties to even                                                     |
 | VC-29.1   | FR-18       | `libtest`    | `control_rs::classical_control::realization::tests::set_coefficients_keeps_state`  | After `set_coefficients`, state equals its value before the call and the next output equals that of a section built with the new coefficients and the same state                           |
 | VC-30.1   | FR-19       | `libtest`    | `control_rs::classical_control::realization::tests::quantize_round_and_range`      | Each quantized coefficient is within $\Delta/2$ of its source and a coefficient outside the range returns `CoefficientRange` with its section index                                        |
+| VC-30.2 | FR-19 | `libtest` | `control_rs::classical_control::realization::tests::quantize_accepts_representable_extremes` | The `f64` image of `Fixed::MIN` and `Fixed::MAX` quantizes for `i32` and for `i64` at two scales, and $\pm 10^{10}$ returns `CoefficientRange` for `Fixed<i64, 30>` |
 | VC-31.1   | C-8         | `inspection` | —                                                                                  | Every recurrence in `realization` is a `MulAcc` chain with one `from_acc` per output, and the section types bound `T: Scalar + SaturatingNeg + MulAcc`                                     |
 | VC-33.1   | FR-20       | `libtest`    | `control_rs::classical_control::realization::tests::stability_triangle`            | For sections built from pole pairs at radius $0.5$, $0.99$, $1.0$ and $1.01$ over a grid of angles, and for first-order sections, `is_stable` equals `max \|pole\| < 1`                    |
 | VC-33.2   | FR-20       | `libtest`    | `control_rs::classical_control::realization::tests::interpolated_schedule_stable`  | Every multilinear interpolation of a `Tensor` grid of stable sections at 1,000 random query points passes `is_stable`                                                                      |
@@ -698,6 +830,14 @@ is $180^\circ / \phi_m$ times larger relative to $\phi_m$.
 - ETS suites run the FR-8 to FR-13 and FR-17 to FR-19 tests on the target (C-6);
   cycle and stack budgets per `update` are not asserted by this plan.
 - The step-metric oracle covers underdamped second-order responses only.
+- Bumpless transfer (FR-13) covers $K_p$ and $K_d$ at the last sample;
+  changes of $T_f$, $h$, $T_t$ and the limits are not verified.
+- Nyquist counts are verified on loops with known closed-loop poles; the
+  tolerance for a segment passing near $-1$ is $\sqrt{\epsilon}$ relative,
+  not a bound on the count error.
+- Mutation testing (`cargo mutants`) excludes only mutants with a stated
+  equivalence argument in `.cargo/mutants.toml`; an exclusion without one is
+  a defect.
 
 ---
 
@@ -763,7 +903,18 @@ target (C-6).
 - **Discrete Nyquist (FR-4).** The contour is specified for continuous
   systems; the discrete unit-circle contour is not in the evidence base.
 - **Routh tolerance (FR-2).** The zero test needs a caller tolerance; no
-  cited rule sets its default.
+  cited rule sets its default, and an absolute tolerance is not invariant to
+  scaling the polynomial.
+- **Routh cancellation (FR-2).** Resolved in rev 2.4: exact array, then the
+  reversed polynomial, then a four-term $\varepsilon$ series behind a
+  Hurwitz-determinant gate, else `RouthIndeterminate` (§4.3, VC-2.4,
+  VC-2.6). Open: the gate threshold $\sqrt{\epsilon}$ and the series length
+  are engineering choices not in the evidence base; the sweep in VC-2.6 bounds
+  the indeterminate rate at 2 %.
+- **Equally spaced locus (FR-1).** An even pole map needs adaptive gain
+  steps, which are data dependent and conflict with NFR-3. Plan: a host-only
+  wrapper that refines the gain set from the previous rows' root spacing and
+  calls `root_locus`, tracked after phase 5.
 - **Index.** `documentation/README.md` has no control-toolboxes table.
 
 ---
@@ -791,6 +942,8 @@ Phase 4 starts from the prior `classical_tools` realization and PID code (commit
 | 2.0      | October 5, 2026  | @MitchellDScott   | Adds firmware execution and analysis extensions: FR-8 to FR-20, NFR-4, C-6 to C-9. DF1 and DF2T sections over `T: Scalar + MulAcc` with one narrowing per output, fixed-point quantization, coefficient update and section stability for gain schedules. Changes NFR-3 (margin refinement) and C-5 (run-time PID and fixed-point realizations in scope). |
 | 2.1      | October 6, 2026  | @MitchellDScott   | Implementation: inline test module per submodule (§4.1), `quantize` takes section coefficients (§4.9), `ClassicalError::NotContinuous` for discrete Nyquist input (§4.5, §4.11), phase-margin bound scaled by $180^\circ / \phi_m$ (§6.2); phases 1 to 5 complete.                                                                                       |
 | 2.2      | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending review.                                                                                                                                                                                                                                                      |
+| 2.4      | October 14, 2026 | Claude Sonnet 5.5 | Fixes for the PR 88 findings: three-stage Routh with a Hurwitz gate and `RouthIndeterminate` (§4.3, §4.11), raw-unit range check in `quantize` (§4.9, FR-19), pole-stepping bisection (§4.6), arc insertion and segment-to-point test in Nyquist (§4.5); VC-2.6 and VC-5.6 added. |
+| 2.3      | October 14, 2026 | Claude Sonnet 5.5 | Review of PR 88: FR-2 cancellation, FR-4 sample-independent indentation and critical-segment rejection, FR-5 crossover defining condition and exact minimum, FR-13 scope, FR-19 extremes; §4.3 expanded; §4.5 and §4.6 revised; anti-windup and locus alternatives; VC-2.4 to VC-30.2 added; §6.3 and §8 updated. |
 
 ---
 
