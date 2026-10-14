@@ -2,8 +2,7 @@
 
 ![Date Badge](https://img.shields.io/badge/Date-October_3,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
-![Approval Badge](https://img.shields.io/badge/Approval-Stale-lightgrey)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-No_Plan-lightgrey)
+![Design Status Badge](https://img.shields.io/badge/Design%20Status-Stale-lightgrey)
 
 ---
 
@@ -658,7 +657,7 @@ Four choices keep the stronger levels additive:
 
 ---
 
-## Revision History
+### 10. Revision History
 
 | Revision | Date               | Author          | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 |:---------|:-------------------|:----------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
