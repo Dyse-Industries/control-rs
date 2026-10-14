@@ -43,7 +43,8 @@ use std::time::Duration;
 use control_rs_ets::link::stream::{FrameReader, MAX_FRAME_SIZE, encode_frame};
 use control_rs_ets::wire::Param;
 use control_rs_ets::wire::{
-    Command, ItemState, MAX_MESSAGE_SIZE, Telemetry, Verdict,
+    Command, ItemState, MAX_MESSAGE_SIZE, PacketInfo, PayloadEncoding,
+    Telemetry, Verdict,
 };
 
 use crate::error::HostError;
@@ -66,6 +67,7 @@ pub struct ETSBridge {
     target_info: String,
     shutdown: Arc<AtomicBool>,
     readers: ReaderHandles,
+    pub(crate) target: Option<Target>,
 }
 
 /// Inner bridge enum representing active connection variant.
@@ -124,6 +126,15 @@ pub enum TestState {
     Running,
 }
 
+/// Owned form of a packet declaration reported at discovery.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PacketDecl {
+    /// Encoding of the packet bytes.
+    pub encoding: PayloadEncoding,
+    /// Name of the packet type (empty for none).
+    pub type_name: String,
+}
+
 /// Host-owned telemetry. String fields are copied out of the decode buffer
 /// so the reader thread can reuse it without leaking.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,18 +150,28 @@ pub enum OwnedTelemetry {
         /// Log text.
         message: String,
     },
-    /// Pass metrics for a completed test.
-    MetricReport {
+    /// Statistics of a finished run.
+    RunStats {
         /// CPU cycles.
         cycles: u64,
+        /// Largest release jitter in nanoseconds (`0` for unpaced runs).
+        jitter_max_ns: u32,
+        /// Releases that arrived before the previous step finished.
+        missed_releases: u32,
         /// Peak stack bytes.
         stack_peak: u32,
+        /// Longest step in nanoseconds.
+        step_max_ns: u32,
+        /// Shortest step in nanoseconds.
+        step_min_ns: u32,
+        /// Steps executed.
+        steps: u64,
         /// Suite id.
         suite_id: u16,
         /// Test id.
         test_id: u16,
-        /// Duration microseconds.
-        time_us: u64,
+        /// Run duration in nanoseconds.
+        time_ns: u64,
     },
     /// Discovered setting metadata.
     SettingInfo {
@@ -225,8 +246,16 @@ pub enum OwnedTelemetry {
     TestInfo {
         /// Doc comment.
         description: String,
+        /// Encoding of the input packet.
+        input: PacketDecl,
+        /// Host link timeout in milliseconds (`0` is none).
+        link_timeout_ms: u32,
+        /// Bit `n` is set when `ExecMode` variant `n` is allowed.
+        modes: u8,
         /// Test name.
         name: String,
+        /// Encoding of the output packet.
+        output: PacketDecl,
         /// Parent suite id.
         suite_id: u16,
         /// Test id.
@@ -234,8 +263,12 @@ pub enum OwnedTelemetry {
     },
     /// Test state transition.
     TestStateChange {
+        /// Static message of the transition, if any.
+        message: Option<String>,
         /// New state.
         state: TestState,
+        /// Verdict, when the transition ends a run.
+        verdict: Option<Verdict>,
         /// Parent suite id.
         suite_id: u16,
         /// Test id.
@@ -262,6 +295,24 @@ pub enum BridgeMessage {
     RawConsole(String),
     /// Telemetry parsed from target, with owned strings.
     Telemetry(OwnedTelemetry),
+}
+
+impl Default for PacketDecl {
+    fn default() -> Self {
+        Self {
+            encoding: PayloadEncoding::Postcard,
+            type_name: String::new(),
+        }
+    }
+}
+
+impl From<PacketInfo<'_>> for PacketDecl {
+    fn from(info: PacketInfo<'_>) -> Self {
+        Self {
+            encoding: info.encoding,
+            type_name: info.type_name.to_string(),
+        }
+    }
 }
 
 impl TestState {
@@ -304,11 +355,19 @@ impl OwnedTelemetry {
                 suite_id: suite,
             },
             Telemetry::ItemState {
-                suite, item, state, ..
+                suite,
+                item,
+                state,
+                message,
             } => Self::TestStateChange {
+                message: message.map(str::to_string),
                 state: TestState::from_item(state),
                 suite_id: suite,
                 test_id: item,
+                verdict: match state {
+                    ItemState::Done(v) => Some(v),
+                    _ => None,
+                },
             },
             Telemetry::TargetInfo {
                 protocol_version,
@@ -338,16 +397,25 @@ impl OwnedTelemetry {
             Telemetry::RunStats {
                 suite,
                 item,
+                steps,
                 time_ns,
+                step_min_ns,
+                step_max_ns,
                 cycles,
                 stack_peak,
-                ..
-            } => Self::MetricReport {
+                jitter_max_ns,
+                missed_releases,
+            } => Self::RunStats {
                 cycles,
+                jitter_max_ns,
+                missed_releases,
                 stack_peak,
+                step_max_ns,
+                step_min_ns,
+                steps,
                 suite_id: suite,
                 test_id: item,
-                time_us: time_ns / 1000,
+                time_ns,
             },
             Telemetry::TaskSample {
                 suite,
@@ -419,10 +487,17 @@ impl OwnedTelemetry {
                 item,
                 name,
                 description,
-                ..
+                modes,
+                input,
+                output,
+                link_timeout_ms,
             } => Self::TestInfo {
                 description: description.to_string(),
+                input: input.into(),
+                link_timeout_ms,
+                modes,
                 name: name.to_string(),
+                output: output.into(),
                 suite_id: suite,
                 test_id: item,
             },
@@ -505,8 +580,9 @@ impl ETSBridge {
         inherit_stderr: bool,
     ) -> Result<Self, HostError> {
         let (tx, rx) = channel();
+        let again = target.clone();
 
-        match target {
+        let mut bridge = match target {
             Target::Serial {
                 port: port_path,
                 baud,
@@ -514,7 +590,9 @@ impl ETSBridge {
             Target::Subprocess(sub) => {
                 Self::new_subprocess(&sub, tx, rx, inherit_stderr)
             }
-        }
+        }?;
+        bridge.target = Some(again);
+        Ok(bridge)
     }
 
     fn new_serial(
@@ -545,6 +623,7 @@ impl ETSBridge {
             link_info: format!("USB CDC ({port_path})"),
             shutdown,
             readers: vec![reader],
+            target: None,
         })
     }
 
@@ -614,6 +693,7 @@ impl ETSBridge {
             link_info: subprocess_link_info(target),
             shutdown,
             readers,
+            target: None,
         })
     }
 
@@ -702,6 +782,7 @@ impl ETSBridge {
             target_info: "fake".to_string(),
             shutdown: Arc::new(AtomicBool::new(false)),
             readers: Vec::new(),
+            target: None,
         };
         FakeBridge {
             bridge,
@@ -1009,6 +1090,10 @@ mod tests {
                 test_id: 2,
                 name: "test1".to_string(),
                 description: "tdesc".to_string(),
+                input: PacketDecl::default(),
+                link_timeout_ms: 0,
+                modes: 1,
+                output: PacketDecl::default(),
             }
         );
     }
@@ -1055,6 +1140,10 @@ mod tests {
             (ItemState::Faulted, TestState::Failed),
         ];
         for (wire, host) in states {
+            let verdict = match wire {
+                ItemState::Done(v) => Some(v),
+                _ => None,
+            };
             assert_eq!(
                 OwnedTelemetry::from_telemetry(&Telemetry::ItemState {
                     suite: 1,
@@ -1063,9 +1152,11 @@ mod tests {
                     message: None,
                 }),
                 OwnedTelemetry::TestStateChange {
+                    message: None,
                     suite_id: 1,
                     test_id: 2,
                     state: host,
+                    verdict,
                 }
             );
         }
@@ -1082,12 +1173,17 @@ mod tests {
                 jitter_max_ns: 0,
                 missed_releases: 0,
             }),
-            OwnedTelemetry::MetricReport {
+            OwnedTelemetry::RunStats {
+                cycles: 10,
+                jitter_max_ns: 0,
+                missed_releases: 0,
+                stack_peak: 30,
+                step_max_ns: 20_000,
+                step_min_ns: 20_000,
+                steps: 1,
                 suite_id: 1,
                 test_id: 2,
-                cycles: 10,
-                time_us: 20,
-                stack_peak: 30,
+                time_ns: 20_000,
             }
         );
     }

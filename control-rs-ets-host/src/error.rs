@@ -67,6 +67,38 @@ pub enum HostError {
     /// Target failed to complete discovery within the allowed duration.
     #[error("target discovery timed out")]
     Discovery,
+
+    /// The host refused a request before sending it.
+    #[error("request refused: {reason}")]
+    Refused {
+        /// Why the request was refused.
+        reason: String,
+    },
+
+    /// The host-side task simulation failed.
+    #[error("task simulation failed: {source}")]
+    Simulation {
+        /// Underlying error description.
+        source: ErrorSource,
+    },
+
+    /// A run ignored `StopNow` past `stop_timeout` and the target was reset.
+    #[error("run {suite}/{item} did not stop and the target was reset")]
+    Unresponsive {
+        /// Suite of the run.
+        suite: u16,
+        /// Item of the run.
+        item: u16,
+    },
+
+    /// The target went silent or rebooted during a run without a report.
+    #[error("target went silent during run {suite}/{item}")]
+    UnreportedFault {
+        /// Suite of the run.
+        suite: u16,
+        /// Item of the run.
+        item: u16,
+    },
 }
 
 impl fmt::Display for ErrorSource {
