@@ -18,24 +18,22 @@ A complete test image:
 #![no_std]
 #![no_main]
 
-use control_rs_ets::comms::Command;
-use control_rs_ets::runner::Context;
-use control_rs_ets::time::DummyClock;
+use control_rs_ets::link::{Link, RecvOf, SendOf};
+use control_rs_ets::server::Context;
 use control_rs_macros::{ets_setup, ets_suite};
 
 // A simulated transport channel
-struct DummyComms;
-impl control_rs_ets::comms::HostComms for DummyComms {
+struct DummyLink;
+impl Link for DummyLink {
     type Error = ();
-    fn poll_command(&mut self) -> Result<Option<Command>, Self::Error> { Ok(None) }
-    fn send_telemetry(&mut self, _t: &control_rs_ets::comms::Telemetry<'_>) -> Result<(), Self::Error> { Ok(()) }
-    fn flush(&mut self) -> Result<(), Self::Error> { Ok(()) }
+    fn recv(&mut self, _buf: &mut [u8]) -> RecvOf<Self> { Ok(None) }
+    fn send(&mut self, _msg: &[u8]) -> SendOf<Self> { Ok(true) }
 }
 
 // 1. Declare the test suite and adjustable settings
 #[ets_suite]
 pub mod control_loop_tests {
-    // These static variables are converted into Atomic settings
+    // These static variables are converted into parameter table entries
     pub static PROPORTIONAL_GAIN: u32 = 100;
     pub static INTEGRAL_GAIN: u32 = 20;
 
@@ -49,9 +47,9 @@ pub mod control_loop_tests {
 
 // 2. Define target-side peripherals setup and launch the runner
 #[ets_setup]
-fn setup() -> Context<DummyComms, DummyClock> {
+fn setup() -> Context<DummyLink, DummyClock> {
     Context {
-        comms: DummyComms,
+        comms: DummyLink,
         timer: DummyClock,
     }
 }

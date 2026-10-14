@@ -1,6 +1,6 @@
-# Embedded Test Server (ETS)
+# Embedded Test Server (ETS) & Hardware-in-the-Loop (HIL)
 
-![Date Badge](https://img.shields.io/badge/Date-September_9,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_12,_2026-blue)
 ![Type Badge](https://img.shields.io/badge/Type-Overview-lightgrey)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 
@@ -8,36 +8,57 @@
 
 ### 1. Introduction
 
-Traditionally, embedded hardware libraries treat benchmarks,
-on-target ETS tests and Continuous Integration (CI) test matrices
-as internal, closed-source chores.
+`control-rs` provides a unified testing and simulation architecture (ADR-0002)
+spanning from host-side math verification to embedded atomic kernel benchmarks,
+Hardware-in-the-Loop (HIL) plant simulation and unmodified Device Under Test
+(DUT) execution. Layers are defined once, in `embedded-test-server-design.md`.
+
+#### 1.1 The Verification Spectrum
+
+| Testing Layer | Scope & Objective | Target Execution Context | Communication & Tooling |
+|:---|:---|:---|:---|
+| **Layer 0** | Algorithm & math verification | Host workstation (`cargo test`) | Native host execution, no transport |
+| **Layer 0/1** | Kernel cycle & stack profiling | Bare-metal MCU (`control-rs-ets`) | `Atomic` case, interrupts masked, DWT profiling |
+| **Layer 1** | Real-time HIL & SysID ($u \leftrightarrow y$) | On-target `LifecycleTask` | `Lockstep`, `FreeRunning`, `Periodic` or `Triggered` task against a host `TaskSim` |
+| **Layer 1/2** | Firmware integration HIL | Production firmware + ETS server | Internal server stepping tasks, setting tuning |
+| **Layer 1/2+** | Unmodified DUT HIL | External hardware test harness | Harness firmware implements `LifecycleTask`; writes sensors and reads actuators |
+
+In **Layer 1/2+ (Unmodified DUT)**, the production firmware runs without
+modification or instrumentation. The microcontroller is connected to a hardware
+test harness (an FPGA or dedicated I/O fixture) whose firmware implements
+`LifecycleTask`: its step writes stimulus to the DUT peripheral inputs and samples
+the DUT outputs. Harness design is outside the current documents.
+
+---
 
 ### 2. Architecture & Component Mapping
 
 The ETS infrastructure is decomposed into specialized crates and architectural
 domains, each specified by an authoritative design document:
 
-1. **Target Server Runtime**: [embedded-test-server-design.md](embedded-test-server-design.md)
-   specifies the on-target execution loop, test dispatch, panic capture, and
-   reboot lifecycles under `#![no_std]`.
-2. **Target Transport Abstraction**: [host-comm-design.md](host-comm-design.md)
-   specifies the `HostComms` middleware trait, peripheral drivers, and
-   sync-header CRC-16 `postcard` packet framing.
-3. **Profiling Instrumentation**: [cpu-profiler-design.md](cpu-profiler-design.md)
-   specifies cycle-accurate benchmarking, execution duration timers, and stack
-   high-water mark evaluation.
-4. **Test Case Registration**: [test-suite-design.md](test-suite-design.md) and
-   `../macros/macros-design.md` specify distributed linker-section discovery and
-   attribute macros.
-5. **Host Transport & Session Bridge**: [../ets-host/ets-host-design.md](../ets-host/ets-host-design.md)
-   specifies `control-rs-ets-host`, owning subprocess/serial connections, framing
-   decoders, and headless run orchestrations.
-6. **Interactive Presentation**: [../tui/tui-design.md](../tui/tui-design.md)
-   specifies `control-rs-tui`, providing a real-time terminal dashboard over
-   the host bridge.
-7. **CI Quality Gates**: [../ci/ci-design.md](../ci/ci-design.md) specifies
-   `control-rs-ci`, running automated headless test sweeps across QEMU and
-   physical hardware targets.
+1. **Architecture Decision Record**: [0002-single-job-executive-for-ets-and-hil.md](../adr/0002-single-job-executive-for-ets-and-hil.md)
+   records the single-job executive decision and the review ground rules.
+2. **ETS Requirements and Layers**: [embedded-test-server-design.md](embedded-test-server-design.md)
+   owns the ETS requirements, the layer vocabulary and the component map.
+3. **Target Executive**: [ets-executive-design.md](ets-executive-design.md)
+   specifies the `Server`, `Context`, `Runner` and modes, settings, fault path and
+   board binding (watchdog feed, wait, release source) under `#![no_std]`.
+4. **Wire Protocol and Link**: [ets-link-design.md](ets-link-design.md)
+   specifies the command and telemetry schema, payload encoding, version check,
+   setting parameter exchange, the message `Link` trait, the `ByteStream` trait,
+   and the stream, USB bulk and CAN reference links.
+5. **Profiling Instrumentation**: [cpu-profiler-design.md](cpu-profiler-design.md)
+   specifies cycle-accurate benchmarking, step timing and stack high-water marks.
+6. **Test Case & Task Registration**: [test-suite-design.md](test-suite-design.md)
+   and [macros-design.md](macros-design.md) specify linker-section discovery,
+   `#[ets_suite]` expansion and typed settings.
+7. **Host Session**: [ets-host-design.md](ets-host-design.md)
+   specifies `control-rs-ets-host`: `Session`, `HostLink`, `CaseRun`, `TaskRun`,
+   `TaskSim` and `RunObserver`.
+8. **Interactive Presentation**: [tui-design.md](tui-design.md)
+   specifies `control-rs-tui`, a terminal frontend over `Session`.
+9. **CI Quality Gates**: [../ci/ci-design.md](../ci/ci-design.md) specifies
+   `control-rs-ci`, running headless case sweeps across QEMU and hardware.
 
 ---
 
@@ -45,68 +66,69 @@ domains, each specified by an authoritative design document:
 
 `control-rs` does not re-export the tooling crates. Its `ets` feature enables
 `control-rs-ets` and `control-rs-macros` as optional dependencies so the
-library's own suites compile for on-target execution. Every host tooling
-crate (`control-rs-ets-host`, `control-rs-tui`, `control-rs-ci`,
-`control-rs-compare`, `control-rs-verification`) is `publish = false`;
-publication is roadmap PR10.
+library's own suites compile for on-target execution.
 
 **Workspace crates:**
 
-* **`control-rs`**: Implementations of types, algorithms and sub-programs.
-* **`control-rs-ets`**: Interactive server to execute tests and benchmarks.
-* **`control-rs-macros`**: Helper macros to wrap tests and settings in test
-  suites and setup function in a `main()`.
-* **`control-rs-ets-host`**: Host transport, framing and headless test runner.
-* **`control-rs-tui`**: Interactive terminal console over `control-rs-ets-host`.
-* **`control-rs-ci`**: Repository quality-gate runner over `control-rs-ets-host`.
+* **`control-rs`**: Implementations of types, models, controllers and estimators.
+* **`control-rs-ets`**: Single-job executive running cases and lifecycle tasks (`no_std`).
+* **`control-rs-macros`**: `#[ets_suite]`, `#[ets_setup]` and derive macros.
+* **`control-rs-ets-host`**: Host session, link and run objects.
+* **`control-rs-tui`**: Interactive terminal frontend over `Session`.
+* **`control-rs-ci`**: Repository quality-gate runner over `Session` (cases only).
 
 ```mermaid
 flowchart TD
-    Host <==> MCU
-
-    subgraph Host ["Host PC (control-rs-ets-host)"]
+    subgraph Host ["Host Workstation (control-rs-ets-host)"]
         direction TB
-        TUI["TUI"]
-        CI["CI"]
-        Bridge["ETSBridge"]
-        TUI <--> Bridge
-        CI <--> Bridge
+        TUI["TUI (control-rs-tui)"]
+        CI["CI Gate Runner (control-rs-ci)"]
+        SES["Session&lt;L: HostLink&gt;"]
+        RUNS["CaseRun / TaskRun&lt;S, O&gt;"]
+        SIM["TaskSim (plant / stimulus)"]
+        OBS["RunObserver (log, plot sinks)"]
+        TUI --> SES
+        CI --> SES
+        SES --> RUNS
+        RUNS --> SIM
+        RUNS -.-> OBS
     end
 
-    subgraph MCU ["MCU"]
+    Link["Message link (serial stream / USB bulk / CAN / other)"]
+    SES <==> Link
+
+    subgraph Targets ["Execution Targets"]
         direction TB
-        Server["Server"]
-        BuiltIn["Built-in Suites"]
-        Custom["Custom Suites"]
-        Server <--> BuiltIn
-        Server <--> Custom
+        ServerA["Instrumented Target MCU (control-rs-ets)"]
+        Harness["Hardware Test Harness (LifecycleTask firmware)"]
+        DUT["Unmodified DUT"]
+
+        Link <--> ServerA
+        Link <--> Harness
+        Harness ==>|" Sensor stimulation (ADC/SPI/CAN) "| DUT
+        DUT ==>|" Actuator outputs (PWM/motors) "| Harness
     end
 ```
 
+---
+
 ### 4. Architecture
 
-#### 4.1. Execution Context
+#### 4.1 Execution Context
 
-To ensure maximum compatibility across different development boards and
-architectures, the server will require the user to initialize a generic object.
-This object provides the specific drivers for cpu profiling and communication:
+The target server requires the user to initialize a hardware-agnostic platform context:
+* **`Link`**: Moves whole messages over the physical transport (UART, USB CDC or bulk, CAN, SPI, I2C, RTT) with that transport's framing. A reference link or a user link owns bandwidth, framing and any receive queue (`ets-link-design.md`).
+* **`CPUProfiler`**: Low-level hooks for cycle counting, nanosecond timers, stack watermarking and reset.
+* **Board binding (optional)**: Hooks that feed a watchdog the user started in `#[ets_setup]`, sleep while nothing is runnable and report release events for `Periodic` and `Triggered` runs. Interrupts stay user configuration. Without a watchdog, a blocked step is recovered only by a host-triggered external reset.
 
-* **HostComms:** A generic trait acting as a middleware for firmware-to-host
-  communications. Users implement this for the available communication
-  peripherals (for example, UART, USB).
-* **CPUProfiler:** A generic trait that allows users to configure CPU
-  profiling utilities for ETS. Users implement this trait to
-  provide low-level access to CPU cycle counters, nanosecond system timers,
-  stack pointers, stack painting/scanning and critical sections.
+#### 4.2 Framing and Payload Encoding
 
-#### 4.2. Communication & Transport Layer
+The server exchanges whole messages; each link frames them natively (sync,
+length and CRC-16 on serial streams, packets on USB bulk, segments on CAN). Each
+executable declares its packet encoding once at discovery (Postcard or raw bytes);
+payloads stay opaque bytes with a step index. The wire has no channels.
 
-The communication protocol used between the Server on the MCU and the host TUI
-is a simple frame-based binary packet structure. This allows the host TUI to
-parse continuous telemetry streams byte-by-byte instead of blocking until a
-full message has arrived.
-
-#### 4.3. End-User Integration Model
+#### 4.3 End-User Integration Model
 
 This is the primary user-facing benefit. Users can easily set up and run
 benchmarks using their hardware's specific HAL.

@@ -4,11 +4,13 @@
 //! # Examples
 //!
 //! ```
-//! use control_rs_ets::comms::{Command, FrameEncoder, FrameReader};
+//! use control_rs_ets::link::stream::{FrameReader, encode_frame};
+//! use control_rs_ets::wire::Command;
 //!
-//! let cmd = Command::ListSuites;
+//! let mut payload = [0u8; 64];
+//! let used = postcard::to_slice(&Command::ListSuites, &mut payload).unwrap().len();
 //! let mut buf = [0u8; 64];
-//! let len = FrameEncoder::frame_command(&cmd, &mut buf).unwrap();
+//! let len = encode_frame(&payload[..used], &mut buf).unwrap();
 //!
 //! let mut reader = FrameReader::new();
 //! let mut decoded = false;
@@ -38,10 +40,11 @@ use std::sync::mpsc::{Receiver, Sender, channel};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use control_rs_ets::comms::{
-    Command, FrameEncoder, FrameReader, MAX_FRAME_SIZE, Telemetry,
+use control_rs_ets::link::stream::{FrameReader, MAX_FRAME_SIZE, encode_frame};
+use control_rs_ets::wire::Param;
+use control_rs_ets::wire::{
+    Command, ItemState, MAX_MESSAGE_SIZE, Telemetry, Verdict,
 };
-use control_rs_ets::settings::SettingValue;
 
 use crate::error::HostError;
 use crate::target::{SubprocessTarget, Target};
@@ -106,6 +109,21 @@ pub(crate) struct FakeLink {
     pub(crate) polls: usize,
 }
 
+/// State of a test as the host tracks it.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize,
+)]
+pub enum TestState {
+    /// The run did not pass or the target faulted.
+    Failed,
+    /// The run passed.
+    Passed,
+    /// Not started.
+    Pending,
+    /// Running on the target.
+    Running,
+}
+
 /// Host-owned telemetry. String fields are copied out of the decode buffer
 /// so the reader thread can reuse it without leaking.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -114,14 +132,12 @@ pub enum OwnedTelemetry {
     DiscoveryComplete,
     /// Log line from the target.
     Log {
-        /// Microseconds since boot.
-        timestamp_us: u64,
-        /// Suite that emitted the log.
-        suite_id: u16,
-        /// Test that emitted the log.
-        test_id: u16,
+        /// Severity: `0` error, `1` warning, `2` information.
+        level: u8,
+        /// Origin of the message.
+        target: String,
         /// Log text.
-        payload: String,
+        message: String,
     },
     /// Pass metrics for a completed test.
     MetricReport {
@@ -138,16 +154,22 @@ pub enum OwnedTelemetry {
     },
     /// Discovered setting metadata.
     SettingInfo {
+        /// Number of settings in the suite.
+        count: u16,
         /// Doc comment.
         description: String,
+        /// Largest accepted value.
+        max: Param,
+        /// Smallest accepted value.
+        min: Param,
         /// Setting name.
         name: String,
-        /// Setting id.
+        /// Setting id (its index within the suite).
         setting_id: u16,
         /// Parent suite id.
         suite_id: u16,
         /// Current value.
-        value: SettingValue,
+        value: Param,
     },
     /// Discovered suite metadata.
     SuiteInfo {
@@ -164,12 +186,40 @@ pub enum OwnedTelemetry {
     },
     /// Target panic / exception report.
     TargetPanic {
+        /// Active executable, if any.
+        test_id: Option<u16>,
+        /// Architecture fault status (`0` when none was captured).
+        fault_status: u32,
         /// Source file.
         file: String,
         /// Source line.
         line: u32,
         /// Panic message.
         message: String,
+        /// Active suite, if any.
+        suite_id: Option<u16>,
+    },
+    /// An output packet of a task step.
+    TaskSample {
+        /// Encoded packet.
+        payload: Vec<u8>,
+        /// Step that produced the packet.
+        seq: u64,
+        /// Suite id.
+        suite_id: u16,
+        /// Task id.
+        test_id: u16,
+    },
+    /// Result of a task's teardown.
+    TeardownReport {
+        /// Optional explanation.
+        message: Option<String>,
+        /// Whether teardown succeeded.
+        ok: bool,
+        /// Suite id.
+        suite_id: u16,
+        /// Task id.
+        test_id: u16,
     },
     /// Discovered test metadata.
     TestInfo {
@@ -185,7 +235,7 @@ pub enum OwnedTelemetry {
     /// Test state transition.
     TestStateChange {
         /// New state.
-        state: control_rs_ets::comms::TestState,
+        state: TestState,
         /// Parent suite id.
         suite_id: u16,
         /// Test id.
@@ -201,6 +251,8 @@ pub enum OwnedTelemetry {
         core_clock_hz: u32,
         /// FPU bits: 0 single, 1 double precision.
         fpu_flags: u8,
+        /// Whether the target has a release source.
+        release_source: bool,
     },
 }
 
@@ -212,109 +264,167 @@ pub enum BridgeMessage {
     Telemetry(OwnedTelemetry),
 }
 
+impl TestState {
+    /// Maps a wire [`ItemState`] to the host's test state.
+    #[must_use]
+    pub const fn from_item(state: ItemState) -> Self {
+        match state {
+            ItemState::Idle => Self::Pending,
+            ItemState::Running => Self::Running,
+            ItemState::Done(Verdict::Pass) => Self::Passed,
+            ItemState::Done(_) | ItemState::Faulted => Self::Failed,
+        }
+    }
+}
+
 impl OwnedTelemetry {
     /// Copies string fields out of a borrowed [`Telemetry`] frame.
     #[must_use]
     pub fn from_telemetry(tel: &Telemetry<'_>) -> Self {
         match *tel {
             Telemetry::DiscoveryComplete => Self::DiscoveryComplete,
-            Telemetry::Log(ref msg) => Self::Log {
-                timestamp_us: msg.timestamp_us,
-                suite_id: msg.suite_id,
-                test_id: msg.test_id,
-                payload: msg.payload.to_string(),
-            },
-            Telemetry::MetricReport {
-                cycles,
-                stack_peak,
-                suite_id,
-                test_id,
-                time_us,
-            } => Self::MetricReport {
-                cycles,
-                stack_peak,
-                suite_id,
-                test_id,
-                time_us,
+            Telemetry::Log(msg) => Self::Log {
+                level: msg.level,
+                target: msg.target.to_string(),
+                message: msg.message.to_string(),
             },
             Telemetry::TargetPanic {
                 file,
                 line,
                 message,
+                fault_status,
+                suite,
+                item,
             } => Self::TargetPanic {
+                test_id: item,
+                fault_status,
                 file: file.to_string(),
                 line,
                 message: message.to_string(),
+                suite_id: suite,
             },
-            Telemetry::TestStateChange {
-                state,
-                suite_id,
-                test_id,
+            Telemetry::ItemState {
+                suite, item, state, ..
             } => Self::TestStateChange {
-                state,
-                suite_id,
-                test_id,
+                state: TestState::from_item(state),
+                suite_id: suite,
+                test_id: item,
             },
             Telemetry::TargetInfo {
                 protocol_version,
                 board_id,
                 core_clock_hz,
                 fpu_flags,
+                release_source,
             } => Self::TargetInfo {
                 protocol_version,
                 board_id,
                 core_clock_hz,
                 fpu_flags,
+                release_source,
             },
-            Telemetry::SettingInfo { .. }
+            Telemetry::RunStats { .. }
+            | Telemetry::TaskSample { .. }
+            | Telemetry::TeardownReport { .. } => Self::from_run_frame(tel),
+            Telemetry::ParamValue { .. }
             | Telemetry::SuiteInfo { .. }
-            | Telemetry::TestInfo { .. } => Self::from_catalog_entry(tel),
+            | Telemetry::ExecutableInfo { .. } => Self::from_catalog_entry(tel),
         }
     }
 
-    /// Copies a discovery catalog entry (suite, test or setting metadata).
+    /// Copies a run frame (statistics, output sample or teardown report).
+    fn from_run_frame(tel: &Telemetry<'_>) -> Self {
+        match *tel {
+            Telemetry::RunStats {
+                suite,
+                item,
+                time_ns,
+                cycles,
+                stack_peak,
+                ..
+            } => Self::MetricReport {
+                cycles,
+                stack_peak,
+                suite_id: suite,
+                test_id: item,
+                time_us: time_ns / 1000,
+            },
+            Telemetry::TaskSample {
+                suite,
+                item,
+                seq,
+                payload,
+            } => Self::TaskSample {
+                payload: payload.to_vec(),
+                seq,
+                suite_id: suite,
+                test_id: item,
+            },
+            Telemetry::TeardownReport {
+                suite,
+                item,
+                ok,
+                message,
+            } => Self::TeardownReport {
+                message: message.map(str::to_string),
+                ok,
+                suite_id: suite,
+                test_id: item,
+            },
+            ref other => Self::from_telemetry(other),
+        }
+    }
+
+    /// Copies a discovery catalog entry (suite, executable or setting metadata).
     ///
     /// [`Self::from_telemetry`] routes exactly the three catalog variants
     /// here; any other variant is handed back to it, so the conversion stays
     /// total without a panic path.
     fn from_catalog_entry(tel: &Telemetry<'_>) -> Self {
         match *tel {
-            Telemetry::SettingInfo {
-                description,
+            Telemetry::ParamValue {
+                suite,
+                index,
+                count,
                 name,
-                setting_id,
-                suite_id,
+                description,
                 value,
+                min,
+                max,
             } => Self::SettingInfo {
+                count,
                 description: description.to_string(),
+                max,
+                min,
                 name: name.to_string(),
-                setting_id,
-                suite_id,
+                setting_id: index,
+                suite_id: suite,
                 value,
             },
             Telemetry::SuiteInfo {
-                description,
+                suite,
                 name,
-                setting_count,
-                suite_id,
-                test_count,
+                description,
+                executable_count,
+                param_count,
             } => Self::SuiteInfo {
                 description: description.to_string(),
                 name: name.to_string(),
-                setting_count,
-                suite_id,
-                test_count,
+                setting_count: param_count,
+                suite_id: suite,
+                test_count: executable_count,
             },
-            Telemetry::TestInfo {
-                description,
+            Telemetry::ExecutableInfo {
+                suite,
+                item,
                 name,
-                suite_id,
-                test_id,
+                description,
+                ..
             } => Self::TestInfo {
                 description: description.to_string(),
                 name: name.to_string(),
-                suite_id,
-                test_id,
+                suite_id: suite,
+                test_id: item,
             },
             ref runtime => Self::from_telemetry(runtime),
         }
@@ -518,13 +628,21 @@ impl ETSBridge {
     /// # Errors
     ///
     /// Returns `HostError::Transport` if serializing or writing to the target stream fails.
-    pub fn send_command(&mut self, cmd: &Command) -> Result<(), HostError> {
-        let mut buf = [0u8; MAX_FRAME_SIZE];
-        let len = FrameEncoder::frame_command(cmd, &mut buf).map_err(|e| {
-            HostError::Transport {
+    pub fn send_command(&mut self, cmd: &Command<'_>) -> Result<(), HostError> {
+        let mut payload = [0u8; MAX_MESSAGE_SIZE];
+        let used = postcard::to_slice(cmd, &mut payload)
+            .map_err(|e| HostError::Transport {
                 source: format!("Failed to serialize command: {e}").into(),
-            }
-        })?;
+            })?
+            .len();
+        let mut buf = [0u8; MAX_FRAME_SIZE];
+        let len = payload
+            .get(..used)
+            .ok_or(control_rs_ets::link::stream::FrameError::BufferFull)
+            .and_then(|msg| encode_frame(msg, &mut buf))
+            .map_err(|e| HostError::Transport {
+                source: format!("Failed to frame command: {e:?}").into(),
+            })?;
 
         let frame = buf.get(..len).ok_or_else(|| HostError::Transport {
             source: format!(
@@ -785,7 +903,7 @@ pub fn process_incoming_byte(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use control_rs_ets::comms::LogMessage;
+    use control_rs_ets::wire::{LogMessage, PacketInfo, PayloadEncoding};
 
     /// One scripted read: a byte, or nothing (a timeout).
     type Step = Option<u8>;
@@ -839,143 +957,204 @@ mod tests {
         }
     }
 
+    /// Frames `tel` for the stream link.
+    fn framed(tel: &Telemetry<'_>) -> Vec<u8> {
+        let mut payload = [0u8; MAX_MESSAGE_SIZE];
+        let used = postcard::to_slice(tel, &mut payload).unwrap().len();
+        let mut buf = [0u8; MAX_FRAME_SIZE];
+        let len = encode_frame(payload.get(..used).unwrap(), &mut buf).unwrap();
+        buf.get(..len).unwrap().to_vec()
+    }
+
     #[test]
     fn test_owned_telemetry_metadata() {
         let s = Telemetry::SuiteInfo {
-            suite_id: 1,
+            suite: 1,
             name: "suite1",
             description: "desc1",
-            test_count: 5,
-            setting_count: 2,
+            executable_count: 5,
+            param_count: 2,
         };
-        let owned = OwnedTelemetry::from_telemetry(&s);
-        if let OwnedTelemetry::SuiteInfo {
-            suite_id,
-            name,
-            description,
-            test_count,
-            setting_count,
-        } = owned
-        {
-            assert_eq!(suite_id, 1);
-            assert_eq!(name, "suite1");
-            assert_eq!(description, "desc1");
-            assert_eq!(test_count, 5);
-            assert_eq!(setting_count, 2);
-        } else {
-            panic!("Expected SuiteInfo");
-        }
+        assert_eq!(
+            OwnedTelemetry::from_telemetry(&s),
+            OwnedTelemetry::SuiteInfo {
+                suite_id: 1,
+                name: "suite1".to_string(),
+                description: "desc1".to_string(),
+                test_count: 5,
+                setting_count: 2,
+            }
+        );
 
-        let t = Telemetry::TestInfo {
-            suite_id: 1,
-            test_id: 2,
+        let t = Telemetry::ExecutableInfo {
+            suite: 1,
+            item: 2,
             name: "test1",
             description: "tdesc",
+            modes: 1,
+            input: PacketInfo {
+                type_name: "",
+                encoding: PayloadEncoding::Postcard,
+            },
+            output: PacketInfo {
+                type_name: "",
+                encoding: PayloadEncoding::Postcard,
+            },
+            link_timeout_ms: 0,
         };
-        let owned_t = OwnedTelemetry::from_telemetry(&t);
-        if let OwnedTelemetry::TestInfo {
-            suite_id,
-            test_id,
-            name,
-            description,
-        } = owned_t
-        {
-            assert_eq!(suite_id, 1);
-            assert_eq!(test_id, 2);
-            assert_eq!(name, "test1");
-            assert_eq!(description, "tdesc");
-        } else {
-            panic!("Expected TestInfo");
-        }
+        assert_eq!(
+            OwnedTelemetry::from_telemetry(&t),
+            OwnedTelemetry::TestInfo {
+                suite_id: 1,
+                test_id: 2,
+                name: "test1".to_string(),
+                description: "tdesc".to_string(),
+            }
+        );
     }
 
     #[test]
     fn test_owned_telemetry_setting_info() {
-        let set = Telemetry::SettingInfo {
-            suite_id: 1,
-            setting_id: 3,
+        let set = Telemetry::ParamValue {
+            suite: 1,
+            index: 3,
+            count: 4,
             name: "set1",
             description: "sdesc",
-            value: SettingValue::U8(10),
+            value: Param::U8(10),
+            min: Param::U8(0),
+            max: Param::U8(255),
         };
-        let owned_set = OwnedTelemetry::from_telemetry(&set);
-        if let OwnedTelemetry::SettingInfo {
-            suite_id,
-            setting_id,
-            name,
-            description,
-            value,
-        } = owned_set
-        {
-            assert_eq!(suite_id, 1);
-            assert_eq!(setting_id, 3);
-            assert_eq!(name, "set1");
-            assert_eq!(description, "sdesc");
-            assert!(matches!(value, SettingValue::U8(10)));
-        } else {
-            panic!("Expected SettingInfo");
-        }
+        assert_eq!(
+            OwnedTelemetry::from_telemetry(&set),
+            OwnedTelemetry::SettingInfo {
+                suite_id: 1,
+                setting_id: 3,
+                count: 4,
+                name: "set1".to_string(),
+                description: "sdesc".to_string(),
+                value: Param::U8(10),
+                min: Param::U8(0),
+                max: Param::U8(255),
+            }
+        );
     }
 
     #[test]
     fn test_owned_telemetry_simple() {
-        assert!(matches!(
+        assert_eq!(
             OwnedTelemetry::from_telemetry(&Telemetry::DiscoveryComplete),
             OwnedTelemetry::DiscoveryComplete
-        ));
-        assert!(matches!(
-            OwnedTelemetry::from_telemetry(&Telemetry::TestStateChange {
-                suite_id: 1,
-                test_id: 2,
-                state: control_rs_ets::comms::TestState::Passed
-            }),
-            OwnedTelemetry::TestStateChange {
-                suite_id: 1,
-                test_id: 2,
-                state: control_rs_ets::comms::TestState::Passed
-            }
-        ));
-        assert!(matches!(
-            OwnedTelemetry::from_telemetry(&Telemetry::MetricReport {
-                suite_id: 1,
-                test_id: 2,
+        );
+        let states = [
+            (ItemState::Idle, TestState::Pending),
+            (ItemState::Running, TestState::Running),
+            (ItemState::Done(Verdict::Pass), TestState::Passed),
+            (ItemState::Done(Verdict::Fail), TestState::Failed),
+            (ItemState::Done(Verdict::Bounded), TestState::Failed),
+            (ItemState::Faulted, TestState::Failed),
+        ];
+        for (wire, host) in states {
+            assert_eq!(
+                OwnedTelemetry::from_telemetry(&Telemetry::ItemState {
+                    suite: 1,
+                    item: 2,
+                    state: wire,
+                    message: None,
+                }),
+                OwnedTelemetry::TestStateChange {
+                    suite_id: 1,
+                    test_id: 2,
+                    state: host,
+                }
+            );
+        }
+        assert_eq!(
+            OwnedTelemetry::from_telemetry(&Telemetry::RunStats {
+                suite: 1,
+                item: 2,
+                steps: 1,
+                time_ns: 20_000,
+                step_min_ns: 20_000,
+                step_max_ns: 20_000,
                 cycles: 10,
-                time_us: 20,
-                stack_peak: 30
+                stack_peak: 30,
+                jitter_max_ns: 0,
+                missed_releases: 0,
             }),
             OwnedTelemetry::MetricReport {
                 suite_id: 1,
                 test_id: 2,
                 cycles: 10,
                 time_us: 20,
-                stack_peak: 30
+                stack_peak: 30,
             }
-        ));
+        );
+    }
+
+    #[test]
+    fn test_owned_telemetry_task_frames() {
+        assert_eq!(
+            OwnedTelemetry::from_telemetry(&Telemetry::TaskSample {
+                suite: 1,
+                item: 2,
+                seq: 9,
+                payload: &[1, 2, 3],
+            }),
+            OwnedTelemetry::TaskSample {
+                suite_id: 1,
+                test_id: 2,
+                seq: 9,
+                payload: std::vec![1, 2, 3],
+            }
+        );
+        assert_eq!(
+            OwnedTelemetry::from_telemetry(&Telemetry::TeardownReport {
+                suite: 1,
+                item: 2,
+                ok: false,
+                message: Some("m"),
+            }),
+            OwnedTelemetry::TeardownReport {
+                suite_id: 1,
+                test_id: 2,
+                ok: false,
+                message: Some("m".to_string()),
+            }
+        );
+        assert_eq!(
+            OwnedTelemetry::from_telemetry(&Telemetry::TargetInfo {
+                protocol_version: 2,
+                board_id: 7,
+                core_clock_hz: 8,
+                fpu_flags: 1,
+                release_source: true,
+            }),
+            OwnedTelemetry::TargetInfo {
+                protocol_version: 2,
+                board_id: 7,
+                core_clock_hz: 8,
+                fpu_flags: 1,
+                release_source: true,
+            }
+        );
     }
 
     #[test]
     fn test_owned_telemetry_log() {
         let log = Telemetry::Log(LogMessage {
-            timestamp_us: 100,
-            suite_id: 1,
-            test_id: 2,
-            payload: "hello",
+            level: 1,
+            target: "server",
+            message: "hello",
         });
-        let owned_log = OwnedTelemetry::from_telemetry(&log);
-        if let OwnedTelemetry::Log {
-            timestamp_us,
-            suite_id,
-            test_id,
-            payload,
-        } = owned_log
-        {
-            assert_eq!(timestamp_us, 100);
-            assert_eq!(suite_id, 1);
-            assert_eq!(test_id, 2);
-            assert_eq!(payload, "hello");
-        } else {
-            panic!("Expected Log");
-        }
+        assert_eq!(
+            OwnedTelemetry::from_telemetry(&log),
+            OwnedTelemetry::Log {
+                level: 1,
+                target: "server".to_string(),
+                message: "hello".to_string(),
+            }
+        );
     }
 
     #[test]
@@ -984,20 +1163,21 @@ mod tests {
             message: "panic message",
             file: "main.rs",
             line: 5,
+            fault_status: 0xAB,
+            suite: Some(1),
+            item: None,
         };
-        let owned_panic = OwnedTelemetry::from_telemetry(&panic_tel);
-        if let OwnedTelemetry::TargetPanic {
-            message,
-            file,
-            line,
-        } = owned_panic
-        {
-            assert_eq!(message, "panic message");
-            assert_eq!(file, "main.rs");
-            assert_eq!(line, 5);
-        } else {
-            panic!("Expected TargetPanic");
-        }
+        assert_eq!(
+            OwnedTelemetry::from_telemetry(&panic_tel),
+            OwnedTelemetry::TargetPanic {
+                message: "panic message".to_string(),
+                file: "main.rs".to_string(),
+                line: 5,
+                fault_status: 0xAB,
+                suite_id: Some(1),
+                test_id: None,
+            }
+        );
     }
 
     #[test]
@@ -1017,13 +1197,7 @@ mod tests {
             panic!("Expected RawConsole");
         }
 
-        let mut buf = [0u8; 128];
-        let size = control_rs_ets::comms::frame_telemetry(
-            &Telemetry::DiscoveryComplete,
-            &mut buf,
-        )
-        .unwrap();
-        for &b in buf.get(..size).unwrap() {
+        for b in framed(&Telemetry::DiscoveryComplete) {
             process_incoming_byte(b, &mut reader, &mut raw_line_buf, &tx);
         }
 
@@ -1043,11 +1217,7 @@ mod tests {
         // 1. Send invalid postcard payload inside a valid frame
         let invalid_payload = [0xFF, 0xFF, 0xFF];
         let mut frame_buf = [0u8; 32];
-        let frame_len = control_rs_ets::comms::FrameEncoder::frame_payload(
-            &invalid_payload,
-            &mut frame_buf,
-        )
-        .unwrap();
+        let frame_len = encode_frame(&invalid_payload, &mut frame_buf).unwrap();
 
         for &b in frame_buf.get(..frame_len).unwrap() {
             process_incoming_byte(b, &mut reader, &mut raw_buf, &tx);

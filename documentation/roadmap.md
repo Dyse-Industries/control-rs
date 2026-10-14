@@ -91,16 +91,15 @@ until its design is approved, implemented and `cargo ci` is green.
 
 - [ ] **PR5**: Modern Control Toolbox (`src/modern_control`)
     - Design drafted (`control-toolboxes/modern-control-design.md`); needs the
-      Gehrd, Orghr, Hseqr, Trsen and Trsyl kernels (see PR11)
+      `Gehrd`, `Orghr`, `Hseqr`, `Trsen` and `Trsyl` kernels (see PR11)
 - [ ] **PR6**: Robust Control Analysis (`src/robust_control`)
     - Design drafted (`control-toolboxes/robust-control-design.md`); needs
       `modern_control::schur` from PR5
-- [ ] **PR7**: Nonlinear Control Synthesis & Estimators
-  (`src/nonlinear_control`)
+- [ ] **PR7**: Nonlinear Control Synthesis & Estimators (`src/nonlinear_control`)
     - Design drafted (`control-toolboxes/nonlinear-control-design.md`)
 - [ ] **PR8**: System Identification (SysID) & Frequency Estimation
   (`src/sysid`)
-    - Design drafted (`control-toolboxes/sysid-design.md`); needs Gesvd and the
+    - Design drafted (`control-toolboxes/sysid-design.md`); needs `Gesvd` and the
       PR5 Schur decomposition
 - [ ] **PR9**: Safety Validation & Run-Time Assurance (`src/validation`)
     - Design drafted (`vv/validation-tools-design.md`)
@@ -187,3 +186,12 @@ in dependency order, ETS-1 first.
 - [ ] **PR13**: Automated Git Release System & Release Pipeline
 - [ ] **PR14**: Flight Examples, Documentation Consolidation & Initial Release
   (`v0.1.0`)
+    - Follows PR10, PR11, PR12 and PR13
+
+## Deferred
+
+- Hosted-RTOS integration of the ETS
+- Concurrent multi-task runs on one target
+- HDF5 logging in the ETS host
+- Layer 1/2+ hardware-in-the-loop harness design
+- Range-valued property tests ([ets-prop-test](vv/ets-prop-test-design.md))
