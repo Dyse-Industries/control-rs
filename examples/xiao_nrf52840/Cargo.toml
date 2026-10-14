@@ -1,0 +1,19 @@
+[package]
+name = "xiao-nrf52840"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+control-rs = { path = "../../", default-features = false }
+control-rs-ets = { path = "../../control-rs-ets", default-features = false }
+control-rs-macros = { path = "../../control-rs-macros" }
+postcard = { version = "1.0", default-features = false }
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+cortex-m = { version = "0.7", features = ["critical-section-single-core"] }
+cortex-m-rt = "0.7"
+nrf52840-hal = "0.19.0"
+nb = "1.1"
+usb-device = "0.3"
+usbd-serial = "0.2"
