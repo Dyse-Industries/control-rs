@@ -509,6 +509,13 @@ mod tests {
     }
 
     #[test]
+    fn the_default_board_id_and_clock_are_unknown() {
+        let profiler = TestProfiler::new();
+        assert_eq!(profiler.board_id(), 0);
+        assert_eq!(profiler.core_clock_hz(), 0);
+    }
+
+    #[test]
     fn fpu_flags_combine_abi_single_and_double_precision() {
         let cases = [
             (false, false, false, 0b00),

@@ -283,6 +283,13 @@ mod tests {
     }
 
     #[test]
+    fn dropping_the_link_stops_and_joins_the_reader() {
+        let (link, tx, _) = link();
+        drop(link);
+        assert!(tx.send(Vec::new()).is_err(), "reader still holds the feed");
+    }
+
+    #[test]
     fn closing_stops_the_reader() {
         let (mut link, _tx, _) = link();
         link.close();
