@@ -1,0 +1,42 @@
+# Configuration for the tool crates (control-rs-ci, -compare, -ets, -ets-host).
+# The root .cargo/mutants.toml sets `--lib` and a `src/**/tests/**` exclusion
+# that suit only the root package; these crates keep tests in `tests/` and
+# inline modules. The `mutants-*` gates select this file with `--config`.
+#
+# Every entry is a behaviorally equivalent mutant or one that only a timeout
+# detects. Patterns match mutant names, so one list serves all four crates.
+exclude_re = [
+    # control-rs-ci: `>=` where equality of two instants or byte counts cannot
+    # occur or changes nothing, `with true` on a guard whose arm is a no-op for
+    # other inputs, and the `cfg(not(unix))` terminate_tree, which is not
+    # compiled on the CI platform.
+    "with true in strip_string_literals",
+    "replace > with >= in Gate::spawn_and_log",
+    "replace < with <= in drain_pumps",
+    "replace terminate_child_only with \\(\\)",
+    "replace > with >= in ReportAggregator::generate_markdown",
+    # control-rs-compare: `>=` on a running maximum re-assigns an equal value,
+    # and the serial and parallel comparisons agree on either side of the chunk
+    # threshold.
+    "replace > with >= in compute_chunk_stats",
+    "replace < with <= in compare_float_arrays_parallel",
+    "replace > with >= in execute_variant",
+    # control-rs-ets-host: `>=` on two wall-clock instants cannot tie, and
+    # `RunEnd::drained` already returns `Default::default()`.
+    "replace RunEnd::drained -> Self with Default::default\\(\\)",
+    "replace > with >= in HeadlessRun<'t>::(drive|retry_discovery)",
+    # control-rs-ets: `|` joins two bytes with disjoint bits, a frame buffer
+    # shorter than six bytes cannot hold a payload either way, and the
+    # Cortex-M and RISC-V profilers only compile for their own targets.
+    "replace \\| with \\^ in FrameReader::handle_byte",
+    "replace < with (==|<=) in FrameEncoder::serialize_then_frame",
+    "<impl CPUProfiler for (CortexMProfiler|RiscvProfiler)>",
+    "replace CPUProfiler::fpu_flags -> u8 with 0",
+    # ISO-TP framing: the type nibble (0x10, 0x20) and the length or sequence
+    # nibble occupy disjoint bits, so `|` and `^` build the same byte.
+    "replace \\| with \\^ in (Segmenter<'a>::(next|first)_frame|Reassembler<N>::first)",
+    # A lock that never releases or never grants, and an inverted lock test,
+    # stall the telemetry retry loop; the test timeout detects the hang.
+    "replace CommsLock::(try_lock -> bool with false|unlock with \\(\\))",
+    "delete ! in Context<L, P>::send_telemetry_locked",
+]

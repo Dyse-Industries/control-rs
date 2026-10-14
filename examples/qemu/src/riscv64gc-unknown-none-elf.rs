@@ -4,59 +4,44 @@
 extern crate control_rs;
 
 use control_rs_ets::RiscvProfiler;
-use control_rs_ets::comms::{
-    Command, FrameReader, HostComms, Telemetry, frame_telemetry,
-};
+use control_rs_ets::link::{ByteStream, CountOf, StreamLink};
 use control_rs_ets::server::Context;
 use control_rs_macros::ets_setup;
 
 use semihosting::io::Write;
 
-struct RiscvSemihostingComms {
-    /// State machine to decode incoming byte stream into Commands.
-    reader: FrameReader,
-}
+/// Byte stream over the semihosting console: `READC` blocks until the host sends a byte.
+struct RiscvSemihostingStream;
 
-impl HostComms for RiscvSemihostingComms {
+impl ByteStream for RiscvSemihostingStream {
     type Error = ();
 
-    fn poll_command(&mut self) -> Result<Option<Command>, Self::Error> {
-        let c = unsafe {
+    fn read(&mut self, buf: &mut [u8]) -> CountOf<Self> {
+        let Some(slot) = buf.first_mut() else {
+            return Ok(0);
+        };
+        *slot = unsafe {
             riscv_semihosting::syscall1(riscv_semihosting::nr::READC, 0)
         } as u8;
-        if let Some(payload) = self.reader.handle_byte(c) {
-            if let Ok(cmd) = postcard::from_bytes(payload) {
-                return Ok(Some(cmd));
-            }
-        }
-        Ok(None)
+        Ok(1)
     }
 
-    fn send_telemetry(
-        &mut self,
-        telemetry: &Telemetry<'_>,
-    ) -> Result<(), Self::Error> {
-        let mut buf = [0u8; 512];
-        if let Ok(len) = frame_telemetry(telemetry, &mut buf) {
-            if let Ok(mut stdout) = semihosting::io::stdout() {
-                let _ = stdout.write_all(&buf[..len]);
-            }
-            Ok(())
-        } else {
-            Err(())
+    fn write(&mut self, buf: &[u8]) -> CountOf<Self> {
+        if let Ok(mut stdout) = semihosting::io::stdout() {
+            let _ = stdout.write_all(buf);
         }
-    }
-
-    fn close(&mut self) {
-        semihosting::process::exit(0);
+        Ok(buf.len())
     }
 
     fn close_on_failure(&mut self) {
         semihosting::process::exit(1);
     }
+}
 
-    fn flush(&mut self) -> Result<(), Self::Error> {
-        Ok(())
+impl Drop for RiscvSemihostingStream {
+    /// Ends the semihosting session when the server drops its link.
+    fn drop(&mut self) {
+        semihosting::process::exit(0);
     }
 }
 
@@ -72,10 +57,8 @@ pub use control_rs::classical_control::suites::*;
 
 #[ets_setup]
 #[allow(dead_code)]
-fn setup() -> Context<RiscvSemihostingComms, RiscvProfiler> {
-    let comms = RiscvSemihostingComms {
-        reader: FrameReader::new(),
-    };
+fn setup() -> Context<StreamLink<RiscvSemihostingStream>, RiscvProfiler> {
+    let link = StreamLink::new(RiscvSemihostingStream);
     let cpu_utils = RiscvProfiler::new(10_000_000);
-    Context::new(comms, cpu_utils)
+    Context::new(link, cpu_utils)
 }

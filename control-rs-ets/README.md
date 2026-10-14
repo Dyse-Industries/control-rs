@@ -1,64 +1,45 @@
 # `control-rs-ets`
 
 Target-side `no_std` Embedded Test Server (ETS): transport and profiler
-traits, framed command and telemetry protocol, and the server event loop.
+traits, the message link, the command and telemetry schema, and the server event loop.
 [Design](../documentation/ets/embedded-test-server-design.md) · [Overview](../documentation/ets/ets-overview.md) · [Workspace](../README.md)
 
 | Module | Contents | Design |
 |:--|:--|:--|
-| `comms` | `HostComms`, frame reader, telemetry framing (CRC-16) | [host-comm-design](../documentation/ets/host-comm-design.md) |
+| `wire` | `Command` and `Telemetry` schema, `PROTOCOL_VERSION` | [ets-link-design](../documentation/ets/ets-link-design.md) |
+| `link` | `Link`, `ByteStream`, `StreamLink`, `usb` and `can` utilities | [ets-link-design](../documentation/ets/ets-link-design.md) |
 | `profiler` | `CPUProfiler` cycle and stack measurement | [cpu-profiler-design](../documentation/ets/cpu-profiler-design.md) |
-| `settings` | Host-adjustable atomic test settings | [test-suite-design](../documentation/ets/test-suite-design.md) |
+| `params` | Host-adjustable parameter table (`ParamEntry`) | [test-suite-design](../documentation/ets/test-suite-design.md) |
 | `server` | `Context` and the event loop | [embedded-test-server-design](../documentation/ets/embedded-test-server-design.md) |
 
 ## End-User Example
 
-Implement `HostComms` for the target transport and `CPUProfiler` for its
-timer, then pass both to `Context`:
+Implement `Link` for the target transport (or `ByteStream` and wrap it in
+`StreamLink`) and `CPUProfiler` for its timer, then pass both to `Context`:
 
 ```rust
 #![no_std]
 #![no_main]
 
-use control_rs_ets::comms::{Command, FrameReader, HostComms, Telemetry, frame_telemetry};
+use control_rs_ets::link::{ByteStream, CountOf, StreamLink};
 use control_rs_ets::server::Context;
 use control_rs_ets::CPUProfiler;
 use control_rs_macros::{ets_setup, ets_suite};
 
-// 1. Define target-side communication channel (e.g., UART or Semihosting)
-struct UartComms {
-    reader: FrameReader,
-}
+// 1. Define the target-side byte stream (e.g., UART or semihosting)
+struct Uart;
 
-impl HostComms for UartComms {
+impl ByteStream for Uart {
     type Error = ();
 
-    fn poll_command(&mut self) -> Result<Option<Command>, Self::Error> {
-        // Retrieve byte from hardware peripheral non-blockingly
-        if let Some(byte) = read_uart_byte() {
-            if let Some(payload) = self.reader.handle_byte(byte) {
-                if let Ok(cmd) = postcard::from_bytes(payload) {
-                    return Ok(Some(cmd));
-                }
-            }
-        }
-        Ok(None)
+    fn read(&mut self, buf: &mut [u8]) -> CountOf<Self> {
+        // Read the bytes the peripheral has ready; never wait
+        Ok(read_uart(buf))
     }
 
-    fn send_telemetry(&mut self, telemetry: &Telemetry<'_>) -> Result<(), Self::Error> {
-        let mut buf = [0u8; 512];
-        if let Ok(len) = frame_telemetry(telemetry, &mut buf) {
-            for &byte in &buf[..len] {
-                write_uart_byte(byte);
-            }
-            Ok(())
-        } else {
-            Err(())
-        }
-    }
-
-    fn flush(&mut self) -> Result<(), Self::Error> {
-        Ok(())
+    fn write(&mut self, buf: &[u8]) -> CountOf<Self> {
+        // Write what the peripheral accepts; a short count is back-pressure
+        Ok(write_uart(buf))
     }
 }
 
@@ -89,8 +70,8 @@ impl CPUProfiler for SystemCPUUtils {
 }
 
 // Helper stub functions
-fn read_uart_byte() -> Option<u8> { None }
-fn write_uart_byte(_b: u8) {}
+fn read_uart(_buf: &mut [u8]) -> usize { 0 }
+fn write_uart(buf: &[u8]) -> usize { buf.len() }
 fn get_cycles() -> u64 { 0 }
 fn get_nanoseconds() -> u64 { 0 }
 fn get_sp() -> usize { 0 }
@@ -108,11 +89,8 @@ pub mod pid_control_suite {
 
 // 4. Initialize ETS
 #[ets_setup]
-fn setup() -> Context<UartComms, SystemCPUUtils> {
-    Context::new(
-        UartComms { reader: FrameReader::new() },
-        SystemCPUUtils,
-    )
+fn setup() -> Context<StreamLink<Uart>, SystemCPUUtils> {
+    Context::new(StreamLink::new(Uart), SystemCPUUtils)
 }
 ```
 

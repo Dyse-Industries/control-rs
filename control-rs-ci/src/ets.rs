@@ -5,7 +5,7 @@
 //! (FR-19): a target passes only when its run drained, left nothing pending,
 //! executed at least one test and every test passed.
 
-use control_rs_ets::comms::TestState;
+use control_rs_ets_host::TestState;
 use control_rs_ets_host::{RunRecord, TestOutcome};
 use serde::Serialize;
 
