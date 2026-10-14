@@ -216,7 +216,7 @@ Architecture-specific subprogram crates under [
 | [`control-rs-ets`](control-rs-ets/README.md) | Target-side Embedded Test Server | [ets](documentation/README.md#ets) |
 | [`control-rs-macros`](control-rs-macros/README.md) | ETS suite and entrypoint macros | [macros-design](documentation/ets/macros-design.md) |
 | [`control-rs-ets-host`](control-rs-ets-host/README.md) | Host links, session, task runs and headless runner | [ets-host-design](documentation/ets/ets-host-design.md) |
-| [`control-rs-tui`](control-rs-tui/README.md) | Interactive ETS terminal console | [tui-design](documentation/tui/tui-design.md) |
+| [`control-rs-tui`](control-rs-tui/README.md) | Interactive ETS terminal console | [tui-design](documentation/ets/tui-design.md) |
 | [`control-rs-ci`](control-rs-ci/README.md) | Quality gate runner and report aggregator | [ci-design](documentation/ci/ci-design.md) |
 | [`control-rs-compare`](control-rs-compare/README.md) | HDF5 cross-comparison engine | [cross-compare-design](documentation/vv/cross-compare-design.md) |
 | [`control-rs-verification`](control-rs-verification/README.md) | Rust emitters and Python oracles for cross-validation | [cross-compare-design](documentation/vv/cross-compare-design.md) |
