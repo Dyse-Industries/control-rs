@@ -25,11 +25,10 @@ use ratatui::{
     widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
 };
 
-use control_rs_ets::comms::{Command, TestState};
-use control_rs_ets::settings::SettingValue;
+use control_rs_ets::wire::{Command, Param, ParamKey};
 use control_rs_ets_host::{
     BridgeMessage, ETSBridge, HostError, OwnedTelemetry, SessionAction,
-    SessionState, SuiteItem, Target, TestIndex,
+    SessionState, SuiteItem, Target, TestIndex, TestState,
 };
 
 /// How long the session may stay undiscovered before discovery is re-sent.
@@ -221,7 +220,7 @@ impl AppState {
                         if let Some(action) =
                             self.session.enqueue_test(suite_id, test_id)
                         {
-                            self.execute_logged(action, bridge);
+                            self.execute_logged(&action, bridge);
                         }
                     }
                     None => self.logs.push(format!(
@@ -243,13 +242,13 @@ impl AppState {
     ///
     /// Returns a transport error if a command cannot be written.
     pub fn execute_action(
-        action: SessionAction,
+        action: &SessionAction,
         bridge: Option<&mut ETSBridge>,
     ) -> Result<(), HostError> {
         match action {
             SessionAction::Send(cmd) => {
                 if let Some(b) = bridge {
-                    b.send_command(&cmd)?;
+                    b.send_command(cmd)?;
                 }
                 Ok(())
             }
@@ -260,7 +259,7 @@ impl AppState {
     /// Executes `action`, logging a transport failure to the log panel.
     fn execute_logged(
         &mut self,
-        action: SessionAction,
+        action: &SessionAction,
         bridge: Option<&mut ETSBridge>,
     ) {
         if let Err(e) = Self::execute_action(action, bridge) {
@@ -269,7 +268,7 @@ impl AppState {
     }
 
     /// Sends `cmd`, logging a transport failure to the log panel.
-    fn send_logged(&mut self, bridge: &mut ETSBridge, cmd: &Command) {
+    fn send_logged(&mut self, bridge: &mut ETSBridge, cmd: &Command<'_>) {
         if let Err(e) = bridge.send_command(cmd) {
             self.logs.push(format!("> [HOST] send failed: {e}"));
         }
@@ -314,18 +313,19 @@ impl AppState {
             self.is_editing_setting = false;
             return;
         };
+        let name = current.name.clone();
         match parse_setting_value(&self.setting_edit, current.value) {
             Ok(value) => {
                 if let Some(b) = bridge
-                    && let Some((suite_id, setting_id)) =
+                    && let Some((suite_id, _)) =
                         case_ids(suite_idx, setting_idx)
                 {
                     self.send_logged(
                         b,
-                        &Command::SetSetting {
-                            suite_id,
-                            setting_id,
-                            value,
+                        &Command::Param {
+                            suite: suite_id,
+                            key: ParamKey::Name(&name),
+                            value: Some(value),
                         },
                     );
                 }
@@ -361,10 +361,10 @@ impl AppState {
             }
             BridgeMessage::Telemetry(t) => {
                 if let OwnedTelemetry::Log {
-                    suite_id, payload, ..
+                    target, message, ..
                 } = &t
                 {
-                    self.logs.push(format!("> [{suite_id}] {payload}"));
+                    self.logs.push(format!("> [{target}] {message}"));
                 }
                 let actions =
                     self.session.handle_message(BridgeMessage::Telemetry(t));
@@ -373,7 +373,7 @@ impl AppState {
                     if matches!(action, SessionAction::PanicRestart) {
                         restart = Some(action);
                     } else {
-                        self.execute_logged(action, bridge.as_deref_mut());
+                        self.execute_logged(&action, bridge.as_deref_mut());
                     }
                 }
                 self.rebuild_visible_items();
@@ -503,7 +503,7 @@ impl AppState {
             KeyCode::Char('d') => self.show_selected_setting(),
             KeyCode::Char('r') => {
                 if let Some(action) = self.session.enqueue_all() {
-                    self.execute_logged(action, bridge);
+                    self.execute_logged(&action, bridge);
                 }
                 self.rebuild_visible_items();
             }
@@ -667,7 +667,7 @@ fn target_details(session: &SessionState) -> String {
     if let Some(target) = session.protocol_mismatch {
         return format!(
             " | PROTOCOL MISMATCH: host v{}, target v{target}",
-            control_rs_ets::comms::PROTOCOL_VERSION
+            control_rs_ets::wire::PROTOCOL_VERSION
         );
     }
     session.target_info.map_or_else(String::new, |info| {
@@ -931,57 +931,44 @@ fn prompt_line<'a>(
     ])
 }
 
-fn format_setting_value(value: SettingValue) -> String {
+fn format_setting_value(value: Param) -> String {
     match value {
-        SettingValue::Bool(v) => v.to_string(),
-        SettingValue::F32(v) => v.to_string(),
-        SettingValue::I32(v) => v.to_string(),
-        SettingValue::I8(v) => v.to_string(),
-        SettingValue::U16(v) => v.to_string(),
-        SettingValue::U32(v) => v.to_string(),
-        SettingValue::U64(v) => v.to_string(),
-        SettingValue::U8(v) => v.to_string(),
+        Param::Bool(v) => v.to_string(),
+        Param::F32(v) => v.to_string(),
+        Param::I32(v) => v.to_string(),
+        Param::U16(v) => v.to_string(),
+        Param::U32(v) => v.to_string(),
+        Param::U8(v) => v.to_string(),
     }
 }
 
-fn parse_setting_value(
-    raw: &str,
-    current: SettingValue,
-) -> Result<SettingValue, String> {
+fn parse_setting_value(raw: &str, current: Param) -> Result<Param, String> {
     let trimmed = raw.trim();
     match current {
-        SettingValue::Bool(_) => match trimmed {
-            "true" | "1" => Ok(SettingValue::Bool(true)),
-            "false" | "0" => Ok(SettingValue::Bool(false)),
+        Param::Bool(_) => match trimmed {
+            "true" | "1" => Ok(Param::Bool(true)),
+            "false" | "0" => Ok(Param::Bool(false)),
             _ => Err(format!("invalid bool '{trimmed}'")),
         },
-        SettingValue::F32(_) => trimmed
+        Param::F32(_) => trimmed
             .parse()
-            .map(SettingValue::F32)
+            .map(Param::F32)
             .map_err(|_| format!("invalid f32 '{trimmed}'")),
-        SettingValue::I32(_) => trimmed
+        Param::I32(_) => trimmed
             .parse()
-            .map(SettingValue::I32)
+            .map(Param::I32)
             .map_err(|_| format!("invalid i32 '{trimmed}'")),
-        SettingValue::I8(_) => trimmed
+        Param::U16(_) => trimmed
             .parse()
-            .map(SettingValue::I8)
-            .map_err(|_| format!("invalid i8 '{trimmed}'")),
-        SettingValue::U16(_) => trimmed
-            .parse()
-            .map(SettingValue::U16)
+            .map(Param::U16)
             .map_err(|_| format!("invalid u16 '{trimmed}'")),
-        SettingValue::U32(_) => trimmed
+        Param::U32(_) => trimmed
             .parse()
-            .map(SettingValue::U32)
+            .map(Param::U32)
             .map_err(|_| format!("invalid u32 '{trimmed}'")),
-        SettingValue::U64(_) => trimmed
+        Param::U8(_) => trimmed
             .parse()
-            .map(SettingValue::U64)
-            .map_err(|_| format!("invalid u64 '{trimmed}'")),
-        SettingValue::U8(_) => trimmed
-            .parse()
-            .map(SettingValue::U8)
+            .map(Param::U8)
             .map_err(|_| format!("invalid u8 '{trimmed}'")),
     }
 }
@@ -1092,8 +1079,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use control_rs_ets::comms::Telemetry;
-    use control_rs_ets::settings::SettingValue;
+    use control_rs_ets::wire::Param;
+    use control_rs_ets::wire::{
+        ItemState, PacketInfo, PayloadEncoding, Telemetry,
+    };
     use crossterm::event::KeyModifiers;
 
     #[cfg(unix)]
@@ -1164,6 +1153,9 @@ mod tests {
                 message: "boom",
                 file: "f.rs",
                 line: 1,
+                fault_status: 0,
+                suite: None,
+                item: None,
             }))
             .unwrap();
             let mut state = AppState::new("T".to_string(), "L".to_string());
@@ -1205,13 +1197,75 @@ mod tests {
         }
     }
 
+    const PACKET: PacketInfo<'static> = PacketInfo {
+        type_name: "",
+        encoding: PayloadEncoding::Postcard,
+    };
+
     /// `TargetInfo` matching the host's protocol, sent before discovery ends.
     const TARGET_INFO: Telemetry<'static> = Telemetry::TargetInfo {
-        protocol_version: control_rs_ets::comms::PROTOCOL_VERSION,
+        protocol_version: control_rs_ets::wire::PROTOCOL_VERSION,
         board_id: 0,
         core_clock_hz: 0,
         fpu_flags: 0,
+        release_source: false,
     };
+
+    fn exec_info(
+        suite: u16,
+        item: u16,
+        name: &'static str,
+        description: &'static str,
+    ) -> Telemetry<'static> {
+        Telemetry::ExecutableInfo {
+            suite,
+            item,
+            name,
+            description,
+            modes: 1,
+            input: PACKET,
+            output: PACKET,
+            link_timeout_ms: 0,
+        }
+    }
+
+    fn run_stats(
+        item: u16,
+        cycles: u64,
+        time_us: u64,
+        stack_peak: u32,
+    ) -> Telemetry<'static> {
+        Telemetry::RunStats {
+            suite: 0,
+            item,
+            steps: 1,
+            time_ns: time_us.saturating_mul(1000),
+            step_min_ns: 0,
+            step_max_ns: 0,
+            cycles,
+            stack_peak,
+            jitter_max_ns: 0,
+            missed_releases: 0,
+        }
+    }
+
+    fn setting_info(
+        index: u16,
+        name: &'static str,
+        description: &'static str,
+        value: Param,
+    ) -> Telemetry<'static> {
+        Telemetry::ParamValue {
+            suite: 0,
+            index,
+            count: 8,
+            name,
+            description,
+            value,
+            min: value.type_min(),
+            max: value.type_max(),
+        }
+    }
 
     fn make_test_event(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -1229,21 +1283,25 @@ mod tests {
         feed(
             state,
             &Telemetry::SuiteInfo {
-                suite_id: 0,
+                suite: 0,
                 name: suite,
                 description: "",
-                test_count: u16::try_from(tests.len()).unwrap(),
-                setting_count: 0,
+                executable_count: u16::try_from(tests.len()).unwrap(),
+                param_count: 0,
             },
         );
         for (test_id, name) in (0u16..).zip(tests) {
             feed(
                 state,
-                &Telemetry::TestInfo {
-                    suite_id: 0,
-                    test_id,
+                &Telemetry::ExecutableInfo {
+                    suite: 0,
+                    item: test_id,
                     name,
                     description: "",
+                    modes: 1,
+                    input: PACKET,
+                    output: PACKET,
+                    link_timeout_ms: 0,
                 },
             );
         }
@@ -1283,16 +1341,7 @@ mod tests {
         ));
 
         // Script metrics (FR-3)
-        feed(
-            &mut state,
-            &Telemetry::MetricReport {
-                suite_id: 0,
-                test_id: 0,
-                cycles: 1204,
-                time_us: 2,
-                stack_peak: 32,
-            },
-        );
+        feed(&mut state, &run_stats(0, 1204, 2, 32));
         state.rebuild_visible_items();
 
         if let TableItem::Test {
@@ -1347,16 +1396,7 @@ mod tests {
 
         // Discover and run test 0
         discover_suite(&mut state, "suite", &["t0"]);
-        feed(
-            &mut state,
-            &Telemetry::MetricReport {
-                suite_id: 0,
-                test_id: 0,
-                cycles: 42000,
-                time_us: 100,
-                stack_peak: 64,
-            },
-        );
+        feed(&mut state, &run_stats(0, 42000, 100, 64));
 
         // Simulate target crash/reset and re-discovery
         feed(
@@ -1365,6 +1405,9 @@ mod tests {
                 message: "crash",
                 file: "foo.rs",
                 line: 10,
+                fault_status: 0,
+                suite: None,
+                item: None,
             },
         );
         discover_suite(&mut state, "suite", &["t0"]);
@@ -1394,31 +1437,15 @@ mod tests {
         feed(
             &mut state,
             &Telemetry::SuiteInfo {
-                suite_id: 0,
+                suite: 0,
                 name: "suite1",
                 description: "",
-                test_count: 2,
-                setting_count: 0,
+                executable_count: 2,
+                param_count: 0,
             },
         );
-        feed(
-            &mut state,
-            &Telemetry::TestInfo {
-                suite_id: 0,
-                test_id: 0,
-                name: "test1",
-                description: "",
-            },
-        );
-        feed(
-            &mut state,
-            &Telemetry::TestInfo {
-                suite_id: 0,
-                test_id: 1,
-                name: "test2",
-                description: "",
-            },
-        );
+        feed(&mut state, &exec_info(0, 0, "test1", ""));
+        feed(&mut state, &exec_info(0, 1, "test2", ""));
         feed(&mut state, &TARGET_INFO);
         feed(&mut state, &Telemetry::DiscoveryComplete);
         state.rebuild_visible_items();
@@ -1501,22 +1528,21 @@ mod tests {
         feed(
             &mut state,
             &Telemetry::SuiteInfo {
-                suite_id: 0,
+                suite: 0,
                 name: "suite",
                 description: "",
-                test_count: 0,
-                setting_count: 1,
+                executable_count: 0,
+                param_count: 1,
             },
         );
         feed(
             &mut state,
-            &Telemetry::SettingInfo {
-                suite_id: 0,
-                setting_id: 0,
-                name: "cycle_limit",
-                description: "Maximum cycles before test timeout",
-                value: SettingValue::U32(100),
-            },
+            &setting_info(
+                0,
+                "cycle_limit",
+                "Maximum cycles before test timeout",
+                Param::U32(100),
+            ),
         );
         feed(&mut state, &TARGET_INFO);
         feed(&mut state, &Telemetry::DiscoveryComplete);
@@ -1555,7 +1581,7 @@ mod tests {
                 .first()
                 .unwrap()
                 .value,
-            SettingValue::U32(200)
+            Param::U32(200)
         );
     }
 
@@ -1565,35 +1591,30 @@ mod tests {
         feed(
             state,
             &Telemetry::SuiteInfo {
-                suite_id: 0,
+                suite: 0,
                 name: "Alpha",
                 description: "",
-                test_count: 2,
-                setting_count: settings,
+                executable_count: 2,
+                param_count: settings,
             },
         );
         for (test_id, name) in [(0u16, "One"), (1, "Two")] {
             feed(
                 state,
-                &Telemetry::TestInfo {
-                    suite_id: 0,
-                    test_id,
+                &Telemetry::ExecutableInfo {
+                    suite: 0,
+                    item: test_id,
                     name,
                     description: "",
+                    modes: 1,
+                    input: PACKET,
+                    output: PACKET,
+                    link_timeout_ms: 0,
                 },
             );
         }
         for setting_id in 0..settings {
-            feed(
-                state,
-                &Telemetry::SettingInfo {
-                    suite_id: 0,
-                    setting_id,
-                    name: "gain",
-                    description: "",
-                    value: SettingValue::U8(1),
-                },
-            );
+            feed(state, &setting_info(setting_id, "gain", "", Param::U8(1)));
         }
         feed(state, &TARGET_INFO);
         feed(state, &Telemetry::DiscoveryComplete);
@@ -1655,7 +1676,7 @@ mod tests {
             .first()
             .unwrap()
             .value;
-        assert_eq!(value, SettingValue::U8(1), "nothing was committed");
+        assert_eq!(value, Param::U8(1), "nothing was committed");
     }
 
     #[test]
@@ -1711,11 +1732,11 @@ mod tests {
         feed(
             &mut state,
             &Telemetry::SuiteInfo {
-                suite_id: 0,
+                suite: 0,
                 name: "Empty",
                 description: "",
-                test_count: 0,
-                setting_count: 0,
+                executable_count: 0,
+                param_count: 0,
             },
         );
         let suite = state.session.suites.first().unwrap().clone();
@@ -1764,18 +1785,14 @@ mod tests {
 
     #[test]
     fn boolean_settings_accept_words_and_digits() {
-        let parse =
-            |raw: &str| parse_setting_value(raw, SettingValue::Bool(false));
-        assert_eq!(parse("true"), Ok(SettingValue::Bool(true)));
-        assert_eq!(parse(" 1 "), Ok(SettingValue::Bool(true)));
-        assert_eq!(parse("false"), Ok(SettingValue::Bool(false)));
-        assert_eq!(parse("0"), Ok(SettingValue::Bool(false)));
+        let parse = |raw: &str| parse_setting_value(raw, Param::Bool(false));
+        assert_eq!(parse("true"), Ok(Param::Bool(true)));
+        assert_eq!(parse(" 1 "), Ok(Param::Bool(true)));
+        assert_eq!(parse("false"), Ok(Param::Bool(false)));
+        assert_eq!(parse("0"), Ok(Param::Bool(false)));
         assert!(parse("yes").is_err());
-        assert_eq!(
-            parse_setting_value("12", SettingValue::U8(0)),
-            Ok(SettingValue::U8(12))
-        );
-        assert!(parse_setting_value("x", SettingValue::U8(0)).is_err());
+        assert_eq!(parse_setting_value("12", Param::U8(0)), Ok(Param::U8(12)));
+        assert!(parse_setting_value("x", Param::U8(0)).is_err());
     }
 
     #[test]
@@ -1807,41 +1824,37 @@ mod tests {
         feed(
             &mut state,
             &Telemetry::SuiteInfo {
-                suite_id: 0,
+                suite: 0,
                 name: "Alpha",
                 description: "",
-                test_count: 3,
-                setting_count: 0,
+                executable_count: 3,
+                param_count: 0,
             },
         );
         for (test_id, name) in [(0u16, "One"), (1, "Two"), (2, "Three")] {
             feed(
                 &mut state,
-                &Telemetry::TestInfo {
-                    suite_id: 0,
-                    test_id,
+                &Telemetry::ExecutableInfo {
+                    suite: 0,
+                    item: test_id,
                     name,
                     description: "",
+                    modes: 1,
+                    input: PACKET,
+                    output: PACKET,
+                    link_timeout_ms: 0,
                 },
             );
         }
-        feed(
-            &mut state,
-            &Telemetry::MetricReport {
-                suite_id: 0,
-                test_id: 0,
-                cycles: 1,
-                time_us: 1,
-                stack_peak: 1,
-            },
-        );
+        feed(&mut state, &run_stats(0, 1, 1, 1));
         for test_id in [1, 2] {
             feed(
                 &mut state,
-                &Telemetry::TestStateChange {
-                    suite_id: 0,
-                    test_id,
-                    state: TestState::Failed,
+                &Telemetry::ItemState {
+                    suite: 0,
+                    item: test_id,
+                    state: ItemState::Faulted,
+                    message: None,
                 },
             );
         }
