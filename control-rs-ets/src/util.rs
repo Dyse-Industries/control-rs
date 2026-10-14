@@ -206,6 +206,9 @@ pub unsafe fn handle_failure<
 ) -> ! {
     context.cpu_utils.disable_interrupts_permanently();
 
+    // Drive the active executable to its safe state, whether or not the link is free.
+    let _ = crate::fault::settle();
+
     if comms_ok {
         let suite = crate::server::CURRENT_SUITE
             .get()

@@ -21,17 +21,18 @@
 //! # Usage
 //!
 //! ```
+//! use control_rs_ets::exec::{TaskIo, TaskOutcome};
+//! use control_rs_ets::wire::Verdict;
 //! use control_rs_ets::{ExecDescriptor, SuiteDescriptor};
 //!
-//! // Define a mock test function
-//! fn dummy_test() {}
+//! // Define a mock test step
+//! fn dummy_test(_: &mut TaskIo<'_>) -> TaskOutcome {
+//!     TaskOutcome::Finish(Verdict::Pass, None)
+//! }
 //!
 //! // Define test executable descriptor
-//! static EXEC: ExecDescriptor = ExecDescriptor {
-//!     description: "A dummy test executable",
-//!     name: "dummy_test",
-//!     test_fn: dummy_test,
-//! };
+//! static EXEC: ExecDescriptor =
+//!     ExecDescriptor::case("dummy_test", "A dummy test executable", dummy_test);
 //!
 //! // Define a suite descriptor with the test
 //! static SUITE: SuiteDescriptor = SuiteDescriptor {
@@ -62,6 +63,7 @@
 #![no_std]
 #![allow(clippy::multiple_crate_versions)]
 
+pub use exec::ExecDescriptor;
 pub use params::{ParamEntry, ParamTable};
 pub use profiler::CPUProfiler;
 #[cfg(target_arch = "arm")]
@@ -70,9 +72,14 @@ pub use profiler::CortexMProfiler;
 pub use profiler::RiscvProfiler;
 pub use server::{Context, Server};
 
+pub mod board;
+pub mod cell;
+pub mod exec;
+pub mod fault;
 pub mod link;
 pub mod params;
 pub mod profiler;
+pub mod run;
 pub mod server;
 pub mod util;
 pub mod wire;
@@ -82,38 +89,6 @@ pub mod wire;
 /// `MAX_MESSAGE_SIZE` (512) minus the worst-case `TaskInput` or `TaskSample` header: variant tag 1,
 /// `suite` 3, `item` 3, `seq` 10, length prefix 2.
 pub const MAX_PACKET_SIZE: usize = 493;
-
-/// Describes a single test executable.
-///
-/// This structure holds metadata about an individual test function, including
-/// its name, doc description and the function pointer itself.
-///
-/// # Safety
-/// This struct does not use `unsafe` code.
-///
-/// # Panics
-/// Instantiating or accessing this struct does not panic.
-///
-/// # Example
-/// ```
-/// use control_rs_ets::ExecDescriptor;
-/// fn my_test() {}
-/// let exec = ExecDescriptor {
-///     description: "A simple unit test",
-///     name: "my_test",
-///     test_fn: my_test,
-/// };
-/// assert_eq!(exec.name, "my_test");
-/// ```
-#[derive(Debug, Clone, Copy)]
-pub struct ExecDescriptor {
-    /// The doc comment description of the test.
-    pub description: &'static str,
-    /// The name of the test executable.
-    pub name: &'static str,
-    /// A function pointer to the test executable.
-    pub test_fn: fn(),
-}
 
 /// Describes a test suite.
 ///
@@ -128,15 +103,14 @@ pub struct ExecDescriptor {
 ///
 /// # Example
 /// ```
+/// use control_rs_ets::exec::{TaskIo, TaskOutcome};
+/// use control_rs_ets::wire::Verdict;
 /// use control_rs_ets::{ExecDescriptor, SuiteDescriptor};
-/// fn test_a() {}
-/// static EXECS: &[ExecDescriptor] = &[
-///     ExecDescriptor {
-///         description: "Test A",
-///         name: "test_a",
-///         test_fn: test_a,
-///     }
-/// ];
+/// fn test_a(_: &mut TaskIo<'_>) -> TaskOutcome {
+///     TaskOutcome::Finish(Verdict::Pass, None)
+/// }
+/// static EXECS: &[ExecDescriptor] =
+///     &[ExecDescriptor::case("test_a", "Test A", test_a)];
 /// static SUITE: SuiteDescriptor = SuiteDescriptor {
 ///     description: "Example Test Suite",
 ///     executables: EXECS,
