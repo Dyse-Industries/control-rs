@@ -326,16 +326,20 @@ mod tests {
 
     /// Stream that serves scripted chunks and accepts writes until its `room` is used up.
     struct ScriptedStream {
+        closed: bool,
         room: usize,
         chunks: Chunks,
+        writes: usize,
         written: Vec<u8>,
     }
 
     impl ScriptedStream {
         fn new(chunks: Chunks, room: usize) -> Self {
             Self {
+                closed: false,
                 room,
                 chunks,
+                writes: 0,
                 written: Vec::new(),
             }
         }
@@ -359,7 +363,13 @@ mod tests {
             Ok(n)
         }
 
+        fn close_on_failure(&mut self) {
+            self.closed = true;
+        }
+
         fn write(&mut self, buf: &[u8]) -> CountOf<Self> {
+            self.writes = self.writes.saturating_add(1);
+            assert!(self.writes < 1000, "write loop does not terminate");
             let n = buf.len().min(self.room);
             self.room = self.room.saturating_sub(n);
             self.written.extend_from_slice(buf.get(..n).unwrap());
@@ -482,6 +492,17 @@ mod tests {
         let mut buf = [0u8; 8];
         assert_eq!(link.recv(&mut buf), Ok(None));
         assert_eq!(link.stream().written, Vec::<u8>::new());
+    }
+
+    #[test]
+    fn an_idle_link_never_writes_and_close_on_failure_reaches_the_stream() {
+        let mut link = StreamLink::new(ScriptedStream::new(Vec::new(), 512));
+        let mut buf = [0u8; 8];
+        assert_eq!(link.recv(&mut buf), Ok(None));
+        assert_eq!(link.stream().writes, 0);
+        assert!(!link.stream().closed);
+        link.close_on_failure();
+        assert!(link.stream().closed);
     }
 
     #[test]

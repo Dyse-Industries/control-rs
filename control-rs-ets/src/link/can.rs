@@ -481,6 +481,22 @@ mod tests {
     }
 
     #[test]
+    fn a_block_ending_on_the_last_frame_does_not_wait() {
+        let message: Vec<u8> = (0..20).collect();
+        let mut tx = Segmenter::new(&message).unwrap();
+        let mut frame = [0u8; 8];
+        assert!(!tx.is_waiting());
+        tx.next_frame(&mut frame);
+        assert!(tx.is_waiting());
+        tx.flow_control(&[0x30, 2, 0]).unwrap();
+        assert!(!tx.is_waiting());
+        assert!(tx.next_frame(&mut frame).is_some());
+        assert!(tx.next_frame(&mut frame).is_some());
+        assert!(tx.is_done());
+        assert!(!tx.is_waiting());
+    }
+
+    #[test]
     fn malformed_frames_are_rejected() {
         let mut rx = Reassembler::<64>::new();
         assert_eq!(rx.push(&[]), Err(IsoTpError::Malformed));

@@ -65,8 +65,7 @@ impl MessageReader for UsbReader {
                 })?;
                 Ok(Some(std::mem::take(&mut self.partial)))
             }
-            Err(e) if e.kind() == io::ErrorKind::TimedOut => Ok(None),
-            Err(e) => Err(e),
+            Err(e) => on_error(e),
         }
     }
 }
@@ -89,10 +88,7 @@ pub fn open(config: &UsbBulkConfig) -> OpenOf {
     let info = nusb::list_devices()
         .wait()
         .map_err(|e| fail("enumeration failed", &e))?
-        .find(|d| {
-            d.vendor_id() == config.vendor_id
-                && d.product_id() == config.product_id
-        })
+        .find(|d| is_target(d.vendor_id(), d.product_id(), *config))
         .ok_or_else(|| fail("device not found", &"no matching device"))?;
     let device = info.open().wait().map_err(|e| fail("open failed", &e))?;
     let interface = device
@@ -120,4 +116,51 @@ pub fn open(config: &UsbBulkConfig) -> OpenOf {
         UsbWriter { writer },
         description,
     ))
+}
+
+/// Returns whether a device with these identifiers is the one `config` describes.
+const fn is_target(
+    vendor_id: u16,
+    product_id: u16,
+    config: UsbBulkConfig,
+) -> bool {
+    vendor_id == config.vendor_id && product_id == config.product_id
+}
+
+/// Maps a failed read to a reader step; a timeout means no message is ready.
+fn on_error(e: io::Error) -> MessageOf {
+    if e.kind() == io::ErrorKind::TimedOut {
+        Ok(None)
+    } else {
+        Err(e)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const CONFIG: UsbBulkConfig = UsbBulkConfig {
+        in_endpoint: 0x81,
+        interface: 0,
+        out_endpoint: 0x01,
+        product_id: 0x0002,
+        vendor_id: 0x0001,
+    };
+
+    #[test]
+    fn a_device_matches_only_on_both_identifiers() {
+        assert!(is_target(0x0001, 0x0002, CONFIG));
+        assert!(!is_target(0x0001, 0x0003, CONFIG));
+        assert!(!is_target(0x0003, 0x0002, CONFIG));
+        assert!(!is_target(0x0003, 0x0004, CONFIG));
+    }
+
+    #[test]
+    fn a_read_timeout_is_idle_and_other_failures_propagate() {
+        let idle = on_error(io::Error::from(io::ErrorKind::TimedOut));
+        assert!(matches!(idle, Ok(None)));
+        let failed = on_error(io::Error::from(io::ErrorKind::BrokenPipe));
+        assert_eq!(failed.unwrap_err().kind(), io::ErrorKind::BrokenPipe);
+    }
 }

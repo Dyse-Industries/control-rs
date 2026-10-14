@@ -47,6 +47,13 @@ exclude_re = [
     # The loop only skips the matrix update after the last coefficient, which
     # nothing reads; performing it too changes no result.
     "replace < with <= in StateSpace<T, NX, 1, 1>::to_transfer_function",
+    # ISO-TP framing: the type nibble (0x10, 0x20) and the length or sequence
+    # nibble occupy disjoint bits, so `|` and `^` build the same byte.
+    "replace \\| with \\^ in (Segmenter<'a>::(next|first)_frame|Reassembler<N>::first)",
+    # A lock that never releases or never grants, and an inverted lock test,
+    # stall the telemetry retry loop; the test timeout detects the hang.
+    "replace CommsLock::(try_lock -> bool with false|unlock with \\(\\))",
+    "delete ! in Context<L, P>::send_telemetry_locked",
     # Kani harnesses compile only under `cfg(kani)`; the `kani` gate checks
     # them, and no unit test can reach them.
     "proofs::prove_",
