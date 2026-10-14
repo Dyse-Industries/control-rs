@@ -56,7 +56,7 @@ work follows both tracks.
       ([#94](https://github.com/Dyse-Industries/control-rs/pull/94))
         - `Approval` phases and `Doc Status` badges on every design document
 
-## Track A: control toolboxes (priority)
+## Track A: Control toolboxes (priority)
 
 Stack order is PR4, PR5, PR6, PR7, PR8, PR9. Each design is a Draft until it is
 signed off. No stack branch merges until its design is approved, implemented
@@ -104,7 +104,7 @@ which is archived instead of merged. Implementation PRs build from `main`.
 - [ ] **EX-1**: Board Examples
     - ESP32-C6 (standalone showcase), Arduino Uno R4 Minima, Seeed XIAO
       nRF52840, Seeed XIAO ESP32-S3 and Teensy 4.0 and 4.1
-    - Independent of the overhaul by choice; rebases onto ETS-2 as the API
+    - Independent of the overhaul by choice; moves onto ETS-2 as the API
       changes
 
 ## Independent

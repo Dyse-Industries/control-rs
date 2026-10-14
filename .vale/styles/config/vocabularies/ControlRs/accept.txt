@@ -885,3 +885,11 @@ x_next
 xtask
 z-domain
 z-transform
+Gehrd
+Orghr
+Hseqr
+Trsen
+Trsyl
+Gesvd
+Uno
+Seeed

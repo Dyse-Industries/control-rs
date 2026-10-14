@@ -1,8 +1,8 @@
 # Exportable Test Suites (Design Document)
 
 ![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
+![Design Status Badge](https://img.shields.io/badge/Design%20Status-Stale-lightgrey)
 
 ---
 

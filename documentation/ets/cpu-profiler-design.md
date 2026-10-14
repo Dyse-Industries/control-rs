@@ -1,8 +1,8 @@
 # CPUProfiler Design Document
 
-![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
-![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)
+![Date Badge](https://img.shields.io/badge/Date-September_28,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
+![Design Status Badge](https://img.shields.io/badge/Design%20Status-Stale-lightgrey)
 
 ### 1. Introduction
 
