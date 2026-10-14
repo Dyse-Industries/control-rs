@@ -1,0 +1,12 @@
+[build]
+target = "riscv32imac-unknown-none-elf"
+
+[target.riscv32imac-unknown-none-elf]
+runner = [
+    "bash",
+    "-c",
+    "if command -v espflash >/dev/null 2>&1; then espflash flash --monitor \"$0\"; else cargo espflash flash --release --monitor; fi",
+]
+rustflags = [
+    "-C", "link-arg=-Tlinkall.x",
+]
