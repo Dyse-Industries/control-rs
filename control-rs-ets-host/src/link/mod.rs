@@ -383,6 +383,16 @@ pub trait HostLink {
     /// Releases the transport. Further sends fail or are dropped.
     fn close(&mut self);
 
+    /// Resets the target through the link: reopens a serial port, respawns an emulator or
+    /// drives an external reset line. The default does nothing, for a link that cannot.
+    ///
+    /// # Errors
+    ///
+    /// Returns the link error if the reset fails.
+    fn reset(&mut self) -> UnitOf<Self> {
+        Ok(())
+    }
+
     /// Human-readable description of the link.
     fn describe(&self) -> &str;
 }
@@ -425,6 +435,15 @@ impl HostLink for ETSBridge {
 
     fn describe(&self) -> &str {
         self.link_info()
+    }
+
+    fn reset(&mut self) -> Result<(), HostError> {
+        let Some(target) = self.target.clone() else {
+            return Ok(());
+        };
+        self.terminate();
+        *self = Self::new(target, false)?;
+        Ok(())
     }
 }
 
