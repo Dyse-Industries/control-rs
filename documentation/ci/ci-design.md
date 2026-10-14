@@ -789,7 +789,7 @@ For each target, `ets`:
 1. Builds the firmware with `build_target_elf` before the session starts, so
    compilation time is bounded by the gate's `timeout_secs` and not by the
    session bound.
-2. Runs `run_headless_ets_with_options` with `--timeout <secs>` (default 120)
+2. Runs `run_headless` with `--timeout <secs>` (default 120)
    as the whole-session bound and `--max-resets <n>` (default 3).
 3. Judges the `RunRecord` (FR-19): the target passes only when the run drained
    (`abort` is `None`), no case is pending, at least one case ran and every

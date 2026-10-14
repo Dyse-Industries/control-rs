@@ -114,28 +114,15 @@ record and its status.
 
 [Overview](ets/ets-overview.md)
 
-| Design | Status | Implementation |
-|:--|:--|:--|
-| [Embedded Test Server](ets/embedded-test-server-design.md) | Stale | `control-rs-ets/src/server.rs` |
-| [ETS Executive](ets/ets-executive-design.md) | Stale | `control-rs-ets/src/{exec,run,board,fault,cell}.rs` |
-| [ETS Link](ets/ets-link-design.md) | Draft | `control-rs-ets/src/link/`, `control-rs-ets/src/wire.rs` |
-| [`CPUProfiler`](ets/cpu-profiler-design.md) | Approved | `control-rs-ets/src/profiler.rs` |
-| [Exportable Test Suites](ets/test-suite-design.md) | Approved | `src/**/tests/` (`ets` feature) |
-
-## macros
-
-| Design                                                                      | Status | Implementation       |
-|:----------------------------------------------------------------------------|:-------|:---------------------|
-| [Procedural Macros for Distributed Test Discovery](macros/macros-design.md) | Stale  | `control-rs-macros/` |
-| [`CPUProfiler`](ets/cpu-profiler-design.md) | Stale | `control-rs-ets/src/profiler.rs` |
-| [Exportable Test Suites](ets/test-suite-design.md) | Stale | `src/**/tests/` (`ets` feature) |
-| [Procedural Macros for Distributed Test Discovery](ets/macros-design.md) | Stale | `control-rs-macros/` |
-
-## ets-host
-
-| Design                                          | Status | Implementation         |
-|:------------------------------------------------|:-------|:-----------------------|
-| [Host ETS Library](ets-host/ets-host-design.md) | Stale  | `control-rs-ets-host/` |
+| Design                                                                   | Status | Implementation                                           |
+|:-------------------------------------------------------------------------|:-------|:---------------------------------------------------------|
+| [Host ETS Library](ets/ets-host-design.md)                               | Stale  | `control-rs-ets-host/`                                   |
+| [Embedded Test Server](ets/embedded-test-server-design.md)               | Stale  | `control-rs-ets/src/server.rs`                           |
+| [ETS Executive](ets/ets-executive-design.md)                             | Stale  | `control-rs-ets/src/{exec,run,board,fault,cell}.rs`      |
+| [ETS Link](ets/ets-link-design.md)                                       | Draft  | `control-rs-ets/src/link/`, `control-rs-ets/src/wire.rs` |
+| [`CPUProfiler`](ets/cpu-profiler-design.md)                              | Stale  | `control-rs-ets/src/profiler.rs`                         |
+| [Exportable Test Suites](ets/test-suite-design.md)                       | Stale  | `src/**/tests/` (`ets` feature)                          |
+| [Procedural Macros for Distributed Test Discovery](ets/macros-design.md) | Stale  | `control-rs-macros/`                                     |
 
 ## tui
 
@@ -145,6 +132,7 @@ record and its status.
 
 ## ci
 
+| Design                                                                  | Status | Implementation                                                   |
 | Design                                                                  | Status | Implementation                                                   |
 |:------------------------------------------------------------------------|:-------|:-----------------------------------------------------------------|
 | [Continuous Integration & Quality Gate Infrastructure](ci/ci-design.md) | Stale  | `control-rs-ci/`, `.cargo/gate.toml`, `.github/workflows/CI.yml` |
