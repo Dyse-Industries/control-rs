@@ -20,6 +20,15 @@ use syn::{Item, ItemFn, ItemMod, ItemStatic, parse_quote};
 /// Type alias for a test function's identifier and its description.
 type TestFnInfo = (syn::Ident, String);
 
+/// The lifecycle task of a suite: the implementing type and its description.
+type TaskInfo = (syn::Type, String);
+
+/// The cases and the optional lifecycle task of a suite.
+type Executables<'a> = (&'a [TestFnInfo], Option<&'a TaskInfo>);
+
+/// The context generics and the optional board type of a setup return type.
+type SetupTypes = (syn::Type, syn::Type, Option<syn::Type>);
+
 /// Helper to extract doc comments from syn attributes, strip compiler-injected leading space,
 /// and truncate to a maximum of 160 characters (appending `...` if truncated).
 fn extract_doc_string(attrs: &[syn::Attribute]) -> String {
@@ -76,6 +85,42 @@ fn get_param_constructor(ty: &syn::Type) -> Option<&'static str> {
     }
 }
 
+/// Reads `#[param(min = A, max = B)]` and returns the `.bounded(..)` call, or nothing.
+fn param_bounds(
+    attrs: &[syn::Attribute],
+    constructor: &str,
+) -> proc_macro2::TokenStream {
+    let mut min = None;
+    let mut max = None;
+    for attr in attrs.iter().filter(|a| a.path().is_ident("param")) {
+        let _ = attr.parse_nested_meta(|meta| {
+            let value: syn::Expr = meta.value()?.parse()?;
+            if meta.path.is_ident("min") {
+                min = Some(value);
+            } else if meta.path.is_ident("max") {
+                max = Some(value);
+            }
+            Ok(())
+        });
+    }
+    let variant = format_ident!(
+        "{}",
+        match constructor {
+            "bool" => "Bool".to_string(),
+            other => other.to_uppercase(),
+        }
+    );
+    match (min, max) {
+        (Some(lo), Some(hi)) => quote! {
+            .bounded(
+                ::control_rs_ets::wire::Param::#variant(#lo),
+                ::control_rs_ets::wire::Param::#variant(#hi),
+            )
+        },
+        _ => proc_macro2::TokenStream::new(),
+    }
+}
+
 /// If the static item has a supported primitive type, rewrites it into a
 /// `ParamEntry` static named after the item and returns its identifier.
 fn process_static_param(item_static: &mut ItemStatic) -> Option<syn::Ident> {
@@ -90,11 +135,16 @@ fn process_static_param(item_static: &mut ItemStatic) -> Option<syn::Ident> {
 
     let param_doc = extract_doc_string(&attrs);
     let constructor_ident = format_ident!("{}", constructor);
+    let bounds = param_bounds(&attrs, constructor);
+    let attrs: Vec<_> = attrs
+        .into_iter()
+        .filter(|a| !a.path().is_ident("param"))
+        .collect();
 
     let new_static: ItemStatic = parse_quote! {
         #(#attrs)*
         #vis static #name_ident: ::control_rs_ets::params::ParamEntry =
-            ::control_rs_ets::params::ParamEntry::#constructor_ident(stringify!(#name_ident), #param_doc, #init_expr);
+            ::control_rs_ets::params::ParamEntry::#constructor_ident(stringify!(#name_ident), #param_doc, #init_expr) #bounds;
     };
 
     *item_static = new_static;
@@ -105,12 +155,15 @@ fn process_static_param(item_static: &mut ItemStatic) -> Option<syn::Ident> {
 /// If the function is a test executable (`fn()` and does not start with `_`),
 /// extracts its identifier and doc comments.
 ///
-/// Parameterized functions are helpers: `ExecDescriptor::test_fn` is `fn()`, so
+/// Functions with parameters or a return value are helpers: `ExecDescriptor::test_fn` is `fn()`, so
 /// registering them fails QEMU/`no_std` compilation with E0308.
 fn process_test_fn(item_fn: &ItemFn) -> Option<TestFnInfo> {
     let fn_name = &item_fn.sig.ident;
     let fn_name_str = fn_name.to_string();
-    if fn_name_str.starts_with('_') || !item_fn.sig.inputs.is_empty() {
+    if fn_name_str.starts_with('_')
+        || !item_fn.sig.inputs.is_empty()
+        || !matches!(item_fn.sig.output, syn::ReturnType::Default)
+    {
         None
     } else {
         let test_doc = extract_doc_string(&item_fn.attrs);
@@ -118,22 +171,96 @@ fn process_test_fn(item_fn: &ItemFn) -> Option<TestFnInfo> {
     }
 }
 
+/// Generates the case step wrappers.
+fn case_wrappers(tests: &[TestFnInfo]) -> Vec<Item> {
+    tests
+        .iter()
+        .map(|(t, _)| {
+            let wrapper = format_ident!("__ets_case_{}", t);
+            parse_quote! {
+                fn #wrapper(
+                    _: &mut ::control_rs_ets::exec::TaskIo<'_>,
+                ) -> ::control_rs_ets::exec::TaskOutcome {
+                    #t();
+                    ::control_rs_ets::exec::TaskOutcome::Finish(
+                        ::control_rs_ets::wire::Verdict::Pass,
+                        None,
+                    )
+                }
+            }
+        })
+        .collect()
+}
+
+/// Generates the slot and the five monomorphic wrappers of a lifecycle task.
+fn task_wrappers(ty: &syn::Type) -> Vec<Item> {
+    let exec = quote!(::control_rs_ets::exec);
+    vec![
+        parse_quote! {
+            static __ETS_TASK: #exec::TaskSlot<#ty> = #exec::TaskSlot::new();
+        },
+        parse_quote! {
+            fn __ets_task_setup() -> #exec::HookOf {
+                #exec::task_setup(&__ETS_TASK)
+            }
+        },
+        parse_quote! {
+            fn __ets_task_step(io: &mut #exec::TaskIo<'_>) -> #exec::TaskOutcome {
+                #exec::task_step(&__ETS_TASK, io)
+            }
+        },
+        parse_quote! {
+            fn __ets_task_reset() -> #exec::HookOf {
+                #exec::task_reset(&__ETS_TASK)
+            }
+        },
+        parse_quote! {
+            fn __ets_task_teardown() -> #exec::HookOf {
+                #exec::task_teardown(&__ETS_TASK)
+            }
+        },
+        parse_quote! {
+            fn __ets_task_safe_state() {
+                <#ty as #exec::LifecycleTask>::safe_state();
+            }
+        },
+    ]
+}
+
 /// Generates the static descriptor items to append to the module.
 fn generate_suite_descriptors(
     suite_name: &str,
     suite_doc: &str,
-    tests: &[TestFnInfo],
+    (tests, task): Executables<'_>,
     params: &[syn::Ident],
-) -> [Item; 4] {
-    let test_descriptors = tests.iter().map(|(t, doc)| {
-        quote! {
-            ::control_rs_ets::ExecDescriptor {
-                name: stringify!(#t),
-                description: #doc,
-                test_fn: #t,
+) -> Vec<Item> {
+    let mut items = case_wrappers(tests);
+    let mut descriptors: Vec<proc_macro2::TokenStream> = tests
+        .iter()
+        .map(|(t, doc)| {
+            let wrapper = format_ident!("__ets_case_{}", t);
+            quote! {
+                ::control_rs_ets::ExecDescriptor::case(stringify!(#t), #doc, #wrapper)
             }
-        }
-    });
+        })
+        .collect();
+    if let Some((ty, doc)) = task {
+        items.extend(task_wrappers(ty));
+        let name = quote!(#ty).to_string().replace(' ', "");
+        descriptors.push(quote! {
+            ::control_rs_ets::exec::task_descriptor::<#ty>(
+                #name,
+                #doc,
+                (
+                    __ets_task_setup,
+                    __ets_task_step,
+                    __ets_task_reset,
+                    __ets_task_teardown,
+                    __ets_task_safe_state,
+                ),
+            )
+        });
+    }
 
     let param_ptrs = params.iter().map(|s| {
         quote! {
@@ -141,10 +268,10 @@ fn generate_suite_descriptors(
         }
     });
 
-    [
+    items.extend([
         parse_quote! {
             static EXECUTABLES: &[::control_rs_ets::ExecDescriptor] = &[
-                #(#test_descriptors),*
+                #(#descriptors),*
             ];
         },
         parse_quote! {
@@ -167,7 +294,20 @@ fn generate_suite_descriptors(
             #[used]
             pub static SUITE_DESCRIPTOR_PTR: &::control_rs_ets::SuiteDescriptor = &SUITE_DESCRIPTOR;
         },
-    ]
+    ]);
+    items
+}
+
+/// The implementing type and description when `item_impl` is `impl LifecycleTask for X`.
+fn lifecycle_impl(item_impl: &syn::ItemImpl) -> Option<TaskInfo> {
+    let (_, path, _) = item_impl.trait_.as_ref()?;
+    if path.segments.last()?.ident != "LifecycleTask" {
+        return None;
+    }
+    Some((
+        (*item_impl.self_ty).clone(),
+        extract_doc_string(&item_impl.attrs),
+    ))
 }
 
 /// Expand `#[ets_suite]` for an inline module.
@@ -188,18 +328,36 @@ fn ets_suite_impl(item: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
 
     let mut tests = Vec::new();
     let mut params = Vec::new();
+    let mut task: Option<TaskInfo> = None;
 
     if let Some((_, ref mut items)) = item_mod.content {
         for inner_item in items.iter_mut() {
             match inner_item {
                 Item::Static(item_static) => {
-                    if let Some(param) = process_static_param(item_static) {
-                        params.push(param);
-                    }
+                    let Some(param) = process_static_param(item_static) else {
+                        return syn::Error::new_spanned(
+                            &*item_static,
+                            "suite statics must be u8, u16, u32, i32, f32 or bool",
+                        )
+                        .to_compile_error();
+                    };
+                    params.push(param);
                 }
                 Item::Fn(item_fn) => {
                     if let Some(test) = process_test_fn(item_fn) {
                         tests.push(test);
+                    }
+                }
+                Item::Impl(item_impl) => {
+                    if let Some(found) = lifecycle_impl(item_impl) {
+                        if task.is_some() {
+                            return syn::Error::new_spanned(
+                                &*item_impl,
+                                "at most one lifecycle task per suite",
+                            )
+                            .to_compile_error();
+                        }
+                        task = Some(found);
                     }
                 }
                 _ => {}
@@ -209,7 +367,7 @@ fn ets_suite_impl(item: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
         let suite_desc_code = generate_suite_descriptors(
             &suite_name,
             &suite_doc,
-            &tests,
+            (&tests, task.as_ref()),
             &params,
         );
         items.extend(suite_desc_code);
@@ -252,7 +410,58 @@ fn extract_context_generics(ty: &syn::Type) -> Option<(syn::Type, syn::Type)> {
     Some((c_ty.clone(), p_ty.clone()))
 }
 
-/// Expand `#[ets_setup]` for a function returning `Context<C, P>`.
+/// Splits a setup return type into the `Context` type and the optional board type.
+fn setup_types(ty: &syn::Type) -> Option<SetupTypes> {
+    if let syn::Type::Tuple(tuple) = ty {
+        let mut elems = tuple.elems.iter();
+        let (context, board) = (elems.next()?, elems.next()?);
+        if elems.next().is_some() {
+            return None;
+        }
+        let (c_ty, p_ty) = extract_context_generics(context)?;
+        return Some((c_ty, p_ty, Some(board.clone())));
+    }
+    let (c_ty, p_ty) = extract_context_generics(ty)?;
+    Some((c_ty, p_ty, None))
+}
+
+/// Expand `#[derive(Packet)]`: a Postcard packet over the type's serde implementations.
+fn packet_derive_impl(
+    input: proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    let item: syn::DeriveInput = match syn::parse2(input) {
+        Ok(i) => i,
+        Err(e) => return e.to_compile_error(),
+    };
+    let name = &item.ident;
+    let (impl_generics, ty_generics, where_clause) =
+        item.generics.split_for_impl();
+    quote! {
+        impl #impl_generics ::control_rs_ets::exec::Packet for #name #ty_generics #where_clause {
+            const INFO: ::control_rs_ets::wire::PacketInfo<'static> =
+                ::control_rs_ets::wire::PacketInfo {
+                    type_name: stringify!(#name),
+                    encoding: ::control_rs_ets::wire::PayloadEncoding::Postcard,
+                };
+
+            fn decode(bytes: &[u8]) -> Option<Self> {
+                ::control_rs_ets::exec::postcard_decode(bytes)
+            }
+
+            fn encode(&self, out: &mut [u8]) -> Option<usize> {
+                ::control_rs_ets::exec::postcard_encode(self, out)
+            }
+        }
+    }
+}
+
+/// Derives `Packet` for a type that implements serde's `Serialize` and `Deserialize`.
+#[proc_macro_derive(Packet)]
+pub fn derive_packet(input: TokenStream) -> TokenStream {
+    TokenStream::from(packet_derive_impl(input.into()))
+}
+
+/// Expand `#[ets_setup]` for a function returning `Context<C, P>` or `(Context<C, P>, B)`.
 fn ets_setup_impl(item: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
     let setup_fn: ItemFn = match syn::parse2(item) {
         Ok(f) => f,
@@ -263,26 +472,35 @@ fn ets_setup_impl(item: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
     let syn::ReturnType::Type(_, return_type) = &setup_fn.sig.output else {
         return syn::Error::new_spanned(
             &setup_fn.sig,
-            "setup function must return a Context<C, P>",
+            "setup function must return a Context<C, P> or (Context<C, P>, B)",
         )
         .to_compile_error();
     };
 
-    let Some((c_ty, p_ty)) = extract_context_generics(return_type) else {
+    let Some((c_ty, p_ty, board)) = setup_types(return_type) else {
         return syn::Error::new_spanned(
             return_type,
-            "setup function return type must be Context<C, P>",
+            "setup function return type must be Context<C, P> or (Context<C, P>, B)",
         )
         .to_compile_error();
+    };
+    let b_ty = board.as_ref().map_or_else(
+        || quote!(::control_rs_ets::board::NoBoard),
+        |b| quote!(#b),
+    );
+    let entry = if board.is_some() {
+        quote!(::control_rs_macros::ets_entrypoint!(#setup_name, board);)
+    } else {
+        quote!(::control_rs_macros::ets_entrypoint!(#setup_name);)
     };
 
     quote! {
         #setup_fn
 
-        static ETS_SERVER: ::core::sync::atomic::AtomicPtr<::control_rs_ets::Server<'static, #c_ty, #p_ty>> =
-            ::core::sync::atomic::AtomicPtr::new(::core::ptr::null_mut());
+        static ETS_SERVER: ::control_rs_ets::cell::StateCell<*mut ::control_rs_ets::Server<'static, #c_ty, #p_ty, #b_ty>> =
+            ::control_rs_ets::cell::StateCell::new(::core::ptr::null_mut());
 
-        ::control_rs_macros::ets_entrypoint!(#setup_name);
+        #entry
         ::control_rs_macros::ets_panic!();
         ::control_rs_macros::ets_exception!();
     }
@@ -301,9 +519,30 @@ pub fn ets_setup(_attr: TokenStream, item: TokenStream) -> TokenStream {
 fn ets_entrypoint_impl(
     input: proc_macro2::TokenStream,
 ) -> proc_macro2::TokenStream {
-    let setup_name: syn::Ident = match syn::parse2(input) {
+    let parsed = syn::parse::Parser::parse2(
+        syn::punctuated::Punctuated::<syn::Ident, syn::Token![,]>::parse_terminated,
+        input,
+    );
+    let idents = match parsed {
         Ok(i) => i,
         Err(e) => return e.to_compile_error(),
+    };
+    let mut idents = idents.into_iter();
+    let Some(setup_name) = idents.next() else {
+        return syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "expected identifier",
+        )
+        .to_compile_error();
+    };
+    let with_board = idents.next().is_some();
+    let make_context = if with_board {
+        quote! { let (context, board) = #setup_name(); }
+    } else {
+        quote! {
+            let context = #setup_name();
+            let board = ::control_rs_ets::board::NoBoard;
+        }
     };
     quote! {
         #[cfg(target_os = "none")]
@@ -326,12 +565,12 @@ fn ets_entrypoint_impl(
 
             let suites = unsafe { ::control_rs_ets::util::get_suites(start, end) };
 
-            let context = #setup_name();
-            let mut server = ::control_rs_ets::Server::new(context, suites);
-            ETS_SERVER.store(&mut server as *mut _, ::core::sync::atomic::Ordering::Release);
+            #make_context
+            let mut server = ::control_rs_ets::Server::with_board(context, suites, board);
+            ETS_SERVER.set(&mut server as *mut _);
 
             let _ = server.run();
-            ETS_SERVER.store(::core::ptr::null_mut(), ::core::sync::atomic::Ordering::Release);
+            ETS_SERVER.set(::core::ptr::null_mut());
             server.exit();
         }
     }
@@ -361,7 +600,7 @@ fn ets_panic_impl() -> proc_macro2::TokenStream {
             let file = info.location().map_or("unknown", |l| l.file());
             let line = info.location().map_or(0, |l| l.line());
 
-            let server_ptr = ETS_SERVER.load(::core::sync::atomic::Ordering::Acquire);
+            let server_ptr = ETS_SERVER.get();
             unsafe {
                 if !server_ptr.is_null() {
                     let server = &mut *server_ptr;
@@ -409,7 +648,7 @@ fn ets_exception_impl() -> proc_macro2::TokenStream {
             };
             let msg = ::core::str::from_utf8(&msg_buf[..pos]).unwrap_or("exception occurred");
 
-            let server_ptr = ETS_SERVER.load(::core::sync::atomic::Ordering::Acquire);
+            let server_ptr = ETS_SERVER.get();
             if !server_ptr.is_null() {
                 let server = unsafe { &mut *server_ptr };
                 let comms_ok = server.context.comms_lock.try_lock();
@@ -443,7 +682,7 @@ fn ets_exception_impl() -> proc_macro2::TokenStream {
             };
             let msg = ::core::str::from_utf8(&msg_buf[..pos]).unwrap_or("exception occurred");
 
-            let server_ptr = ETS_SERVER.load(::core::sync::atomic::Ordering::Acquire);
+            let server_ptr = ETS_SERVER.get();
             if !server_ptr.is_null() {
                 let server = unsafe { &mut *server_ptr };
                 let comms_ok = server.context.comms_lock.try_lock();
@@ -475,7 +714,7 @@ mod tests {
         ets_entrypoint_impl, ets_exception_impl, ets_panic_impl,
         ets_setup_impl, ets_suite_impl, extract_context_generics,
         extract_doc_string, generate_suite_descriptors, get_param_constructor,
-        process_static_param, process_test_fn,
+        packet_derive_impl, process_static_param, process_test_fn,
     };
     use syn::{ItemFn, ItemStatic, parse_quote};
 
@@ -566,6 +805,12 @@ mod tests {
             fn assert_inv_identity_roundtrip<const N: usize>(a: &u8) {}
         };
         assert!(process_test_fn(&generic).is_none());
+        let returning: ItemFn = parse_quote! {
+            fn scale() -> f32 {
+                1.0
+            }
+        };
+        assert!(process_test_fn(&returning).is_none());
     }
 
     #[test]
@@ -605,16 +850,17 @@ mod tests {
     }
 
     #[test]
-    fn generate_suite_descriptors_emits_four_items() {
+    fn generate_suite_descriptors_emits_wrappers_and_registry() {
         let foo = syn::Ident::new("foo", proc_macro2::Span::call_site());
         let gain = syn::Ident::new("GAIN", proc_macro2::Span::call_site());
         let items = generate_suite_descriptors(
             "suite",
             "docs",
-            &[(foo, "a test".to_string())],
+            (&[(foo, "a test".to_string())], None),
             &[gain],
         );
-        assert_eq!(items.len(), 4);
+        // One case wrapper, then the four registry items.
+        assert_eq!(items.len(), 5);
     }
 
     #[test]
@@ -635,8 +881,7 @@ mod tests {
         assert!(text.contains("SUITE_DESCRIPTOR"));
         assert!(text.contains("case_a"));
         assert!(
-            !text.contains("test_fn : inf_norm_from_identity")
-                && !text.contains("test_fn: inf_norm_from_identity"),
+            !text.contains("__ets_case_inf_norm_from_identity"),
             "parameterized helpers must not be ETS executables: {text}"
         );
 
@@ -649,6 +894,95 @@ mod tests {
                 .to_string()
                 .contains("expected")
         );
+    }
+
+    #[test]
+    fn lifecycle_impl_expands_to_slot_and_wrappers() {
+        let text = ets_suite_impl(quote::quote! {
+            mod task_suite {
+                /// a task
+                impl LifecycleTask for Loop {}
+            }
+        })
+        .to_string();
+        assert!(text.contains("TaskSlot < Loop >"));
+        for wrapper in [
+            "__ets_task_setup",
+            "__ets_task_step",
+            "__ets_task_reset",
+            "__ets_task_teardown",
+            "__ets_task_safe_state",
+        ] {
+            assert!(text.contains(wrapper), "{wrapper}");
+        }
+        assert!(text.contains("task_descriptor"));
+        let two = ets_suite_impl(quote::quote! {
+            mod two {
+                impl LifecycleTask for A {}
+                impl LifecycleTask for B {}
+            }
+        })
+        .to_string();
+        assert!(two.contains("at most one lifecycle task per suite"));
+    }
+
+    #[test]
+    fn suite_statics_must_be_supported_params() {
+        let text = ets_suite_impl(quote::quote! {
+            mod bad {
+                static RATE: f64 = 1.0;
+            }
+        })
+        .to_string();
+        assert!(text.contains("compile_error"));
+    }
+
+    #[test]
+    fn param_bounds_are_emitted() {
+        let mut item: ItemStatic = parse_quote! {
+            #[param(min = 1, max = 9)]
+            static GAIN: u8 = 3;
+        };
+        let _ = process_static_param(&mut item).unwrap();
+        let text = quote::quote!(#item).to_string();
+        assert!(text.contains("bounded"));
+        assert!(text.contains("Param :: U8 (1)"));
+        assert!(!text.contains("# [param"));
+    }
+
+    #[test]
+    fn packet_derive_emits_info_and_codec() {
+        let text = packet_derive_impl(quote::quote! {
+            struct Sample { x: f32 }
+        })
+        .to_string();
+        assert!(text.contains("Packet for Sample"));
+        assert!(text.contains("postcard_decode"));
+        assert!(text.contains("PayloadEncoding :: Postcard"));
+        assert!(
+            packet_derive_impl(quote::quote!(1))
+                .to_string()
+                .contains("expected")
+        );
+    }
+
+    #[test]
+    fn setup_accepts_a_board_binding() {
+        let text = ets_setup_impl(quote::quote! {
+            fn setup() -> (Context<u8, bool>, Timer) {
+                unimplemented!()
+            }
+        })
+        .to_string();
+        assert!(text.contains("Timer"));
+        assert!(text.contains("board"));
+        let entry =
+            ets_entrypoint_impl(quote::quote!(setup, board)).to_string();
+        assert!(entry.contains("let (context , board) = setup ()"));
+        let three = ets_setup_impl(quote::quote! {
+            fn setup() -> (Context<u8, bool>, u8, u8) { unimplemented!() }
+        });
+        assert!(three.to_string().contains("compile_error"));
     }
 
     #[test]
