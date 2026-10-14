@@ -78,16 +78,15 @@ and `cargo ci` is green.
         - Correctness: phase-crossover bracketing, non-finite `Pid` gains
 - [ ] **PR5**: Modern Control Toolbox (`src/modern_control`)
     - Design drafted (`control-toolboxes/modern-control-design.md`); needs the
-      Gehrd, Orghr, Hseqr, Trsen and Trsyl kernels (see PR11)
+      `Gehrd`, `Orghr`, `Hseqr`, `Trsen` and `Trsyl` kernels (see PR11)
 - [ ] **PR6**: Robust Control Analysis (`src/robust_control`)
     - Design drafted (`control-toolboxes/robust-control-design.md`); needs
       `modern_control::schur` from PR5
-- [ ] **PR7**: Nonlinear Control Synthesis & Estimators
-  (`src/nonlinear_control`)
+- [ ] **PR7**: Nonlinear Control Synthesis & Estimators (`src/nonlinear_control`)
     - Design drafted (`control-toolboxes/nonlinear-control-design.md`)
 - [ ] **PR8**: System Identification (SysID) & Frequency Estimation
   (`src/sysid`)
-    - Design drafted (`control-toolboxes/sysid-design.md`); needs Gesvd and the
+    - Design drafted (`control-toolboxes/sysid-design.md`); needs `Gesvd` and the
       PR5 Schur decomposition
 - [ ] **PR9**: Safety Validation & Run-Time Assurance (`src/validation`)
     - Design drafted (`vv/validation-tools-design.md`)
@@ -97,26 +96,47 @@ and `cargo ci` is green.
 ## Track B: ETS overhaul and examples (parallel, non-blocking)
 
 The overhaul replaces the lifecycle-suite branch (`mdsdev/ets-loop-suite`),
-which is archived instead of merged. Implementation PRs build from `main`.
+which is archived instead of merged. Each PR follows one component of the
+current separation and lands one or more complete design documents with their
+implementation, `VC` tests and examples. A document is Approved and traced at
+merge and no later PR adds requirements to it. No design-only PRs. PRs stack
+in dependency order.
 
-- [ ] **ETS-1**: Design Overhaul (docs only)
-    - Executive and runner object model, single wire revision 2, ADR-0002,
-      ETS design documents consolidated under `documentation/ets/`
-    - Gates ETS-2 to ETS-6 only
-- [ ] **ETS-2**: Target Executive & Runners (`control-rs-ets`)
-    - Dispatcher with runners, parameter groups, lifecycle tasks, fault path
-- [ ] **ETS-3**: Host Session & Runs (`control-rs-ets-host`)
-    - `Session` over a `Link`; case runs and task runs; observers
-    - Starts in parallel with ETS-2; task runs need the ETS-2 task runner
-- [ ] **ETS-4**: Frontends on `Session` (`control-rs-tui`, `control-rs-ci`)
-    - Task row beside cases; Run all excludes tasks; no task runs in CI
-- [ ] **ETS-5**: Overhaul Examples & Boundary Measurement
-    - QEMU lockstep task and Teensy tasks; DWT cost of the task boundary
-- [ ] **EX-1**: Board Examples
+- [ ] **ETS-1**: Link and Wire Schema (`control-rs-ets`, `control-rs-ets-host`)
+    - Design: `ets/ets-link-design.md`, `ets/ets-overview.md`
+    - Whole-message `Link`; stream, USB bulk and CAN links behind features;
+      byte stream trait and `embedded-io` adapter; host counterparts
+    - Schema revision 2 (`PROTOCOL_VERSION = 2`): settings dictionary, task
+      and supervision variants, panic capture; golden vectors
+    - Existing server, session and TUI moved onto the link without new
+      behavior; `link_discovery` example; QEMU and Teensy 4.1 on the stream link
+- [ ] **ETS-2**: Target Executive and Suites (`control-rs-ets`, `control-rs-macros`)
+    - Design: `ets/ets-executive-design.md`, `ets/embedded-test-server-design.md`,
+      `ets/test-suite-design.md`, `ets/macros-design.md`,
+      `ets/cpu-profiler-design.md`; ADR-0002
+    - Dispatcher, `Context` and runner; `Atomic`, `Lockstep`, `FreeRunning`,
+      `Periodic` and `Triggered`; `LifecycleTask`, `TaskSlot`, `Packet`
+      derive; named settings (`SettingCell`, static dispatch); board binding;
+      fault path and `safe_state`; step jitter profiling; atomic-free build
+    - Examples: QEMU and Teensy 4.1 firmware with cases, settings and tasks;
+      DWT boundary and jitter measurement
+- [ ] **ETS-3**: Host Session and Runs (`control-rs-ets-host`, `control-rs-ci`)
+    - Design: `ets/ets-host-design.md`
+    - `Session`, case and task runs, `TaskSim`, `RunObserver`, device state
+      tracking, unresponsive-run recovery, release-paced runs, settings over
+      the session without the ELF; CI runs cases only
+    - Examples: headless QEMU lockstep task with a host plant; Teensy 4.1
+      periodic and triggered runs
+- [ ] **ETS-4**: Terminal Dashboard (`control-rs-tui`)
+    - Design: `ets/tui-design.md`
+    - Tasks beside cases, setting console, fault and link status,
+      release-paced controls, independent monitoring
+    - Examples: TUI sessions against QEMU and Teensy 4.1
+- [ ] **ETS-5**: Board Examples
+    - Design: new `ets/board-examples-design.md` (per-board link, throughput
+      and fault reporting requirements)
     - ESP32-C6 (standalone showcase), Arduino Uno R4 Minima, Seeed XIAO
-      nRF52840, Seeed XIAO ESP32-S3 and Teensy 4.0 and 4.1
-    - Independent of the overhaul by choice; moves onto ETS-2 as the API
-      changes
+      nRF52840, Seeed XIAO ESP32-S3 and Teensy 4.0
 
 ## Independent
 
@@ -130,10 +150,19 @@ which is archived instead of merged. Implementation PRs build from `main`.
 ## Release
 
 - [ ] **PR12**: CI Workflow Hardening & Physical-Target ETS Runners (Teensy 4.1)
-    - Follows EX-1 for the board list and ETS-2 for the runner API
+    - Follows ETS-5 for the board list and ETS-2 for the runner API
     - Teensy 4.1 `target-build` gate (`ci-design.md` FR-17; ITCM layout)
     - Workflow: build cache, pinned actions and tools, top-level
       `permissions:`, no duplicate `cargo doc` in the report job
 - [ ] **PR13**: Automated Git Release System & Release Pipeline
 - [ ] **PR14**: Flight Examples, Documentation Consolidation & Initial Release
   (`v0.1.0`)
+    - Follows PR10, PR11, PR12 and PR13
+
+## Deferred
+
+- Hosted-RTOS integration of the ETS
+- Concurrent multi-task runs on one target
+- HDF5 logging in the ETS host
+- Layer 1/2+ hardware-in-the-loop harness design
+- Range-valued property tests ([ets-prop-test](vv/ets-prop-test-design.md))

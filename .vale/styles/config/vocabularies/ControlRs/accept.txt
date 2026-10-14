@@ -115,8 +115,6 @@ Fortran
 Frias
 Frison
 Frobenius
-Gehrd
-Gesvd
 GPUs
 Gaithersburg
 Garlati
@@ -907,6 +905,21 @@ x_next
 xtask
 z-domain
 z-transform
+CRCs
+Loopback
+desynchronization
+fragmentations
+illumos
+misordered
+mispaired
+msg
+nusb
+reassembler
+rx
+tty
+tx
+unserviced
+params
 Gehrd
 Orghr
 Hseqr
@@ -914,6 +927,5 @@ Trsen
 Trsyl
 Gesvd
 Uno
-Seeed
 Hurwitz
 Hadamard
