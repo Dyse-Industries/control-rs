@@ -52,7 +52,7 @@ Design documents, standards and planning for the `control-rs` workspace.
 
 | Design | Status | Implementation |
 |:--|:--|:--|
-| [Terminal User Interface](tui/tui-design.md) | Approved | `control-rs-tui/` |
+| [Terminal User Interface](ets/tui-design.md) | Stale | `control-rs-tui/` |
 
 ## ci
 
