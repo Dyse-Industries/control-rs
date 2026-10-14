@@ -116,11 +116,22 @@ impl<T: Float + Copy> Term<T> {
         }
     }
 
-    /// Chops coefficients within `tol` of zero. An all-zero result is exact
-    /// zero only if no term was lost. A leading cancellation promotes the
-    /// next-order term to the head, so no stored coefficient is dropped.
+    /// Chops coefficients within `tol` of zero and drops any coefficient at
+    /// an absolute exponent `>= until`. An all-zero result is exact zero
+    /// only if no term was lost. A leading cancellation promotes the
+    /// next-order term to the head; promoting into the untrusted region is
+    /// [`Fail::Indeterminate`].
     fn settle(mut self, tol: T) -> Result<Self, Fail> {
         self.c = self.c.map(|v| if v.abs() <= tol { T::ZERO } else { v });
+        if self.until != EXACT {
+            let mut exp = self.power;
+            for slot in &mut self.c {
+                if exp >= self.until {
+                    *slot = T::ZERO;
+                }
+                exp = exp.saturating_add(1);
+            }
+        }
         if self.is_zero() {
             return if self.until == EXACT {
                 Ok(Self::zero())
@@ -131,6 +142,9 @@ impl<T: Float + Copy> Term<T> {
         while self.head() == T::ZERO {
             self.c.rotate_left(1);
             self.power = self.power.saturating_add(1);
+            if self.until != EXACT && self.power >= self.until {
+                return Err(Fail::Indeterminate);
+            }
         }
         Ok(self)
     }
@@ -625,6 +639,33 @@ mod tests {
             [1.0, -1.0, 1.0, -1.0].map(f64::to_bits)
         );
         assert!(q.until != EXACT);
+    }
+
+    #[test]
+    fn term_settle_rejects_untrusted_head() {
+        // Truncation marks exponents >= until as unknown. Promoting past
+        // that bound must not invent a first-column sign from junk.
+        let mut t = term([0.0, 0.0, 5.0, 0.0], 0);
+        t.until = 2;
+        assert!(matches!(t.settle(1e-12), Err(Fail::Indeterminate)));
+        let mut trusted = term([0.0, 5.0, 0.0, 0.0], 0);
+        trusted.until = 2;
+        let got = trusted.settle(1e-12).unwrap();
+        assert_eq!((got.head(), got.power), (5.0, 1));
+    }
+
+    #[test]
+    fn epsilon_truncation_is_indeterminate_not_wrong_count() {
+        // Degree 9 with a_8 = 0 forces the epsilon stage. Series truncation
+        // exhausts first-column certainty: FR-2 requires Indeterminate, not
+        // a wrong Ok count (numpy.roots reports 5 open-RHP roots).
+        let poly = ArrayPolynomial::<f64, 10>::from_coefficients([
+            -3.0, 0.0, 0.0, -1.0, 0.0, -3.0, 3.0, -4.0, 0.0, 1.0,
+        ]);
+        assert_eq!(
+            routh_count(&poly, 1e-12),
+            Err(ClassicalError::RouthIndeterminate)
+        );
     }
 
     #[test]
