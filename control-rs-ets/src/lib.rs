@@ -4,14 +4,14 @@
 //!
 //! The `control-rs-ets` crate implements an Embedded Test Server (ETS) testing framework for
 //! embedded control systems. It acts as the on-target server that communicates with a host machine
-//! over a structured packet-framed protocol, enabling remote test execution, settings configuration,
+//! over a structured packet-framed protocol, enabling remote test execution, parameter configuration,
 //! and execution profiling (CPU cycles, timing and peak stack memory usage).
 //!
 //! # Core Concepts
 //!
 //! 1. **Server**: A loop that listens for framed commands from a host TUI, executes
 //!    targeted test functions in critical sections (with interrupts disabled) and reports status.
-//! 2. **Settings Registry**: Test suites declare dynamic settings (represented by the `Setting` trait)
+//! 2. **Parameter Table**: Test suites declare named parameters (`ParamEntry` entries in a flat table)
 //!    which the host can query and update in real-time.
 //! 3. **Hardware Profiling**: Tracks CPU clock cycles, wall-clock execution time and paint-based
 //!    peak stack depth using target-specific mechanisms (like DWT on ARM Cortex-M or CSRs on RISC-V).
@@ -21,7 +21,7 @@
 //! # Usage
 //!
 //! ```
-//! use control_rs_ets::{ExecDescriptor, SuiteDescriptor, SettingsSlice};
+//! use control_rs_ets::{ExecDescriptor, SuiteDescriptor};
 //!
 //! // Define a mock test function
 //! fn dummy_test() {}
@@ -38,7 +38,7 @@
 //!     description: "A suite containing dummy tests",
 //!     executables: &[EXEC],
 //!     name: "dummy_suite",
-//!     settings: &[],
+//!     params: &[],
 //! };
 //!
 //! assert_eq!(SUITE.name, "dummy_suite");
@@ -62,19 +62,26 @@
 #![no_std]
 #![allow(clippy::multiple_crate_versions)]
 
+pub use params::{ParamEntry, ParamTable};
 pub use profiler::CPUProfiler;
 #[cfg(target_arch = "arm")]
 pub use profiler::CortexMProfiler;
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub use profiler::RiscvProfiler;
 pub use server::{Context, Server};
-pub use settings::Setting;
 
-pub mod comms;
+pub mod link;
+pub mod params;
 pub mod profiler;
 pub mod server;
-pub mod settings;
 pub mod util;
+pub mod wire;
+
+/// Maximum bytes of one task input or output packet.
+///
+/// `MAX_MESSAGE_SIZE` (512) minus the worst-case `TaskInput` or `TaskSample` header: variant tag 1,
+/// `suite` 3, `item` 3, `seq` 10, length prefix 2.
+pub const MAX_PACKET_SIZE: usize = 493;
 
 /// Describes a single test executable.
 ///
@@ -108,15 +115,10 @@ pub struct ExecDescriptor {
     pub test_fn: fn(),
 }
 
-/// A slice of settings for a test suite.
-///
-/// Refers to a static slice of trait objects implementing [Setting].
-pub type SettingsSlice = &'static [&'static dyn Setting];
-
 /// Describes a test suite.
 ///
 /// A test suite aggregates a group of test executables and a set of configurable
-/// parameters/settings that alter the suite's behavior.
+/// parameters that alter the suite's behavior.
 ///
 /// # Safety
 /// This struct does not use `unsafe` code.
@@ -139,7 +141,7 @@ pub type SettingsSlice = &'static [&'static dyn Setting];
 ///     description: "Example Test Suite",
 ///     executables: EXECS,
 ///     name: "my_suite",
-///     settings: &[],
+///     params: &[],
 /// };
 /// assert_eq!(SUITE.executables.len(), 1);
 /// ```
@@ -150,6 +152,6 @@ pub struct SuiteDescriptor {
     pub executables: &'static [ExecDescriptor],
     /// The name of the test suite.
     pub name: &'static str,
-    /// A slice of configurable settings for this suite.
-    pub settings: SettingsSlice,
+    /// The parameter table of this suite.
+    pub params: ParamTable,
 }
