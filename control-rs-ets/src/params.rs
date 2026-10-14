@@ -334,6 +334,27 @@ mod tests {
     }
 
     #[test]
+    fn bounds_apply_only_when_both_match_the_entry_type() {
+        let lo_wrong =
+            ParamEntry::u8("a", "", 3).bounded(Param::U32(1), Param::U8(2));
+        let hi_wrong =
+            ParamEntry::u8("b", "", 3).bounded(Param::U8(1), Param::U32(2));
+        for e in [lo_wrong, hi_wrong] {
+            assert_eq!((e.min(), e.max()), (Param::U8(0), Param::U8(255)));
+        }
+    }
+
+    #[test]
+    fn each_side_of_a_u8_bound_rejects_values() {
+        let e =
+            ParamEntry::u8("g", "", 50).bounded(Param::U8(10), Param::U8(200));
+        assert_eq!(e.set(Param::U8(5)), Err("Value out of bounds"));
+        assert_eq!(e.set(Param::U8(250)), Err("Value out of bounds"));
+        assert_eq!(e.set(Param::U8(10)), Ok(()));
+        assert_eq!(e.set(Param::U8(200)), Ok(()));
+    }
+
+    #[test]
     fn a_table_is_addressed_by_position() {
         static A: ParamEntry = ParamEntry::u8("a", "", 1);
         static B: ParamEntry = ParamEntry::bool("b", "", false);

@@ -28,6 +28,9 @@ const IDLE_WAIT: Duration = Duration::from_millis(1);
 /// Result of opening the CAN link.
 pub type OpenOf = Result<MessageLink<CanWriter>, HostError>;
 
+/// Result of one socket read.
+type ReadOf = io::Result<Vec<u8>>;
+
 /// Which CAN interface and identifiers to use.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CanConfig {
@@ -59,14 +62,7 @@ impl MessageReader for CanReader {
                 self.socket.lock().unwrap_or_else(PoisonError::into_inner);
             socket.read().map(<[u8]>::to_vec)
         };
-        match result {
-            Ok(message) => Ok(Some(message)),
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                thread::sleep(IDLE_WAIT);
-                Ok(None)
-            }
-            Err(e) => Err(e),
-        }
+        settle(result)
     }
 }
 
@@ -111,4 +107,30 @@ pub fn open(config: &CanConfig) -> OpenOf {
         CanWriter { socket },
         description,
     ))
+}
+
+/// Maps a socket read to a reader step; a read with nothing ready idles briefly.
+fn settle(result: ReadOf) -> MessageOf {
+    match result {
+        Ok(message) => Ok(Some(message)),
+        Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+            thread::sleep(IDLE_WAIT);
+            Ok(None)
+        }
+        Err(e) => Err(e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_read_with_nothing_ready_is_idle_and_other_failures_propagate() {
+        assert!(matches!(settle(Ok(vec![1, 2])), Ok(Some(m)) if m == [1, 2]));
+        let idle = settle(Err(io::Error::from(io::ErrorKind::WouldBlock)));
+        assert!(matches!(idle, Ok(None)));
+        let failed = settle(Err(io::Error::from(io::ErrorKind::BrokenPipe)));
+        assert_eq!(failed.unwrap_err().kind(), io::ErrorKind::BrokenPipe);
+    }
 }
