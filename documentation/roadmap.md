@@ -118,8 +118,8 @@ in dependency order, ETS-1 first.
 - [ ] **ETS-1**: Link and Wire Schema (`control-rs-ets`, `control-rs-ets-host`)
   ([#103](https://github.com/Dyse-Industries/control-rs/pull/103), open)
     - Design: `ets/ets-link-design.md`, `ets/ets-overview.md`
-    - Whole-message `Link`; stream, USB bulk and CAN links behind features;
-      byte stream trait and `embedded-io` adapter; host counterparts
+    - Whole-message `Link`; byte stream trait and `StreamLink`; driver-free
+      USB bulk and CAN utilities; host links for USB bulk and CAN
     - Schema revision 2 (`PROTOCOL_VERSION = 2`): settings dictionary, task
       and supervision variants, panic capture; golden vectors
     - Existing server, session and TUI moved onto the link without new
@@ -131,7 +131,7 @@ in dependency order, ETS-1 first.
       `ets/cpu-profiler-design.md`; ADR-0002
     - Dispatcher, `Context` and runner; `Atomic`, `Lockstep`, `FreeRunning`,
       `Periodic` and `Triggered`; `LifecycleTask`, `TaskSlot`, `Packet`
-      derive; named settings (`SettingCell`, static dispatch); board binding;
+      derive; named settings (flat param table); board binding;
       fault path and `safe_state`; step jitter profiling; atomic-free build
     - Examples: QEMU and Teensy 4.1 firmware with cases, settings and tasks;
       DWT boundary and jitter measurement
@@ -151,7 +151,7 @@ in dependency order, ETS-1 first.
     - Examples: TUI sessions against QEMU and Teensy 4.1
 - [ ] **ETS-5**: Board Examples
   ([#107](https://github.com/Dyse-Industries/control-rs/pull/107), open)
-    - Design: new `ets/board-examples-design.md` (per-board link, throughput
+    - Design: `ets/board-examples-design.md` (per-board link, throughput
       and fault reporting requirements)
     - [ ] ESP32-C6 (standalone showcase), Arduino Uno R4 Minima and Seeed XIAO
       nRF52840 on the stream link
