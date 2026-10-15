@@ -1,8 +1,7 @@
 # Architecture Decision Records
 
 One record per decision at the workspace, crate or project level. A choice
-inside one component lives in that component's design document (§5
-Alternatives, §10 Revision History). Format and lifecycle are in
+inside one component lives in that component's design document. Format and lifecycle are in
 [`doc-standards.md` §6](../doc-standards.md); the process is in
 [`CONTRIBUTING.md` §3.2](../../CONTRIBUTING.md). New records copy
 [`adr-template.md`](../adr-template.md).

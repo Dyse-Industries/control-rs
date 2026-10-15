@@ -17,7 +17,7 @@ Vale skips them. Delete each note once its section is written.
 4. Add a row for this ADR to `documentation/adr/README.md`.
 5. One decision per ADR, at the workspace, crate or project level
    (doc-standards.md §6). A choice inside one component belongs in that
-   component's design doc, §5 Alternatives. Keep the record to one page.
+   component's design doc. Keep the record to one page.
 -->
 
 ---

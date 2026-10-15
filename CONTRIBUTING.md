@@ -26,13 +26,13 @@ flowchart LR
     I --> Q["Verification<br/>(cargo ci)"]
     Q --> M["Pull request<br/>& merge"]
     I -. "design gap or error" .-> D
-    X["ADR<br/>Accepted"] -. "cited in §5" .-> D
+    X["ADR<br/>Accepted"] -. "cited by number" .-> D
 ```
 
 | Stage          | Output                                     | Exit condition                                    |
 |:---------------|:-------------------------------------------|:--------------------------------------------------|
 | Research       | Sources for the design's References        | Enough prior art to justify the design choices    |
-| Design         | `documentation/<project>/<slug>-design.md` | Doc complete against the template, status `Draft` |
+| Design         | `documentation/<project>/<slug>-design.md` | Doc complete, status `Draft`                      |
 | Review         | Review comments, revisions                 | Maintainer sets status `Reviewed`                 |
 | Approval       | Approved design doc                        | Maintainer sets status `Approved`                 |
 | Implementation | Code, tests, examples, benches             | Code satisfies every requirement in the doc       |
@@ -58,8 +58,7 @@ when a workspace-level decision arises (§3.2).
 A decision is workspace-level when it binds more than one crate or sets a
 rule for the whole workspace: a dependency or toolchain policy, a workspace
 convention, a format shared between crates. A choice inside one crate or
-component belongs in that component's design doc: §5 Alternatives for the
-tradeoff and §10 Revision History for the change.
+component belongs in that component's design doc.
 
 ---
 
@@ -80,43 +79,16 @@ design prose.
 
 ### 3.1 Design document
 
-1. Pick the project directory under `documentation/` (`math`,
-   `numerical-models`, `ets`, `ets-host`, `ci`, `tui`, `macros`, `vv`, ...)
-   and a short slug. The file is `documentation/<project>/<slug>-design.md`.
-2. Copy [`documentation/design-template.md`](documentation/design-template.md)
-   and fill every section. Omit a subsection only when it does not apply
-   (for example, ETS verification for host-only code).
-3. Set the status badge to `Draft`, the date badge to today and the author
-   badge to your GitHub handle.
-4. Open a PR containing the design doc. Design docs normally merge ahead
-   of, and separately from, their implementation.
-
-**What the sections must carry.**
-
-- **§2 Requirements**: numbered `FR-n`, `NFR-n` and `C-n`, independent per
-  document. Each requirement states an observable behavior, a quality bound
-  or a constraint. Implementation detail belongs in §4; test rules belong
-  in §6.
-- **§4 Architecture**: types, traits, memory layout and algorithms, broad
-  to specific. Diagrams in Mermaid.
-- **§5 Alternatives**: rejected options framed as technical tradeoffs, not
-  as a history of drafts. A choice that an ADR already records is cited by
-  ADR number, not argued again.
-- **§6 Verification & Validation**: the plan (`test`, `bench`, `example`,
-  `cross-check`), quantitative acceptance bounds with their oracle, and
-  the limits of what the plan establishes. This section is the contract
-  the implementation is verified against.
-- **§7 Performance & Resource Considerations**: stack, allocation, timing
-  and `no_std` properties. `no_std` and numeric-type support are decided
-  here, per module.
-- **§9 Development Plan**: 3 to 5 phases, not a task list.
-- **§10 Revision History**: one row per revision.
-
-Write in the present tense, state the current design only and follow
-[`documentation/doc-standards.md`](documentation/doc-standards.md). Refer
-to other sections and documents with `§` references and code-format
-identifiers (`FR-3`, `Storage`, `§4.2`). Vale checks prose under
-`documentation/` and `src/` in CI.
+A design document is `documentation/<project>/<slug>-design.md`, where
+`<project>` is a directory under `documentation/` (`math`,
+`numerical-models`, `ets`, `ets-host`, `ci`, `tui`, `macros`, `vv`, ...)
+and `<slug>` is a short name. Its requirements and verification conditions
+follow the grammar the requirement tracer reads
+([Author Workflow](documentation/vv/requirement-traceability-design.md#author-workflow)).
+The `trace-reqs` gate checks every document listed in
+[`.cargo/trace/trace.toml`](.cargo/trace/trace.toml). Open a PR containing the
+design doc. Design docs normally merge ahead of, and separately from, their
+implementation. Vale checks prose under `documentation/` and `src/` in CI.
 
 ### 3.2 Architecture Decision Record
 
@@ -136,20 +108,11 @@ or at any other time:
    revisions that cite it. An ADR is `Accepted` before any implementation
    that depends on it merges.
 
-Design docs cite the ADR by number in §5 Alternatives and in the Revision
-History row that starts following it.
+Design docs cite the ADR by number.
 
 ---
 
 ## 4. Review and approval
-
-Status is shown by the badge below the doc title:
-
-| Status     | Badge markdown                                                              | Set by                               |
-|:-----------|:----------------------------------------------------------------------------|:-------------------------------------|
-| `Draft`    | `![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)`    | Author, on creation                  |
-| `Reviewed` | `![Status Badge](https://img.shields.io/badge/Doc%20Status-Reviewed-yellow)` | Maintainer, after a passing review   |
-| `Approved` | `![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)` | Maintainer, when ready to implement |
 
 Review checks that requirements are testable, that §4 satisfies §2, that
 §6 verifies every requirement with a concrete oracle and bound, and that

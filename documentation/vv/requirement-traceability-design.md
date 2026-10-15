@@ -62,10 +62,10 @@ Three principles follow from the table:
    features consume the generated `.jsonl` files and never enter the CI path of
    this workspace.
 
-**Two audiences.** `control-rs` always follows
-`documentation/design-template.md`, and its configuration encodes that
-template. External users of `control-rs-ci` describe their own layout with the
-same few patterns (see [Configuration](#configuration)).
+**No template.** The tracer assumes no document layout beyond the patterns in
+its configuration. `control-rs` and external users of `control-rs-ci` each
+state their definition and verification-row grammar there (see
+[Configuration](#configuration)).
 
 **Scope.** In scope: definitions, conditions, targets, the checks over them,
 the Requirement → Condition → Target hierarchy inside one design document,
@@ -625,9 +625,7 @@ Four choices keep the stronger levels additive:
 ## Risks & Open Questions
 
 - **Migration effort.** Each of the 23 documents needs condition IDs and
-  methods in its Verification table before it joins `files`. Converting
-  numbered headings (586) and `§n` cross-references (472) to the unnumbered
-  template is separate editorial work that the tracer does not depend on.
+  methods in its Verification table before it joins `files`.
 - **Decomposition quality.** Coverage is only as good as the conditions an
   author writes; the tracer cannot tell whether a requirement is fully
   decomposed. Review of the Verification table carries that.

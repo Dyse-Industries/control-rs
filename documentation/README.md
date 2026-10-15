@@ -7,7 +7,6 @@ Design documents, standards and planning for the `control-rs` workspace.
 |:--|:--|
 | [`dependencies.md`](dependencies.md) | Every external tool, what needs it and how to install it |
 | [`development-guide.md`](development-guide.md) | Cargo aliases, CI and ETS workflows |
-| [`design-template.md`](design-template.md) | Template for new design documents |
 | [`adr/`](adr/README.md) | Architecture Decision Records, their index and [template](adr-template.md) |
 | [`doc-standards.md`](doc-standards.md) | Rustdoc, ETS and ADR documentation policy |
 | [`roadmap.md`](roadmap.md) | Planned pull requests |
