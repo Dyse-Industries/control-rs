@@ -425,6 +425,7 @@ impl SessionState {
                 test_id,
                 suite_name: String::new(),
                 test_name: String::new(),
+                // Placeholder: `on_metric_report` keeps an earlier Failed verdict.
                 state: TestState::Passed,
                 cycles: Some(cycles),
                 time_us: Some(time_ns / 1000),
@@ -680,15 +681,32 @@ impl SessionState {
         }
     }
 
-    /// Records a passing metric report and starts the next queued test.
+    /// Records metrics for a finished case and starts the next queued test.
     ///
-    /// `report` carries the metrics; its name fields are filled in here.
+    /// `report` carries the metrics; its name fields are filled in here. A
+    /// prior `Failed` verdict from `ItemState::Done` or a panic is preserved:
+    /// the executive always emits `RunStats` after every verdict, including
+    /// Fail, so treating metrics as an automatic Pass would rewrite a Fail as
+    /// Passed. Metrics that arrive outside the Running phase are recorded but
+    /// do not drain `run_queue` (recovery rebuilds the queue after rediscovery).
     fn on_metric_report(
         &mut self,
         mut report: TestOutcome,
     ) -> Vec<SessionAction> {
+        let failed = self
+            .find_outcome(report.suite_id, report.test_id)
+            .is_some_and(|o| o.state == TestState::Failed)
+            || self
+                .test_mut(report.suite_id, report.test_id)
+                .is_some_and(|t| t.state == TestState::Failed);
+        let final_state = if failed {
+            TestState::Failed
+        } else {
+            TestState::Passed
+        };
+        report.state = final_state;
         if let Some(test) = self.test_mut(report.suite_id, report.test_id) {
-            test.state = TestState::Passed;
+            test.state = final_state;
             test.cycles = report.cycles;
             test.time_us = report.time_us;
             test.stack_peak = report.stack_peak;
@@ -696,6 +714,9 @@ impl SessionState {
         (report.suite_name, report.test_name) =
             self.case_names(report.suite_id, report.test_id);
         self.record_outcome(report);
+        if self.phase != SessionPhase::Running {
+            return Vec::new();
+        }
         self.start_next_or_exit().into_iter().collect()
     }
 
@@ -1088,6 +1109,88 @@ mod tests {
         assert_eq!(state.results.first().unwrap().suite_id, 0);
         assert_eq!(state.results.first().unwrap().test_id, 0);
         assert_eq!(state.results.first().unwrap().state, TestState::Failed);
+    }
+
+    #[test]
+    fn run_stats_after_fail_keeps_failed_and_advances_queue() {
+        let mut state = matched();
+        let frames = make_test_suite_telemetry(0, "Suite0", 2, 0);
+        for f in frames {
+            let _ = state.handle_message(BridgeMessage::Telemetry(f));
+        }
+        let _ = state.handle_message(BridgeMessage::Telemetry(
+            OwnedTelemetry::DiscoveryComplete,
+        ));
+        assert_eq!(state.current_running, Some((0, 0)));
+
+        let _ = state.handle_message(BridgeMessage::Telemetry(
+            OwnedTelemetry::TestStateChange {
+                message: None,
+                suite_id: 0,
+                test_id: 0,
+                state: TestState::Failed,
+                verdict: None,
+            },
+        ));
+        assert_eq!(
+            state.find_outcome(0, 0).map(|o| o.state),
+            Some(TestState::Failed)
+        );
+
+        // Executive always emits RunStats after Done(Fail); metrics must not
+        // rewrite the verdict to Passed (Session::collect_case uses the verdict).
+        let actions = state.handle_message(BridgeMessage::Telemetry(
+            run_stats((0, 0), 10, 1000, 32),
+        ));
+        assert_eq!(
+            state.find_outcome(0, 0).map(|o| o.state),
+            Some(TestState::Failed)
+        );
+        assert_eq!(state.find_outcome(0, 0).and_then(|o| o.cycles), Some(10));
+        assert!(matches!(
+            *actions.first().unwrap(),
+            SessionAction::Send(CommCommand::RunExecutable {
+                suite: 0,
+                item: 1,
+                mode: ExecMode::Atomic,
+                ..
+            })
+        ));
+        assert_eq!(state.current_running, Some((0, 1)));
+    }
+
+    #[test]
+    fn run_stats_during_recovery_does_not_drain_queue() {
+        let mut state = matched();
+        let frames = make_test_suite_telemetry(0, "Suite0", 3, 0);
+        for f in frames {
+            let _ = state.handle_message(BridgeMessage::Telemetry(f));
+        }
+        let _ = state.handle_message(BridgeMessage::Telemetry(
+            OwnedTelemetry::DiscoveryComplete,
+        ));
+        assert_eq!(state.run_queue, vec![(0, 1), (0, 2)]);
+
+        let _ = state
+            .handle_message(BridgeMessage::Telemetry(target_panic("boom")));
+        assert_eq!(state.phase, SessionPhase::Recovering);
+        // Pre-panic queue is retained until rediscovery rebuilds it; a late
+        // RunStats must not issue RunExecutable into a resetting target.
+        assert_eq!(state.run_queue, vec![(0, 1), (0, 2)]);
+
+        let actions = state.handle_message(BridgeMessage::Telemetry(
+            run_stats((0, 0), 1, 1, 1),
+        ));
+        assert!(
+            actions.is_empty(),
+            "late RunStats during recovery must not drain run_queue: {actions:?}"
+        );
+        assert_eq!(state.run_queue, vec![(0, 1), (0, 2)]);
+        assert_eq!(state.current_running, None);
+        assert_eq!(
+            state.find_outcome(0, 0).map(|o| o.state),
+            Some(TestState::Failed)
+        );
     }
 
     #[test]
