@@ -1,6 +1,6 @@
 # Requirement Traceability Infrastructure (requirement-traceability)
 
-![Date Badge](https://img.shields.io/badge/Date-October_3,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_15,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 ![Design Status Badge](https://img.shields.io/badge/Design%20Status-Stale-lightgrey)
 
@@ -673,6 +673,7 @@ Four choices keep the stronger levels additive:
 | 1.16     | September 28, 2026 | @MitchellDScott | Replaced source markers with fully qualified `Target` cells in the Verification table: framework-qualified methods `libtest`, `kani`, `pytest` and `gtest`; `targets` on condition rows; `trace-check` resolves targets against the result logs; removed `trace-marks`, `marks.jsonl`, `item_rule`, `[markers]`, W-1, and requirements FR-7 and NFR-2; added FR-11; schema 4.                                                                                                                          |
 | 2.0      | October 2, 2026    | @MitchellDScott | Added FR-12 Decision References: optional `[decisions]` table, Matching Rule 6, checks `decision` and `decision_status`, decision IDs in `duplicate`; Scope lists decision references. Citations count only in requirement text. Added VC-18.1 to VC-18.4, a decision Limit, three Alternatives and Phase 7. Staleness warning W-3. Row and report schema unchanged. Starts following ADR-0001.                                                                                                        |
 | 2.1      | October 3, 2026    | @MitchellDScott | Tracer gap closures: libtest results keyed by test binary with ambiguity defects; doctest targets; configurable `interpreter_artifact` and scoped W-2; `deferred` method and status; Limit for missing implementation links. |
+| 2.2 | October 15, 2026 | Claude Opus 5.5 | Introduction: the tracer assumes no document template; each configuration states its own grammar. Risks: dropped the template-migration note. |
 
 ---
 
