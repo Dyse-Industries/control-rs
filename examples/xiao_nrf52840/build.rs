@@ -8,16 +8,18 @@ use std::path::PathBuf;
 fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
 
-    // Generate memory.x matching the Adafruit / Seeed UF2 bootloader memory map
+    // SoftDevice S140 7.3.0 + Adafruit/Seeed UF2 bootloader (stock XIAO nRF52840).
+    // App starts after SoftDevice; RAM leaves the SoftDevice arena below 0x20006000.
+    // A 0x1000/0x20000008 map overlaps SoftDevice flash/RAM and bricks bring-up.
     let mut mem_file = File::create(out.join("memory.x")).unwrap();
     mem_file
         .write_all(
             b"
 MEMORY
 {
-  /* nRF52840 with Adafruit / Seeed UF2 Bootloader offset */
-  FLASH : ORIGIN = 0x00001000, LENGTH = 1020K
-  RAM   : ORIGIN = 0x20000008, LENGTH = 255K
+  /* S140 7.3.0: app 0x27000..0xED000; UF2 bootloader owns 0xF4000.. */
+  FLASH : ORIGIN = 0x00027000, LENGTH = 0xC6000
+  RAM   : ORIGIN = 0x20006000, LENGTH = 0x3A000
 }
 ",
         )
