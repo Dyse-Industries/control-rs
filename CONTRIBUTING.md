@@ -20,8 +20,8 @@ local CI workflow are in the
 ```mermaid
 flowchart LR
     R["Research<br/>(prior art)"] --> D["Design doc<br/>Draft"]
-    D --> V["Review<br/>Reviewed"]
-    V --> A["Approval<br/>Approved"]
+    D --> V["Review"]
+    V --> A["Approval<br/>Ready"]
     A --> I["Implementation"]
     I --> Q["Verification<br/>(cargo ci)"]
     Q --> M["Pull request<br/>& merge"]
@@ -33,13 +33,13 @@ flowchart LR
 |:---------------|:-------------------------------------------|:--------------------------------------------------|
 | Research       | Sources for the design's References        | Enough prior art to justify the design choices    |
 | Design         | `documentation/<project>/<slug>-design.md` | Doc complete, status `Draft`                      |
-| Review         | Review comments, revisions                 | Maintainer sets status `Reviewed`                 |
-| Approval       | Approved design doc                        | Maintainer sets status `Approved`                 |
+| Review         | Review comments, revisions                 | Review comments resolved                          |
+| Approval       | Design doc ready to implement              | Maintainer sets status `Ready`                    |
 | Implementation | Code, tests, examples, benches             | Code satisfies every requirement in the doc       |
 | Verification   | Passing quality gates                      | `cargo ci` passes locally and in GitHub Actions   |
 | Merge          | Squash-merged PR on `main`                 | Review approval                                   |
 
-Implementation does not start until the design doc is `Approved` and every
+Implementation does not start until the design doc is `Ready` and every
 ADR it cites is `Accepted`. ADRs sit outside this sequence: one is written
 when a workspace-level decision arises (§3.2).
 
@@ -51,7 +51,7 @@ when a workspace-level decision arises (§3.2).
 | Change to a public API, data layout, wire protocol or CI gate  | Revise the owning doc              |
 | New third-party dependency                                     | Revise the owning doc              |
 | Workspace, crate or project-level decision                     | ADR (§3.2); revise each citing doc |
-| Change that contradicts an `Approved` doc                      | Revise the doc first               |
+| Change that contradicts a `Ready` or `Shipped` doc             | Revise the doc first               |
 | Bug fix, test addition, refactor within an approved design     | None                               |
 | Typos, formatting, comments                                    | None                               |
 
@@ -109,8 +109,9 @@ Design docs cite the ADR by number.
 
 Review checks that requirements are testable, that §4 satisfies §2, that
 §6 verifies every requirement with a concrete oracle and bound, and that
-the References support the cited claims. `Reviewed` and `Approved` are
-always set by a maintainer. Tooling and automation never set them.
+the References support the cited claims. A maintainer sets `Ready` when the
+doc may be implemented, `Shipped` when it is implemented and `Stale` when it
+needs re-review. Tooling and automation never set them.
 
 Review of an ADR checks that the decision is at the workspace, crate or
 project level, that each rejected option is a real alternative and that
@@ -120,7 +121,7 @@ every follow-up names its owner. A maintainer sets `Accepted`.
 
 ## 5. Implementation
 
-Implement the `Approved` design. Do not choose between alternatives the
+Implement the `Ready` design. Do not choose between alternatives the
 doc leaves open, and do not add capability the doc does not specify.
 
 **When the design is silent or wrong**, stop and revise the doc: fix the
@@ -214,7 +215,7 @@ Contributors may use AI assistants. Assistant instruction files
 (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`) and agent tooling directories are
 local and ignored by git; they encode this same process for automated
 tools. The process does not change: assistants follow the same gates,
-never set `Reviewed`, `Approved` or `Accepted`, and the contributor is
+never set `Ready`, `Shipped`, `Stale` or `Accepted`, and the contributor is
 accountable for every line submitted.
 
 ---

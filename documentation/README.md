@@ -39,28 +39,28 @@ Design documents, standards and planning for the `control-rs` workspace.
 
 | Design | Status | Implementation |
 |:--|:--|:--|
-| [Embedded Test Server](ets/embedded-test-server-design.md) | Approved | `control-rs-ets/src/server.rs` |
-| [`HostComms`](ets/host-comm-design.md) | Approved | `control-rs-ets/src/comms.rs` |
-| [`CPUProfiler`](ets/cpu-profiler-design.md) | Approved | `control-rs-ets/src/profiler.rs` |
-| [Exportable Test Suites](ets/test-suite-design.md) | Approved | `src/**/tests/` (`ets` feature) |
+| [Embedded Test Server](ets/embedded-test-server-design.md) | Stale | `control-rs-ets/src/server.rs` |
+| [`HostComms`](ets/host-comm-design.md) | Stale | `control-rs-ets/src/comms.rs` |
+| [`CPUProfiler`](ets/cpu-profiler-design.md) | Stale | `control-rs-ets/src/profiler.rs` |
+| [Exportable Test Suites](ets/test-suite-design.md) | Stale | `src/**/tests/` (`ets` feature) |
 
 ## macros
 
 | Design | Status | Implementation |
 |:--|:--|:--|
-| [Procedural Macros for Distributed Test Discovery](macros/macros-design.md) | Approved | `control-rs-macros/` |
+| [Procedural Macros for Distributed Test Discovery](macros/macros-design.md) | Stale | `control-rs-macros/` |
 
 ## ets-host
 
 | Design | Status | Implementation |
 |:--|:--|:--|
-| [Host ETS Library](ets-host/ets-host-design.md) | Approved | `control-rs-ets-host/` |
+| [Host ETS Library](ets-host/ets-host-design.md) | Stale | `control-rs-ets-host/` |
 
 ## tui
 
 | Design | Status | Implementation |
 |:--|:--|:--|
-| [Terminal User Interface](tui/tui-design.md) | Approved | `control-rs-tui/` |
+| [Terminal User Interface](tui/tui-design.md) | Stale | `control-rs-tui/` |
 
 ## ci
 
@@ -73,5 +73,5 @@ Design documents, standards and planning for the `control-rs` workspace.
 | Design | Status | Implementation |
 |:--|:--|:--|
 | [Cross-Compare Harness & HDF5 Comparison System](vv/cross-compare-design.md) | Stale | `control-rs-compare/`, `.cargo/compare.toml` |
-| [Range-Valued On-Target Property Tests](vv/ets-prop-test-design.md) | Deferred | Not planned; property tests are written manually |
+| [Range-Valued On-Target Property Tests](vv/ets-prop-test-design.md) | Stale | Not planned; property tests are written manually |
 | [Requirement Traceability Infrastructure](vv/requirement-traceability-design.md) | Stale | `control-rs-ci/src/trace.rs` |
