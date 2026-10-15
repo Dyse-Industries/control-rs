@@ -1,6 +1,6 @@
 extends: existence
 message: "Omit defensive filler or conversational padding ('%s'). State technical facts and invariants directly."
-link: documentation/doc-standards.md
+link: documentation/documentation-standards.md
 level: warning
 ignorecase: true
 tokens:
