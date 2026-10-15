@@ -13,10 +13,10 @@ Vale skips them. Delete each note once its section is written.
 2. Set the date badge to today (`October_1,_2026`: day not zero-padded) and
    the author badge to your GitHub handle.
 3. Leave the status at `Proposed`. Only a maintainer sets `Accepted`,
-   `Deprecated` or `Superseded` (doc-standards.md §6.3).
+   `Deprecated` or `Superseded` (documentation-standards.md §6.3).
 4. Add a row for this ADR to `documentation/adr/README.md`.
 5. One decision per ADR, at the workspace, crate or project level
-   (doc-standards.md §6). A choice inside one component belongs in that
+   (documentation-standards.md §6). A choice inside one component belongs in that
    component's design doc. Keep the record to one page.
 -->
 

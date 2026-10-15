@@ -100,7 +100,7 @@ or at any other time:
    `documentation/adr/NNNN-<slug>.md`.
 2. Copy [`documentation/adr-template.md`](documentation/adr-template.md) and
    fill every section. Follow
-   [`documentation/doc-standards.md`](documentation/doc-standards.md) §6:
+   [`documentation/documentation-standards.md`](documentation/documentation-standards.md) §6:
    one decision per record, one page.
 3. Set the status badge to `Proposed`, the date badge to today and the
    author badge to your GitHub handle. Add the record's row to the index.
@@ -120,7 +120,7 @@ the References support the cited claims. `Reviewed` and `Approved` are
 always set by a maintainer. Tooling and automation never set them.
 
 An ADR carries its own status badge (`Proposed`, `Accepted`, `Deprecated`,
-`Superseded`; `doc-standards.md` §6.3). Review checks that the decision is at
+`Superseded`; `documentation-standards.md` §6.3). Review checks that the decision is at
 the workspace, crate or project level, that each rejected option is a real
 alternative and that every follow-up names its owner. A maintainer sets
 `Accepted`.
@@ -145,7 +145,7 @@ during implementation becomes an ADR before that code lands.
   `unwrap`, `expect`, `panic!` or `unimplemented!` outside tests
   and examples.
 - Every public item is documented (`missing_docs = "deny"`), following
-  [`documentation/doc-standards.md`](documentation/doc-standards.md),
+  [`documentation/documentation-standards.md`](documentation/documentation-standards.md),
   including `# Errors` and `# Safety` sections where they apply.
 - Minimize dependencies. Before adopting a crate, inspect its real
   dependency tree with `cargo tree` and record the decision in the design

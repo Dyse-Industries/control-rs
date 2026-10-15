@@ -5,10 +5,8 @@ Rust native control systems toolbox intended for safety-critical applications.
 
 §1 to §5 govern rustdoc and ETS documentation in source. §6 governs
 Architecture Decision Records (ADRs), the record of decisions at the
-workspace, crate or project level. §7 governs design documents. The
-process that produces an ADR is in [`CONTRIBUTING.md`](../CONTRIBUTING.md); the
-design-document skeleton is
-[`design-template.md`](design-template.md) and its rules are §7.
+workspace, crate or project level. The process that produces an ADR is in
+[`CONTRIBUTING.md`](../CONTRIBUTING.md).
 
 # 1. General Etiquette
 
@@ -19,8 +17,7 @@ documentation must adhere to the following rules:
   using inner doc comments (`//!` or `/*!`) placed at the top of the file.
   Do not use outer doc comments (`///` or `/**`) placed directly above module
   declarations (for example, `pub mod my_module;`). Placing module-level docs at
-  the
-  top of the file keeps the module definition clean and ensures the rustdoc
+  the top of the file keeps the module definition clean and ensures the rustdoc
   output is correctly associated with the module content.
 * **Language, Tone and Tense**: Write in clear, concise and professional
   English. Avoid marketing jargon, colloquialisms and excessive formalities.
@@ -223,8 +220,8 @@ pub mod teensy_pid_suite {
 # 5. Examples and Testing
 
 * All examples must be runnable via cargo test.
-* Examples should use the ? operator for error handling and avoid unwrap (),
-  expect () or panic!() unless demonstrating
+* Examples should use the ? operator for error handling and avoid unwrap(),
+  expect() or panic!() unless demonstrating
   a panic condition.
 
 # 6. Architecture Decision Records
@@ -233,8 +230,7 @@ An Architecture Decision Record (ADR) records one decision at the workspace,
 crate or project level: a dependency or toolchain policy, a workspace
 convention, the default scalar type, a crate boundary, a format or protocol
 shared by more than one crate. A choice that stays inside one component is
-recorded in that component's design document: §5 Alternatives holds the
-tradeoff and §10 Revision History holds the change.
+recorded in that component's design document.
 
 An ADR is not a stage of the design process. It is written when a
 workspace-level decision arises, and design documents cite it by number once
@@ -294,14 +290,12 @@ carries these sections in this order:
   that component's design document.
 * Write in the present tense and record the current decision only. The pull
   request holds the history of the draft.
-* Design documents link to ADRs; ADRs do not list the documents that cite
-  them. A design document cites `ADR-NNNN` in §5 Alternatives and in the
-  Revision History row that starts following it, and a search for the number
-  finds every citing document.
+* Design documents cite ADRs by number; ADRs do not list the documents that
+  cite them. A search for the number finds every citing document.
 * An ADR records a decision; it asserts nothing. Any requirement the decision
   creates is written into the design document it constrains, where the
-  `trace-reqs` gate checks it has a verification condition ([
-  `requirement-traceability-design.md`](vv/requirement-traceability-design.md)).
+  `trace-reqs` gate checks it has a verification condition
+  ([`requirement-traceability-design.md`](vv/requirement-traceability-design.md)).
 
 # Resources
 

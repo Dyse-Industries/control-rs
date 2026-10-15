@@ -1,6 +1,6 @@
 extends: existence
 message: "Avoid meta-narrative, commit commentary, or draft backstory ('%s'). State architecture and requirements directly."
-link: documentation/doc-standards.md
+link: documentation/documentation-standards.md
 level: error
 ignorecase: true
 tokens:
