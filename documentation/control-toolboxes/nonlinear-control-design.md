@@ -38,9 +38,11 @@ Primary usage scenarios:
 
 - **FR-1 — Operating-point linearization**: Given a continuous model
   $\dot{x} = f(x, u)$, $y = h(x, u)$ or a discrete model
-  $x_{k+1} = f(x_k, u_k)$, and an operating point $(x_0, u_0)$, returns the
-  `StateSpace` $(A, B, C, D)$ of Jacobians, from caller-supplied Jacobians
-  when present and central differences otherwise.
+  $x_{k+1} = f(x_k, u_k)$, $y_k = h(x_k, u_k)$, distinguished by
+  `Dynamics::time_base()`, and an operating point $(x_0, u_0)$, returns the
+  `StateSpace` $(A, B, C, D)$ of Jacobians (continuous or discrete to match
+  `time_base`), from caller-supplied Jacobians when present and central
+  differences otherwise.
 - **FR-2 — Input-output feedback linearization**: For a single-input,
   single-output control-affine model $\dot{x} = f(x) + g(x)u$, $y = h(x)$ of
   relative degree $p$, computes
@@ -150,25 +152,36 @@ src/nonlinear_control/
 
 | Trait | Methods | Used by |
 |:--|:--|:--|
-| `Dynamics<T, NX, NU, NY>` | `f(x, u)`, `h(x, u)`; optional `df_dx`, `df_du`, `dh_dx`, `dh_du` returning `Option` | FR-1, FR-5, FR-6 |
+| `Dynamics<T, NX, NU, NY>` | `f(x, u)`, `h(x, u)`; `time_base() -> Option<T>` (`None` = continuous $\dot{x}=f$, `Some(T_s)$ = discrete map with sample $T_s$); optional `df_dx`, `df_du`, `dh_dx`, `dh_du` returning `Option` | FR-1, FR-5, FR-6 |
 | `ControlAffine<T, NX>` | `lf_h(x, k)` for $L_f^k h$, `lg_lf_h(x)` for $L_g L_f^{p-1} h$, `relative_degree()` | FR-2 |
 | `StrictFeedback<T, N1>` | `f1`, `g1`, `f2`, `g2`, `phi`, `dphi_dx1`, `dv1_dx1` | FR-4 |
 
 The caller supplies Lie derivatives and gradients (C-2); the module checks
-their shapes through const generics only.
+their shapes through const generics only. `time_base` is mandatory so
+linearization can tag the returned `StateSpace` and so FR-5/FR-6 can reject
+a continuous vector field used as a discrete transition (C-6).
 
 #### 4.2 Linearization
 
 With caller Jacobians, $A = \partial f/\partial x$, $B = \partial f/\partial u$,
 $C = \partial h/\partial x$, $D = \partial h/\partial u$ at $(x_0, u_0)$ are
-copied into a `StateSpace` [1]. Without them, each column is the central
-difference $(f(x_0 + h_j e_j) - f(x_0 - h_j e_j)) / (2h_j)$ with
-$h_j = \varepsilon^{1/3} \max(|x_{0,j}|, 1)$. Shrinking $h$ reduces
-truncation error and raises rounding error, so all finite-difference
-formulas are ill-conditioned [2]; the cube-root scaling is the crate's
-choice for the central formula and is checked against analytic Jacobians
-in §6. The result is continuous or discrete to match the model, so
-`StateSpace` discretization and every linear toolbox apply unchanged.
+copied into a `StateSpace` [1]. Without them, central differences form each
+column separately:
+
+- $A$ column $j$: $(f(x_0 + h_j e_j, u_0) - f(x_0 - h_j e_j, u_0)) / (2h_j)$
+  with $h_j = \varepsilon^{1/3} \max(|x_{0,j}|, 1)$;
+- $B$ column $j$: $(f(x_0, u_0 + \eta_j e_j) - f(x_0, u_0 - \eta_j e_j)) / (2\eta_j)$
+  with $\eta_j = \varepsilon^{1/3} \max(|u_{0,j}|, 1)$;
+- $C$ and $D$ likewise from $h$, perturbing $x$ with $h_j$ and $u$ with
+  $\eta_j$.
+
+Shrinking the step reduces truncation error and raises rounding error, so
+all finite-difference formulas are ill-conditioned [2]; the cube-root
+scaling is the crate's choice for the central formula and is checked
+against analytic Jacobians in §6. The result uses
+`StateSpace::continuous` when `time_base()` is `None` and
+`StateSpace::discrete(..., T_s)` when it is `Some(T_s)`, so `StateSpace`
+discretization and every linear toolbox apply unchanged.
 
 #### 4.3 Feedback Linearization
 
@@ -206,30 +219,40 @@ deeper chains compose by nesting the caller's `phi`.
 
 #### 4.6 Extended Kalman Filter
 
-`Ekf<T, NX, NU, NY>` stores $\hat{x}$ and $P$. Predict propagates
-$\hat{x} \leftarrow f(\hat{x}, u)$ and $P \leftarrow F P F^T + Q$ with
-$F = \partial f / \partial x$ from §4.2. Update forms
-$S = H P H^T + R$, solves $K = P H^T S^{-1}$ by Cholesky (`Potrf`, `Potrs`),
-and updates $P$ in Joseph form $(I - KH) P (I - KH)^T + K R K^T$, which
-FilterPy uses because it is more stable numerically and holds for a
-non-optimal $K$ [5]. Like FilterPy, the filter does not choose initial
-$\hat{x}$, $P$, $Q$ or $R$ for the caller [6]. $P$ is symmetrized after each
-step (NFR-3).
+`Ekf<T, NX, NU, NY>` stores $\hat{x}$ and $P$. Construction and every
+predict/update step require `Dynamics::time_base() = Some(T_s)`; a
+continuous model (`None`) returns `NonlinearError::ContinuousModel`
+(C-6). Predict propagates $\hat{x} \leftarrow f(\hat{x}, u)$ and
+$P \leftarrow F P F^T + Q$ with $F = \partial f / \partial x$ from §4.2.
+Update forms the innovation $\tilde{y} = y - h(\hat{x}, u)$,
+$S = H P H^T + R$ with $H = \partial h / \partial x$, solves
+$K = P H^T S^{-1}$ by Cholesky (`Potrf`, `Potrs`), corrects the mean
+$\hat{x} \leftarrow \hat{x} + K \tilde{y}$, and updates $P$ in Joseph form
+$(I - KH) P (I - KH)^T + K R K^T$, which FilterPy uses because it is more
+stable numerically and holds for a non-optimal $K$ [5]. Like FilterPy, the
+filter does not choose initial $\hat{x}$, $P$, $Q$ or $R$ for the caller
+[6]. $P$ is symmetrized after each step (NFR-3).
 
 #### 4.7 Unscented Kalman Filter
 
 `Ukf<T, NX, NU, NY>` uses the scaled unscented transform of Julier in the
-Wan and van der Merwe formulation, as FilterPy does [7]. With
-$\lambda = \alpha^2 (n + \kappa) - n$, the $2n + 1$ sigma points are
-$\hat{x}$ and $\hat{x} \pm$ the columns of the Cholesky factor of
-$(n + \lambda) P$; mean weights are $\lambda/(n + \lambda)$ and
-$1/(2(n + \lambda))$, and the first covariance weight adds
-$1 - \alpha^2 + \beta$. Defaults follow the reference: $\alpha$ a small
-positive value, $\beta = 2$ for Gaussian priors and $\kappa = 0$ or $3 - n$
-[7]. The EKF achieves only first-order accuracy [8]; the UKF avoids the
-Jacobian at the cost of $2n + 1$ model evaluations per step. A failed Cholesky factorization returns
-`NonlinearError::LinAlg(NotPositiveDefinite)` and leaves the state
-unchanged (NFR-3).
+Wan and van der Merwe formulation, as FilterPy does [7]. Like the EKF, it
+accepts only discrete `Dynamics` (`time_base() = Some(T_s)`); continuous
+models return `ContinuousModel`. With $\lambda = \alpha^2 (n + \kappa) - n$,
+the $2n + 1$ sigma points are $\hat{x}$ and $\hat{x} \pm$ the columns of the
+Cholesky factor of $(n + \lambda) P$; mean weights are
+$\lambda/(n + \lambda)$ and $1/(2(n + \lambda))$, and the first covariance
+weight adds $1 - \alpha^2 + \beta$. Defaults follow the reference: $\alpha$
+a small positive value, $\beta = 2$ for Gaussian priors and $\kappa = 0$ or
+$3 - n$ [7]. Predict propagates each sigma point through $f$, forms the
+predicted mean and covariance, and adds $Q$. Update propagates the
+predicted sigma points through $h$, forms the innovation covariance
+(adding $R$), the cross-covariance, and $K$, then applies
+$\hat{x} \leftarrow \hat{x} + K \tilde{y}$ and the covariance update. The
+EKF achieves only first-order accuracy [8]; the UKF avoids the Jacobian at
+the cost of $2n + 1$ model evaluations per step. A failed Cholesky
+factorization returns `NonlinearError::LinAlg(NotPositiveDefinite)` and
+leaves the state unchanged (NFR-3).
 
 #### 4.8 Error Handling
 
@@ -244,6 +267,8 @@ pub enum NonlinearError {
     InvalidParameter,
     /// A model call returned a non-finite value (FR-1, FR-5, FR-6).
     NonFiniteModel,
+    /// FR-5/FR-6 received a continuous Dynamics (time_base = None).
+    ContinuousModel,
 }
 ```
 
@@ -281,8 +306,10 @@ The enum has a hand-written `Display`, `impl core::error::Error` and
 | VC-4.1 | FR-4 | `libtest` | `control_rs::nonlinear_control::backstepping::tests::lyapunov_decreases` | Along a simulated trajectory, $V = V_1 + z^2/2$ is non-increasing at every step; FR-4 holds iff all conditions hold |
 | VC-5.1 | FR-5 | `libtest` | `control_rs::nonlinear_control::ekf::tests::linear_model_equals_kf` | On a linear model, EKF estimates equal a linear Kalman filter's within §6.2; FR-5 holds iff all conditions hold |
 | VC-5.2 | FR-5 | `libtest` | `control_rs::nonlinear_control::ekf::tests::nees_consistent` | On a nonlinear range-bearing model over 100 Monte Carlo runs, the average NEES lies in its 95% chi-square interval |
+| VC-5.3 | FR-5 | `libtest` | `control_rs::nonlinear_control::ekf::tests::continuous_model_rejected` | A `Dynamics` with `time_base() = None` returns `ContinuousModel` and leaves $\hat{x}$, $P$ unchanged |
 | VC-6.1 | FR-6 | `libtest` | `control_rs::nonlinear_control::ukf::tests::unscented_transform_exact_for_quadratic` | The transformed mean of a quadratic map of a Gaussian equals the closed form within §6.2; FR-6 holds iff all conditions hold |
 | VC-6.2 | FR-6 | `libtest` | `control_rs::nonlinear_control::ukf::tests::cross_check_filterpy` | A 4-state run matches the cross-check tolerance |
+| VC-6.3 | FR-6 | `libtest` | `control_rs::nonlinear_control::ukf::tests::continuous_model_rejected` | A continuous `Dynamics` returns `ContinuousModel` |
 | VC-7.1 | NFR-1 | `analysis` | — | Every loop is bounded by $(n, m, p)$ or the sigma-point count |
 | VC-8.1 | NFR-2 | `inspection` | — | No routine allocates; all storage is const-sized |
 | VC-9.1 | NFR-3 | `libtest` | `control_rs::nonlinear_control::ukf::tests::non_pd_covariance_reported` | An indefinite $P$ returns `NotPositiveDefinite` and leaves the state unchanged, and $P = P^T$ exactly after every successful step |
@@ -324,10 +351,11 @@ $h \propto u^{1/3}$ [2].
 **Allocation.** State, covariance and Jacobian storage is const-sized. The
 UKF holds $(2n + 1)$ propagated sigma points of size $n$ and $p$ (NFR-2).
 
-**Execution time.** Central-difference linearization costs $2(n + m)$ model
-calls. An EKF step costs one $f$ call, one $h$ call, Jacobians, and
-$O(n^3 + p^3)$ arithmetic; a UKF step costs $2n + 1$ calls of $f$ and of $h$
-and $O(n^3)$ arithmetic. All counts are fixed (NFR-1).
+**Execution time.** Central-difference linearization costs $2(n + m)$
+evaluations of $f$ and $2(n + m)$ of $h$. An EKF step costs one $f$ call,
+one $h$ call, Jacobians, and $O(n^3 + p^3)$ arithmetic; a UKF step costs
+$2n + 1$ calls of $f$ and of $h$ and $O(n^3)$ arithmetic. All counts are
+fixed (NFR-1).
 
 **Numeric types.** `f32` and `f64` (C-3). On `f32` the Joseph form and
 symmetrization preserve positive definiteness in the tested cases.
@@ -363,6 +391,7 @@ symmetrization preserve positive definiteness in the tested cases.
 |:--|:--|:--|:--|
 | 1.0 | October 4, 2026 | @MitchellDScott | Initial design document: FR-1 to FR-6, NFR-1 to NFR-3, C-1 to C-6. |
 | 1.1 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending review. |
+| 1.2 | October 15, 2026 | Cursor Agent | Correct FD columns for $B$/$C$/$D$; add `Dynamics::time_base`; specify EKF/UKF mean updates, $+Q$/$+R$, and continuous-model rejection. |
 
 ---
 
