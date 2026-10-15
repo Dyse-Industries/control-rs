@@ -5,19 +5,21 @@
 //! Every realization uses the denominator convention
 //! `H(z) = (b_0 + b_1 z^-1 + ... + b_n z^-n) / (1 + a_1 z^-1 + ... + a_n z^-n)`.
 //! Sections store `-a_1, -a_2` so each output is one `MulAcc` chain of
-//! multiply accumulates that narrows once (C-8). `Df1` keeps two past
-//! inputs and two past outputs in `T`; `Df2t` and `DirectForm2T` keep their
-//! states in `T::Acc`, so only the output narrows. `update`, `reset` and
-//! `set_coefficients` are infallible and run a fixed operation count set by
-//! the order or the section count (NFR-4).
+//! multiply accumulates that narrows once (C-8). `T` must be [`Signed`]:
+//! unsigned `Fixed` implements `saturating_neg` as zero, which would clear
+//! the feedback taps. `Df1` keeps two past inputs and two past outputs in
+//! `T`; `Df2t` and `DirectForm2T` keep their states in `T::Acc`, so only the
+//! output narrows. `update`, `reset` and `set_coefficients` are infallible
+//! and run a fixed operation count set by the order or the section count
+//! (NFR-4).
 
 use super::{ClassicalError, Succ, TypeNum};
 use crate::math::complex_num::Complex;
 use crate::math::fixed_num::{Fixed, FixedRepr};
-use crate::math::num_traits::{Float, MulAcc, Scalar};
+use crate::math::num_traits::{Float, MulAcc, Scalar, Signed};
 use crate::math::num_types::{Const, Dim, DimAdd, DimMax};
 use crate::math::ops::{
-    SaturatingAdd, SaturatingDiv, SaturatingMul, SaturatingNeg, SaturatingSub,
+    SaturatingAdd, SaturatingDiv, SaturatingMul, SaturatingSub,
 };
 use crate::polynomial::ArrayPolynomial;
 use crate::transfer_function::ArrayTransferFunction;
@@ -539,7 +541,7 @@ pub mod tests {
     fn fixed_error<R: FixedRepr, const S: usize>(scale: f64) -> ErrorBound
     where
         Const<S>: Dim + DimMax<R::BitsDim, Output = R::BitsDim>,
-        Fixed<R, S>: Scalar + SaturatingNeg + MulAcc + PartialOrd,
+        Fixed<R, S>: Scalar + Signed + MulAcc + PartialOrd,
     {
         let q = quantize::<R, S, 3>(&cascade_case(0.2))?;
         let c64 = q.map(|s| SectionCoefficients {
@@ -569,6 +571,36 @@ pub mod tests {
         assert!(e13 <= b13, "Q13 {e13} > {b13}");
         let (e29, b29) = fixed_error::<i32, 29>(0.25).unwrap();
         assert!(e29 <= b29, "Q29 {e29} > {b29}");
+    }
+
+    #[cfg_attr(test, test)]
+    /// Signed fixed-point keeps IIR feedback: `From` stores `-a_i`, so a
+    /// step into `{b = 0.25, 0.5, 0.25; a = 0.5, 0.25}` matches `f64`
+    /// within one LSB (C-8). Unsigned `Fixed` is rejected by the `Signed`
+    /// bound; its `saturating_neg` is zero and would clear the taps.
+    fn df1_signed_fixed_keeps_feedback() {
+        type Q = Fixed<i16, 8>;
+        let c = SectionCoefficients {
+            b0: Q::from_num(0.25),
+            b1: Q::from_num(0.5),
+            b2: Q::from_num(0.25),
+            a1: Q::from_num(0.5),
+            a2: Q::from_num(0.25),
+        };
+        let mut fixed = Df1::from(c);
+        let mut float = Df1::from(SectionCoefficients {
+            b0: 0.25,
+            b1: 0.5,
+            b2: 0.25,
+            a1: 0.5,
+            a2: 0.25,
+        });
+        let delta: f64 = Q::DELTA.to_num();
+        for _ in 0..8 {
+            let y = fixed.update(Q::from_num(1.0)).to_num();
+            let e = float.update(1.0);
+            assert!((y - e).abs() <= delta, "got={y} exp={e}");
+        }
     }
 
     /// Rounds `x / 2^13` with ties to even.
@@ -1091,9 +1123,7 @@ impl<T> sealed::Sealed for Df1<T> {}
 
 impl<T: MulAcc> sealed::Sealed for Df2t<T> {}
 
-impl<T: Scalar + SaturatingNeg + MulAcc> From<SectionCoefficients<T>>
-    for Df1<T>
-{
+impl<T: Scalar + Signed + MulAcc> From<SectionCoefficients<T>> for Df1<T> {
     fn from(c: SectionCoefficients<T>) -> Self {
         Self {
             b0: c.b0,
@@ -1109,9 +1139,7 @@ impl<T: Scalar + SaturatingNeg + MulAcc> From<SectionCoefficients<T>>
     }
 }
 
-impl<T: Scalar + SaturatingNeg + MulAcc> From<SectionCoefficients<T>>
-    for Df2t<T>
-{
+impl<T: Scalar + Signed + MulAcc> From<SectionCoefficients<T>> for Df2t<T> {
     fn from(c: SectionCoefficients<T>) -> Self {
         let zero = T::ZERO.to_acc();
         Self {
@@ -1126,7 +1154,7 @@ impl<T: Scalar + SaturatingNeg + MulAcc> From<SectionCoefficients<T>>
     }
 }
 
-impl<T: Scalar + SaturatingNeg + MulAcc> Section<T> for Df1<T> {
+impl<T: Scalar + Signed + MulAcc> Section<T> for Df1<T> {
     #[inline]
     fn update(&mut self, u: T) -> T {
         let acc = T::mac(T::ZERO.to_acc(), self.b0, u);
@@ -1157,7 +1185,7 @@ impl<T: Scalar + SaturatingNeg + MulAcc> Section<T> for Df1<T> {
     }
 }
 
-impl<T: Scalar + SaturatingNeg + MulAcc> Section<T> for Df2t<T> {
+impl<T: Scalar + Signed + MulAcc> Section<T> for Df2t<T> {
     #[inline]
     fn update(&mut self, u: T) -> T {
         let y = T::from_acc(T::mac(self.d1, self.b0, u));
@@ -1180,11 +1208,15 @@ impl<T: Scalar + SaturatingNeg + MulAcc> Section<T> for Df2t<T> {
     }
 }
 
-impl<T: Scalar + SaturatingNeg + MulAcc, const ORDER: usize>
-    DirectForm2T<T, ORDER>
-{
+impl<T: Scalar + Signed + MulAcc, const ORDER: usize> DirectForm2T<T, ORDER> {
     /// Builds a realization from `b_0`, `(b_1, ..., b_n)` and
     /// `(a_1, ..., a_n)` with zero state.
+    ///
+    /// Stores `-a_i` for the recurrence. `T: Signed` is required so the
+    /// negation is not the unsigned `Fixed` no-op that clears feedback.
+    ///
+    /// # Panics
+    /// Never.
     #[must_use]
     pub fn new(b0: T, b: [T; ORDER], a: [T; ORDER]) -> Self {
         Self {
@@ -1196,6 +1228,9 @@ impl<T: Scalar + SaturatingNeg + MulAcc, const ORDER: usize>
     }
 
     /// Processes one input sample and returns the output.
+    ///
+    /// # Panics
+    /// Never.
     #[inline]
     pub fn update(&mut self, u: T) -> T {
         let zero = T::ZERO.to_acc();
@@ -1214,11 +1249,17 @@ impl<T: Scalar + SaturatingNeg + MulAcc, const ORDER: usize>
     }
 
     /// Sets every state to zero.
+    ///
+    /// # Panics
+    /// Never.
     pub fn reset(&mut self) {
         self.state = [T::ZERO.to_acc(); ORDER];
     }
 
     /// Replaces the coefficients without clearing the state (FR-18).
+    ///
+    /// # Panics
+    /// Never.
     pub fn set_coefficients(&mut self, b0: T, b: [T; ORDER], a: [T; ORDER]) {
         self.b0 = b0;
         self.b = b;
@@ -1317,18 +1358,14 @@ impl<S, const L: usize> BiquadCascade<S, L> {
     }
 }
 
-impl<T: Scalar + SaturatingNeg + MulAcc, const L: usize>
-    BiquadCascade<Df1<T>, L>
-{
+impl<T: Scalar + Signed + MulAcc, const L: usize> BiquadCascade<Df1<T>, L> {
     /// Sets every section state to zero.
     pub fn reset(&mut self) {
         self.sections.iter_mut().for_each(Section::<T>::reset);
     }
 }
 
-impl<T: Scalar + SaturatingNeg + MulAcc, const L: usize>
-    BiquadCascade<Df2t<T>, L>
-{
+impl<T: Scalar + Signed + MulAcc, const L: usize> BiquadCascade<Df2t<T>, L> {
     /// Sets every section state to zero.
     pub fn reset(&mut self) {
         self.sections.iter_mut().for_each(Section::<T>::reset);
@@ -1338,19 +1375,27 @@ impl<T: Scalar + SaturatingNeg + MulAcc, const L: usize>
 /// Reports whether a first- or second-order section has its poles strictly
 /// inside the unit circle: `|a_2| < 1` and `|a_1| < 1 + a_2` (FR-20).
 ///
-/// Exact for `Fixed`; no root finding.
+/// Exact for `Fixed`; no root finding. Requires [`Signed`] so negative
+/// coefficients use a true absolute value rather than the unsigned
+/// `saturating_neg` no-op.
+///
+/// # Panics
+/// Never.
 #[must_use]
-pub fn is_stable<T: Scalar + SaturatingNeg + PartialOrd + Copy>(
+pub fn is_stable<T: Scalar + Signed + Copy>(
     c: &SectionCoefficients<T>,
 ) -> bool {
-    let abs = |v: T| if v < T::ZERO { v.saturating_neg() } else { v };
-    abs(c.a2) < T::ONE && abs(c.a1) < T::ONE.saturating_add(&c.a2)
+    Signed::abs(c.a2) < T::ONE
+        && Signed::abs(c.a1) < T::ONE.saturating_add(&c.a2)
 }
 
 /// Reports whether every section in `sections` passes [`is_stable`]
 /// (FR-20).
+///
+/// # Panics
+/// Never.
 #[must_use]
-pub fn all_stable<T: Scalar + SaturatingNeg + PartialOrd + Copy>(
+pub fn all_stable<T: Scalar + Signed + Copy>(
     sections: &SectionSlice<T>,
 ) -> bool {
     sections.iter().all(is_stable)
@@ -1359,18 +1404,25 @@ pub fn all_stable<T: Scalar + SaturatingNeg + PartialOrd + Copy>(
 /// Quantizes floating-point section coefficients to `Fixed<Repr, SHIFT>`
 /// with round-to-nearest (FR-19).
 ///
+/// `Fixed<Repr, SHIFT>` must be [`Signed`]: unsigned fixed-point cannot
+/// hold the negative feedback coefficients that IIR sections require, and
+/// its `saturating_neg` would clear them at realization time (C-8).
+///
 /// # Errors
 /// [`ClassicalError::CoefficientRange`] naming the first section with a
 /// coefficient that does not round into the representable range; no
 /// coefficient is saturated. The comparison is made in raw units, so the
 /// `f64` image of `Fixed::MIN` and `Fixed::MAX` is accepted for every
 /// `Repr`, including `i64`, where `MAX` has no exact `f64`.
+///
+/// # Panics
+/// Never.
 pub fn quantize<Repr: FixedRepr, const SHIFT: usize, const L: usize>(
     sections: &SectionArray<f64, L>,
 ) -> QuantizeResult<Repr, SHIFT, L>
 where
     Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>,
-    Fixed<Repr, SHIFT>: Scalar,
+    Fixed<Repr, SHIFT>: Scalar + Signed,
 {
     let delta = Fixed::<Repr, SHIFT>::DELTA.to_num();
     // Bounds in raw units (multiples of delta). Scaling by a power of two is
