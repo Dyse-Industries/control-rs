@@ -80,8 +80,10 @@ impl ByteStream for TeensyUsb {
     fn write(&mut self, buf: &[u8]) -> CountOf<Self> {
         self.service();
         if !self.configured {
-            // Gracefully discard output while no host is connected.
-            return Ok(buf.len());
+            // Back-pressure: `StreamLink` must retain the frame until the host
+            // configures the CDC port. Reporting `buf.len()` here would drain
+            // the link buffer and permanently drop TargetInfo / RunStats.
+            return Ok(0);
         }
         match self.usb_class.write(buf) {
             Ok(written) => Ok(written),
