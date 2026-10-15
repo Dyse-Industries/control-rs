@@ -42,21 +42,23 @@ Primary usage scenarios:
   an ARX-structure model whose regression uses instruments built from $u$
   and an auxiliary model's simulated output.
 - **FR-3 — Rational frequency fit**: From complex frequency samples
-  $G(j\omega_k)$, returns a rational `TransferFunction` by Levy's
+  $G(j\omega_k)$, returns a continuous rational `TransferFunction` by Levy's
   linearization followed by Sanathanan-Koerner reweighting for at most a
-  caller iteration count.
+  caller iteration count. The denominator is constrained to be monic so the
+  linearized least-squares problem is full rank.
 - **FR-4 — Vector fitting**: From the same samples and a starting pole set,
-  returns a stable pole-residue model as a `StateSpace` by iterative pole
-  relocation for at most a caller iteration count.
+  returns a stable pole-residue model as a continuous `StateSpace` by
+  iterative pole relocation for at most a caller iteration count.
 - **FR-5 — Eigensystem realization**: From Markov parameters, returns a
   discrete `StateSpace` of a caller order from the SVD of their block Hankel
   matrix, together with the Hankel singular values.
 - **FR-6 — Subspace identification**: From input-output records, returns a
   discrete `StateSpace` by QR compression of the block Hankel data and SVD
   order revelation, with MOESP or N4SID weighting.
-- **FR-7 — Matrix pencil poles**: From a free-response record, returns the
-  discrete poles of a caller order (frequencies and damping ratios) from the
-  matrix pencil of its Hankel matrix.
+- **FR-7 — Matrix pencil poles**: From a free-response record and sample
+  time $T_s > 0$, returns the discrete poles of a caller order together with
+  undamped natural frequencies and damping ratios $(\omega_n, \zeta)$ from
+  the matrix pencil of its Hankel matrix.
 - **FR-8 — Persistency of excitation**: Returns whether an input record is
   persistently exciting of order $k$, that is, whether its depth-$k$ block
   Hankel matrix has full row rank to a caller tolerance.
@@ -84,8 +86,8 @@ Primary usage scenarios:
   `control-rs` and adds no dependency.
 - **C-5 — Kernel dependencies**: Depends on a singular value decomposition
   kernel (`Gesvd`) specified by a revision of `subprograms-design.md`, on
-  the existing `Geqrf` and `Ormqr`, and on `modern_control::schur` for
-  eigenvalues.
+  the existing `Geqrf`, `Ormqr`, `Getrf` and `Getrs` (IV stage-two solve),
+  and on `modern_control::schur` for eigenvalues.
 - **C-6 — Error convention**: Conforms to `error-design.md` NFR-1.
 
 ---
@@ -117,7 +119,7 @@ flowchart LR
         TF["TransferFunction"]
         SS["StateSpace"]
     end
-    K["Geqrf / Ormqr / Gesvd (C-5)<br/>modern_control::schur"]
+    K["Geqrf / Ormqr / Getrf / Getrs / Gesvd (C-5)<br/>modern_control::schur"]
     IO --> ARX --> TF
     IO --> PE
     IO --> SUB --> SS
@@ -164,26 +166,34 @@ first fits a high-order ARX model and regresses again on its residuals [1].
 FR-2 uses the same two-stage shape with instruments in place of residuals:
 stage one fits ARX, stage two replaces the lagged outputs in the
 instrument matrix $Z$ with the stage-one model's simulated output and
-solves $Z^T \Phi \theta = Z^T y$ by LU. The instrument choice is the
-crate's and is flagged in §8.
+solves $Z^T \Phi \theta = Z^T y$ by `Getrf`/`Getrs` (C-5). The instrument
+choice is the crate's and is flagged in §8.
 
 #### 4.3 Frequency-Domain Rational Fits
 
-Levy's method linearizes the fit by neglecting the denominator [2], which
-equals the true error only when the denominator is nearly constant [2].
-Sanathanan-Koerner iteration divides each row by the previous iteration's
-denominator, which acts as a frequency-dependent weight [2]. `levy_sk` runs
+Levy's method and Sanathanan-Koerner (SK) fit a continuous-time rational
+$N(s)/D(s)$ to samples $G(j\omega_k)$ in the monomial basis of $(j\omega)^n$
+[2]. Discrete-time frequency fits (Steiglitz-McBride) are out of scope; the
+factory returns `TransferFunction::continuous` (FR-3). Levy linearizes by
+neglecting the denominator [2], which equals the true error only when the
+denominator is nearly constant [2]. Without a scale constraint the map
+$(N, D) \mapsto (kN, kD)$ leaves the linearized residual unchanged, so the
+regressor is identically rank-deficient. `levy_sk` therefore constrains $D$
+to be monic (leading coefficient $1$) and solves for the remaining real
+coefficients by stacking real and imaginary residual rows. Sanathanan-Koerner
+iteration divides each residual row by the previous iteration's complex
+denominator value at $\omega_k$, which acts as a frequency-dependent weight
+[2], and keeps the same monic constraint at every iteration. `levy_sk` runs
 Levy once, then SK until the relative coefficient change falls below the
 tolerance or the caller cap is reached; reaching the cap returns the last
-iterate with `Converged::No`. Real coefficients come from stacking real and
-imaginary parts.
+iterate with `Converged::No`.
 
 Vector fitting relocates poles iteratively by repeated linear solves [2],
 [3] on a partial-fraction basis. Each iteration fits residues of an
 auxiliary function $\sigma(s)$, takes the new poles as the zeros of
 $\sigma$ (an eigenvalue problem), and flips unstable poles to the left half
 plane. The final pole-residue model is realized as a block-diagonal
-`StateSpace`.
+continuous `StateSpace` via `StateSpace::continuous` (FR-4).
 
 #### 4.4 Eigensystem Realization
 
@@ -214,8 +224,10 @@ the samples and solves a generalized eigenvalue problem [6]; the model order
 comes from truncating singular values [6]. With $Y = U \Sigma V^T$ truncated
 to order $M$, and $V_1$, $V_2$ the rows of $V_M$ without its last and first
 row, the poles are the eigenvalues of $V_1^{+} V_2$, a standard $M \times M$
-problem solved by the Schur layer. Each discrete pole $z$ gives
-$\omega = |\ln z| / T_s$ and $\zeta = -\operatorname{Re}(\ln z)/|\ln z|$.
+problem solved by the Schur layer. The caller supplies $T_s > 0$ (FR-7). Each
+discrete pole $z$ maps to the continuous second-order pair
+$\omega_n = |\ln z| / T_s$ and
+$\zeta = -\operatorname{Re}(\ln z)/|\ln z|$.
 
 #### 4.7 Persistency of Excitation
 
@@ -267,15 +279,16 @@ and FR-4 return the iterate with a convergence flag.
 | VC-1.1 | FR-1 | `libtest` | `control_rs::sysid::arx::tests::noise_free_exact` | Noise-free data from a known ARX model return its coefficients within §6.2; FR-1 holds iff all conditions hold |
 | VC-1.2 | FR-1 | `libtest` | `control_rs::sysid::arx::tests::cross_check` | Noisy data match the cross-check tolerance |
 | VC-2.1 | FR-2 | `libtest` | `control_rs::sysid::arx::tests::iv_colored_noise_bias` | With colored output noise over 50 Monte Carlo runs, the mean IV error is smaller than the mean ARX error; FR-2 holds iff all conditions hold |
-| VC-3.1 | FR-3 | `libtest` | `control_rs::sysid::frequency::tests::sk_exact_rational` | Samples of a known rational function return its coefficients within §6.2; FR-3 holds iff all conditions hold |
+| VC-3.1 | FR-3 | `libtest` | `control_rs::sysid::frequency::tests::sk_exact_rational` | Samples of a known continuous rational return its monic-denominator coefficients within §6.2 and `is_continuous()`; FR-3 holds iff all conditions hold |
 | VC-3.2 | FR-3 | `libtest` | `control_rs::sysid::frequency::tests::sk_cap_respected` | A cap of 1 returns after one SK iteration with `Converged::No` |
-| VC-4.1 | FR-4 | `libtest` | `control_rs::sysid::frequency::tests::vf_recovers_poles` | Samples of a known 6-pole function return its poles within §6.2, all stable; FR-4 holds iff all conditions hold |
+| VC-3.3 | FR-3 | `libtest` | `control_rs::sysid::frequency::tests::sk_monic_full_rank` | With the monic constraint removed in a test double the regressor is rank-deficient; with it enforced the fit on noise-free data of a known model succeeds |
+| VC-4.1 | FR-4 | `libtest` | `control_rs::sysid::frequency::tests::vf_recovers_poles` | Samples of a known 6-pole function return its poles within §6.2, all stable, and `is_continuous()`; FR-4 holds iff all conditions hold |
 | VC-5.1 | FR-5 | `libtest` | `control_rs::sysid::realization::tests::era_markov_exact` | Markov parameters of a known system return a model with equal Markov parameters within §6.2; FR-5 holds iff all conditions hold |
 | VC-6.1 | FR-6 | `libtest` | `control_rs::sysid::subspace::tests::moesp_n4sid_noise_free` | Noise-free open-loop data return models whose eigenvalues and frequency responses match the true system within §6.2; FR-6 holds iff all conditions hold |
 | VC-6.2 | FR-6 | `libtest` | `control_rs::sysid::subspace::tests::cross_check` | Noisy data match the cross-check tolerance |
-| VC-7.1 | FR-7 | `libtest` | `control_rs::sysid::pencil::tests::damped_sinusoids` | Two noise-free damped sinusoids return their frequencies and damping ratios within §6.2; FR-7 holds iff all conditions hold |
+| VC-7.1 | FR-7 | `libtest` | `control_rs::sysid::pencil::tests::damped_sinusoids` | Two noise-free damped sinusoids sampled at known $T_s$ return their $(\omega_n, \zeta)$ within §6.2; FR-7 holds iff all conditions hold |
 | VC-8.1 | FR-8 | `libtest` | `control_rs::sysid::hankel::tests::persistency_orders` | A sum of $q$ sinusoids is reported persistently exciting of order $2q$ and not of $2q + 1$; FR-8 holds iff all conditions hold |
-| VC-9.1 | FR-9 | `libtest` | `control_rs::sysid::arx::tests::rank_deficient_errors` | A constant input with $n_b = 2$ returns `RankDeficient`, and a third-order ERA request on a first-order system returns `RankDeficient`; FR-9 holds iff all conditions hold |
+| VC-9.1 | FR-9 | `libtest` | `control_rs::sysid::arx::tests::rank_deficient_errors` | A constant input with $n_b = 2$ fails FR-8 before estimation and returns `NotPersistentlyExciting` (§4.7); a third-order ERA request on a first-order system returns `RankDeficient`; FR-9 holds iff all conditions hold |
 | VC-10.1 | NFR-1 | `inspection` | — | No routine allocates; all storage is const-sized |
 | VC-11.1 | NFR-2 | `analysis` | — | Loop bounds of FR-1, FR-2, FR-5, FR-6 and FR-7 depend only on sizes, and FR-3 and FR-4 loops on the cap |
 | VC-12.1 | C-1 | `review` | — | Every size is a const generic |
@@ -359,6 +372,7 @@ condition number allows.
 |:--|:--|:--|:--|
 | 1.0 | October 4, 2026 | @MitchellDScott | Initial design document: FR-1 to FR-9, NFR-1 to NFR-2, C-1 to C-6. |
 | 1.1 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending review. |
+| 1.2 | October 15, 2026 | Cursor Agent | FR-3/§4.3 monic denominator and continuous TF; FR-4 continuous SS; FR-7 $T_s$; VC-9.1 PE error; C-5 `Getrf`/`Getrs`. |
 
 ---
 
