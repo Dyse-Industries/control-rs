@@ -198,8 +198,10 @@ infinities are rejected.
 - **C-7 — Discretization ownership**: Continuous-to-discrete conversion
   conforms to `transfer-function-design.md` FR-4; this module adds none.
 - **C-8 — Multiply accumulate**: Realizations bound
-  `T: Scalar + SaturatingNeg + MulAcc`, accumulate through `MulAcc`, and
+  `T: Scalar + Signed + MulAcc`, accumulate through `MulAcc`, and
   conform to `num-traits-design.md` FR-7 and `fixed-num-design.md` FR-8.
+  `Signed` is required because sections store `-a_i`; unsigned `Fixed`
+  implements `saturating_neg` as zero and would clear the feedback taps.
 - **C-9 — Fixed-point scale**: Fixed-point realizations use scales for which
   `Fixed<Repr, SHIFT>: Scalar`, conforming to `fixed-num-design.md` FR-7.
 
@@ -777,7 +779,7 @@ The enum has a hand-written `Display`, `impl core::error::Error` and
 | VC-29.1   | FR-18       | `libtest`    | `control_rs::classical_control::realization::tests::set_coefficients_keeps_state`  | After `set_coefficients`, state equals its value before the call and the next output equals that of a section built with the new coefficients and the same state                           |
 | VC-30.1   | FR-19       | `libtest`    | `control_rs::classical_control::realization::tests::quantize_round_and_range`      | Each quantized coefficient is within $\Delta/2$ of its source and a coefficient outside the range returns `CoefficientRange` with its section index                                        |
 | VC-30.2 | FR-19 | `libtest` | `control_rs::classical_control::realization::tests::quantize_accepts_representable_extremes` | The `f64` image of `Fixed::MIN` and `Fixed::MAX` quantizes for `i32` and for `i64` at two scales, and $\pm 10^{10}$ returns `CoefficientRange` for `Fixed<i64, 30>` |
-| VC-31.1   | C-8         | `inspection` | —                                                                                  | Every recurrence in `realization` is a `MulAcc` chain with one `from_acc` per output, and the section types bound `T: Scalar + SaturatingNeg + MulAcc`                                     |
+| VC-31.1   | C-8         | `inspection` | —                                                                                  | Every recurrence in `realization` is a `MulAcc` chain with one `from_acc` per output, and the section types bound `T: Scalar + Signed + MulAcc`                                              |
 | VC-33.1   | FR-20       | `libtest`    | `control_rs::classical_control::realization::tests::stability_triangle`            | For sections built from pole pairs at radius $0.5$, $0.99$, $1.0$ and $1.01$ over a grid of angles, and for first-order sections, `is_stable` equals `max \|pole\| < 1`                    |
 | VC-33.2   | FR-20       | `libtest`    | `control_rs::classical_control::realization::tests::interpolated_schedule_stable`  | Every multilinear interpolation of a `Tensor` grid of stable sections at 1,000 random query points passes `is_stable`                                                                      |
 | VC-32.1   | C-9         | `review`     | —                                                                                  | Fixed-point realizations are bounded `T: Scalar`, so only `fixed-num-design.md` FR-7 scales instantiate                                                                                    |
