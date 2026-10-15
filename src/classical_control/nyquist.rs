@@ -78,7 +78,10 @@ impl<T: Float + Copy> Walker<T> {
         let sa = Complex::new(a.re.saturating_add(&T::ONE), a.im);
         let sb = Complex::new(b.re.saturating_add(&T::ONE), b.im);
         let (ma, mb) = (a.magnitude(), b.magnitude());
-        let scale = if ma > mb { ma } else { mb };
+        let scale = match ma.partial_cmp(&mb) {
+            Some(core::cmp::Ordering::Greater) => ma,
+            _ => mb,
+        };
         clear_of_origin(sa, sb, scale, self.tol)?;
         self.winding = self
             .winding
@@ -171,9 +174,14 @@ where
         // grid spacing. They feed the winding count only.
         if let Some(lo) = prev_omega {
             let mut cur = lo;
-            while let Some(w) =
-                next_arc_point(axis_poles, indent_radius, cur, omega)
-            {
+            // Each pole contributes `ARC + 1` arc points, which bounds the
+            // number of arc points in a gap.
+            for _ in axis_poles.iter().flat_map(|_| 0..=ARC) {
+                let Some(w) =
+                    next_arc_point(axis_poles, indent_radius, cur, omega)
+                else {
+                    break;
+                };
                 walker.push(sys.evaluate_complex(indent(
                     w,
                     axis_poles,
@@ -553,5 +561,16 @@ mod tests {
             w.push(Complex::new(-1.0 + 1e-4, 1.0)),
             Err(ClassicalError::ContourThroughCriticalPoint)
         );
+    }
+
+    #[test]
+    fn arc_point_is_strictly_inside_and_minimal() {
+        let pole = |re, im| Complex::new(re, im);
+        let poles = [pole(0.0, 5.0), pole(0.0, 0.0)];
+        // Arc ends at -1 and 1 for the pole at 0 are excluded as bounds.
+        assert_eq!(next_arc_point(&poles, 1.0, 1.0, 2.0), None);
+        assert_eq!(next_arc_point(&poles, 1.0, -2.0, -1.0), None);
+        // The minimum over all poles, not the first found.
+        assert_eq!(next_arc_point(&poles, 1.0, -2.0, 9.0), Some(-1.0));
     }
 }

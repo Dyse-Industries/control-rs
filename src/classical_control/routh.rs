@@ -128,7 +128,10 @@ impl<T: Float + Copy> Term<T> {
                 Err(Fail::Indeterminate)
             };
         }
-        while self.head() == T::ZERO {
+        for _ in 0..TERMS {
+            if self.head() != T::ZERO {
+                break;
+            }
             self.c.rotate_left(1);
             self.power = self.power.saturating_add(1);
         }
@@ -174,7 +177,7 @@ impl<T: Float + Copy> Term<T> {
             return Ok(self);
         }
         let power = self.power.min(rhs.power);
-        let mut full = [T::ZERO; 2 * TERMS];
+        let mut full = [T::ZERO; 8];
         let mut dropped = false;
         for (t, sign) in
             [(self, T::ONE), (rhs, T::ZERO.saturating_sub(&T::ONE))]
@@ -188,7 +191,7 @@ impl<T: Float + Copy> Term<T> {
                     Some(slot) => {
                         *slot = slot.saturating_add(&sign.saturating_mul(v));
                     }
-                    None => dropped |= *v != T::ZERO,
+                    None => dropped = true,
                 }
             }
         }
@@ -435,7 +438,9 @@ fn run<T: Float + Copy, const N: usize>(
                 *head = Term::epsilon();
             }
         }
-        let negative = lower.first().is_some_and(|t| t.head() < T::ZERO);
+        let negative = lower.first().is_some_and(|t| {
+            t.head().partial_cmp(&T::ZERO) == Some(core::cmp::Ordering::Less)
+        });
         if negative != prev_negative {
             out.rhp = out.rhp.saturating_add(1);
         }
@@ -511,6 +516,8 @@ mod tests {
         ([-3.0, -3.0, -3.0, 2.0, 0.0, 3.0], 1),
     ];
 
+    const UNIT: [f64; TERMS] = [1.0, 0.0, 0.0, 0.0];
+
     /// Ascending coefficients and the right-half-plane root count.
     type EpsilonCase = ([f64; 6], usize);
 
@@ -567,11 +574,91 @@ mod tests {
     }
 
     fn term(c: [f64; TERMS], power: i32) -> Term<f64> {
-        Term {
-            c,
-            power,
-            until: EXACT,
-        }
+        term_until(c, power, EXACT)
+    }
+
+    fn term_until(c: [f64; TERMS], power: i32, until: i32) -> Term<f64> {
+        Term { c, power, until }
+    }
+
+    #[test]
+    fn term_mul_propagates_validity() {
+        let tol = 1e-12;
+        let p = term_until(UNIT, 1, 10).mul(term(UNIT, 2), tol).unwrap();
+        assert_eq!(p.until, 12);
+        let p = term(UNIT, 1).mul(term_until(UNIT, 2, 10), tol).unwrap();
+        assert_eq!(p.until, 11);
+        let p = term(UNIT, 1).mul(term(UNIT, 2), tol).unwrap();
+        assert_eq!(p.until, EXACT);
+    }
+
+    #[test]
+    fn term_minus_tracks_dropped_terms() {
+        let tol = 1e-12;
+        // Terms shifted past the stored width are lost.
+        let lost = term(UNIT, 0)
+            .minus(term([0.0, 0.0, 0.0, 1.0], 5), tol)
+            .unwrap();
+        assert_eq!(lost.until, 4);
+        // Shifted terms that land in the upper half of the buffer are lost.
+        let lost = term(UNIT, 0).minus(term([1.0; TERMS], 2), tol).unwrap();
+        assert_eq!(lost.until, 4);
+        let kept = term(UNIT, 0).minus(term(UNIT, 3), tol).unwrap();
+        assert_eq!(kept.until, EXACT);
+    }
+
+    #[test]
+    fn term_div_propagates_validity() {
+        let tol = 1e-12;
+        let q = term_until(UNIT, 0, 10).div(term(UNIT, 2), tol).unwrap();
+        assert_eq!((q.power, q.until), (-2, 8));
+        let q = term(UNIT, 0).div(term(UNIT, 2), tol).unwrap();
+        assert_eq!((q.power, q.until), (-2, EXACT));
+        let q = term(UNIT, 0).div(term_until(UNIT, 1, 10), tol).unwrap();
+        assert_eq!((q.power, q.until), (-1, 8));
+    }
+
+    #[test]
+    fn term_constant_chops_at_tolerance() {
+        assert!(Term::constant(1e-3, 1e-3).is_zero());
+        assert!(!Term::constant(2e-3, 1e-3).is_zero());
+        assert!(Term::<f64>::zero().is_zero());
+        assert!(!term(UNIT, 0).is_zero());
+    }
+
+    #[test]
+    fn routh_root_at_origin_sets_imaginary_axis() {
+        // s (s + 1)(s + 2)
+        let poly =
+            ArrayPolynomial::<f64, 4>::from_coefficients([0.0, 2.0, 3.0, 1.0]);
+        let got = routh_count(&poly, 1e-12).unwrap();
+        assert_eq!((got.rhp, got.imaginary_axis), (0, true));
+    }
+
+    #[test]
+    fn symmetric_roots_detection() {
+        // 1 + 0 s + s^2 and 1 + s + s^2 + s^3 have roots +-i.
+        assert!(symmetric_roots_possible::<f64, 4>(&[1.0, 0.0, 1.0]));
+        assert!(symmetric_roots_possible::<f64, 4>(&[1.0, 1.0, 1.0, 1.0]));
+        // Degree below two never pairs, even with a zero constant.
+        assert!(!symmetric_roots_possible::<f64, 4>(&[0.0, 1.0]));
+        assert!(!symmetric_roots_possible::<f64, 4>(&[1.0, 1.0]));
+        assert!(!symmetric_roots_possible::<f64, 4>(&[1.0]));
+        assert!(!symmetric_roots_possible::<f64, 4>(&[2.0, 3.0, 1.0]));
+    }
+
+    #[test]
+    fn run_epsilon_only_when_allowed() {
+        let c = [3.0, 2.0, 2.0, 1.0, 1.0];
+        assert_eq!(run::<f64, 5>(&c, 1e-12, false), Err(Fail::Singular));
+        let got = run::<f64, 5>(&c, 1e-12, true).unwrap();
+        assert_eq!(got.rhp, 2);
+    }
+
+    #[test]
+    fn run_zero_leading_is_not_negative() {
+        let got = run::<f64, 3>(&[1.0, 1.0, 0.0], 1e-12, false).unwrap();
+        assert_eq!(got.rhp, 0);
     }
 
     #[test]

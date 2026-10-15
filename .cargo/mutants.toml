@@ -50,10 +50,12 @@ exclude_re = [
     # Test modules compiled into the library for on-target execution
     # (`cfg(any(test, feature = "ets"))`) are not recognized as test code.
     "tests::",
-    # The test constant `U = f64::EPSILON / 2.0` has no enclosing function,
-    # so its mutants carry no `tests::` name. The `$` anchor excludes every
-    # mutant that names a function, `quantize` among them.
-    "realization\\.rs:\\d+:\\d+: replace / with [%*]$",
+    # The test constant `U = f64::EPSILON / 2.0` (realization.rs, column 33)
+    # has no enclosing function, so its mutants carry no `tests::` name. `%`
+    # and `*` only enlarge `U`, which is the upper bound in the error
+    # assertions: a looser bound cannot fail a passing test. The `$` anchor
+    # excludes every mutant that names a function, `quantize` among them.
+    "realization\\.rs:\\d+:33: replace / with [%*]$",
     # Boundary cases whose result is identical, pinned by column so a new
     # comparison on the same line or function is not hidden:
     # - A tie in the running minimum or maximum re-assigns the same value.
