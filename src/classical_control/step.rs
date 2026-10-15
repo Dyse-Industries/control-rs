@@ -57,9 +57,35 @@ impl<T: Float + Copy> Default for StepOptions<T> {
 
 /// Evaluates step-response metrics on samples `(t_k, y_k)` (FR-15).
 ///
+/// # Generic Arguments
+/// * `T` - scalar type, a [`Float`].
+/// * `K` - number of samples.
+///
+/// # Arguments
+/// * `t` - sample times.
+/// * `y` - response samples at `t`.
+/// * `opts` - reference values and settling threshold.
+///
+/// # Returns
+/// * `Ok(info)` - [`StepInfo`] with rise time, settling time, overshoot and peak.
+/// * `Err` - see [Errors](#errors).
+///
 /// # Errors
 /// [`ClassicalError::InvalidParameter`] when `K == 0`, `y_final = y_init`
 /// or the threshold is negative.
+///
+/// # Example
+/// ```
+/// use control_rs::classical_control::{StepOptions, step_info};
+///
+/// // A monotone response that reaches the final value at t = 2.
+/// let t: [f64; 5] = [0.0, 1.0, 2.0, 3.0, 4.0];
+/// let y: [f64; 5] = [0.0, 0.5, 1.0, 1.0, 1.0];
+/// let info = step_info(&t, &y, &StepOptions::default())?;
+/// assert_eq!(info.peak, 1.0);
+/// assert_eq!(info.overshoot, 0.0);
+/// # Ok::<(), control_rs::classical_control::ClassicalError>(())
+/// ```
 pub fn step_info<T: Float + Copy, const K: usize>(
     t: &[T; K],
     y: &[T; K],

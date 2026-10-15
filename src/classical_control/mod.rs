@@ -16,6 +16,34 @@
 //! routine allocates or plots. Errors arise at construction and analysis
 //! only: per-sample `update`, `step`, `reset` and `set_coefficients` are
 //! infallible.
+//!
+//! # Usage
+//!
+//! ```
+//! use control_rs::classical_control::{frequency_response, lead};
+//!
+//! let compensator = lead(1.0_f64, 1.0, 10.0)?;
+//! let [point] = frequency_response(&compensator, &[1.0]);
+//! assert!(point.phase_deg > 0.0);
+//! # Ok::<(), control_rs::classical_control::ClassicalError>(())
+//! ```
+//!
+//! # Features
+//!
+//! - `std`: none of this module depends on it; the module is `no_std`.
+//! - `ets`: compiles the on-target suites of the realization and PID tests
+//!   exposed through `suites`.
+//!
+//! # Limitations
+//!
+//! - Single-input, single-output systems only.
+//! - [`nyquist_encirclements`] requires a continuous, proper open loop.
+//! - [`root_locus`] returns each row as an unordered root set; roots are not
+//!   matched across gains.
+//! - [`routh_count`] returns [`ClassicalError::RouthIndeterminate`] where a
+//!   zero first entry cannot be resolved.
+//! - Section factorization and quantization accept discrete systems only;
+//!   `L` and the buffer sizes are fixed at compile time.
 
 pub use compensator::{PidForm, lag, lead, pid};
 pub use locus::{LocusResult, root_locus};
@@ -59,6 +87,9 @@ pub type TfResult<T, const N: usize, const D: usize> =
     Result<ArrayTransferFunction<T, N, D>, ClassicalError>;
 
 /// Errors of the classical control toolbox.
+///
+/// Each routine documents the variants it returns under its `# Errors`
+/// section. Per-sample operations never return an error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ClassicalError {
     /// Root finding failed for a locus gain or a factorization (FR-1, FR-10).

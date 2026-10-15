@@ -76,6 +76,21 @@ pub struct Margins<T, const C: usize> {
 /// samples (for example an integrator at `w = 0`) are skipped and break
 /// brackets so they neither seed `stability_margin` nor invent crossings.
 ///
+/// # Generic Arguments
+/// * `T` - scalar type, a [`Float`].
+/// * `N` - numerator coefficient count.
+/// * `D` - denominator coefficient count.
+/// * `M` - number of sweep samples.
+/// * `C` - crossings reported per kind.
+/// * `B` - bisection steps per crossing.
+///
+/// # Arguments
+/// * `sys` - open-loop transfer function `L`.
+/// * `omegas` - ascending sweep frequencies.
+///
+/// # Returns
+/// * [`Margins`] - the crossings found and the minimum `|1 + L|` over the sweep. The function is infallible.
+///
 /// # Example
 /// ```
 /// use control_rs::classical_control::stability_margins;

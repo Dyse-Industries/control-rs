@@ -60,12 +60,35 @@ pub enum PidForm<T> {
 /// `(N, D)`, which must equal the numerator and denominator degrees plus
 /// one and satisfy `N <= D`.
 ///
+/// # Generic Arguments
+/// * `T` - scalar type, a [`Float`].
+/// * `N` - numerator coefficient capacity.
+/// * `D` - denominator coefficient capacity.
+///
+/// # Arguments
+/// * `form` - PID parameterization and gains.
+/// * `tf` - derivative filter time constant `T_f`; `None` for no filter.
+///
+/// # Returns
+/// * `Ok(tf)` - the continuous compensator in capacities `(N, D)`.
+/// * `Err` - see [Errors](#errors).
+///
 /// # Errors
 /// - [`ClassicalError::InvalidParameter`]: a time constant `T_i` or
 ///   `tau_i` is not positive, `T_d` or `tau_d` is negative, or `tf` is
 ///   `Some` and not positive.
 /// - [`ClassicalError::Improper`]: the result is improper or does not fit
 ///   `(N, D)`.
+///
+/// # Example
+/// ```
+/// use control_rs::classical_control::{PidForm, pid};
+///
+/// let c = pid::<f64, 3, 3>(PidForm::Parallel { kp: 1.0, ki: 2.0, kd: 0.0 }, Some(0.5))?;
+/// assert_eq!(c.num_slice(), &[2.0, 2.0, 0.5]);
+/// assert_eq!(c.den_slice(), &[0.0, 1.0, 0.5]);
+/// # Ok::<(), control_rs::classical_control::ClassicalError>(())
+/// ```
 pub fn pid<T: Float + Copy, const N: usize, const D: usize>(
     form: PidForm<T>,
     tf: Option<T>,
@@ -119,8 +142,30 @@ where
 
 /// Builds the lead compensator `K (1 + s/b) / (1 + s/(bN))` (FR-7).
 ///
+/// # Generic Arguments
+/// * `T` - scalar type, a [`Float`].
+///
+/// # Arguments
+/// * `k` - gain `K`.
+/// * `b` - zero frequency `b`, positive.
+/// * `n` - pole-to-zero ratio `N`, positive.
+///
+/// # Returns
+/// * `Ok(tf)` - the continuous lead compensator.
+/// * `Err` - see [Errors](#errors).
+///
 /// # Errors
 /// [`ClassicalError::InvalidParameter`] when `b` or `n` is not positive.
+///
+/// # Example
+/// ```
+/// use control_rs::classical_control::lead;
+///
+/// let c = lead(2.0_f64, 1.0, 10.0)?;
+/// assert_eq!(c.num_slice(), &[2.0, 2.0]);
+/// assert_eq!(c.den_slice(), &[1.0, 0.1]);
+/// # Ok::<(), control_rs::classical_control::ClassicalError>(())
+/// ```
 pub fn lead<T: Float + Copy>(k: T, b: T, n: T) -> TfResult<T, 2, 2> {
     if !(b > T::ZERO && n > T::ZERO) {
         return Err(ClassicalError::InvalidParameter);
@@ -133,8 +178,29 @@ pub fn lead<T: Float + Copy>(k: T, b: T, n: T) -> TfResult<T, 2, 2> {
 
 /// Builds the lag compensator `M (1 + s/a) / (1 + sM/a)` (FR-7).
 ///
+/// # Generic Arguments
+/// * `T` - scalar type, a [`Float`].
+///
+/// # Arguments
+/// * `m` - low-frequency gain boost `M`, positive.
+/// * `a` - zero frequency `a`, positive.
+///
+/// # Returns
+/// * `Ok(tf)` - the continuous lag compensator.
+/// * `Err` - see [Errors](#errors).
+///
 /// # Errors
 /// [`ClassicalError::InvalidParameter`] when `m` or `a` is not positive.
+///
+/// # Example
+/// ```
+/// use control_rs::classical_control::lag;
+///
+/// let c = lag(2.0_f64, 4.0)?;
+/// assert_eq!(c.num_slice(), &[2.0, 0.5]);
+/// assert_eq!(c.den_slice(), &[1.0, 0.5]);
+/// # Ok::<(), control_rs::classical_control::ClassicalError>(())
+/// ```
 pub fn lag<T: Float + Copy>(m: T, a: T) -> TfResult<T, 2, 2> {
     if !(m > T::ZERO && a > T::ZERO) {
         return Err(ClassicalError::InvalidParameter);

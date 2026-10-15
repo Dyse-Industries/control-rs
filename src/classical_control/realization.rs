@@ -1185,6 +1185,24 @@ impl<T: Scalar + SaturatingNeg + MulAcc, const ORDER: usize>
 {
     /// Builds a realization from `b_0`, `(b_1, ..., b_n)` and
     /// `(a_1, ..., a_n)` with zero state.
+    ///
+    /// # Arguments
+    /// * `b0` - feedthrough coefficient `b_0`.
+    /// * `b` - coefficients `(b_1, ..., b_n)`.
+    /// * `a` - coefficients `(a_1, ..., a_n)`.
+    ///
+    /// # Returns
+    /// * A realization with zero state.
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::classical_control::DirectForm2T;
+    ///
+    /// // H(z) = 1 / (1 - 0.5 z^-1)
+    /// let mut f = DirectForm2T::<f64, 1>::new(1.0, [0.0], [-0.5]);
+    /// assert_eq!(f.update(1.0), 1.0);
+    /// assert_eq!(f.update(0.0), 0.5);
+    /// ```
     #[must_use]
     pub fn new(b0: T, b: [T; ORDER], a: [T; ORDER]) -> Self {
         Self {
@@ -1196,6 +1214,12 @@ impl<T: Scalar + SaturatingNeg + MulAcc, const ORDER: usize>
     }
 
     /// Processes one input sample and returns the output.
+    ///
+    /// # Arguments
+    /// * `u` - input sample.
+    ///
+    /// # Returns
+    /// * The output sample.
     #[inline]
     pub fn update(&mut self, u: T) -> T {
         let zero = T::ZERO.to_acc();
@@ -1219,6 +1243,11 @@ impl<T: Scalar + SaturatingNeg + MulAcc, const ORDER: usize>
     }
 
     /// Replaces the coefficients without clearing the state (FR-18).
+    ///
+    /// # Arguments
+    /// * `b0` - feedthrough coefficient `b_0`.
+    /// * `b` - coefficients `(b_1, ..., b_n)`.
+    /// * `a` - coefficients `(a_1, ..., a_n)`.
     pub fn set_coefficients(&mut self, b0: T, b: [T; ORDER], a: [T; ORDER]) {
         self.b0 = b0;
         self.b = b;
@@ -1231,6 +1260,17 @@ impl<T: Float + Copy + MulAcc, const ORDER: usize> DirectForm2T<T, ORDER> {
     /// through by its leading denominator coefficient (FR-8).
     ///
     /// `ORDER` is the denominator degree `D - 1` and `N <= D`.
+    ///
+    /// # Generic Arguments
+    /// * `N` - numerator coefficient count.
+    /// * `D` - denominator coefficient count.
+    ///
+    /// # Arguments
+    /// * `tf` - discrete transfer function.
+    ///
+    /// # Returns
+    /// * `Ok(realization)` - a realization with zero state.
+    /// * `Err` - see [Errors](#errors).
     ///
     /// # Errors
     /// - [`ClassicalError::NotDiscrete`] when `tf` is continuous.
@@ -1271,12 +1311,27 @@ impl<T: Float + Copy + MulAcc, const ORDER: usize> DirectForm2T<T, ORDER> {
 
 impl<S, const L: usize> BiquadCascade<S, L> {
     /// Builds a cascade from its sections, first section first.
+    ///
+    /// # Arguments
+    /// * `sections` - the sections, first section first.
+    ///
+    /// # Returns
+    /// * A cascade holding `sections`.
     #[must_use]
     pub const fn new(sections: [S; L]) -> Self {
         Self { sections }
     }
 
     /// Builds a cascade with zero state from section coefficients.
+    ///
+    /// # Generic Arguments
+    /// * `T` - coefficient type.
+    ///
+    /// # Arguments
+    /// * `c` - coefficient set per section, first section first.
+    ///
+    /// # Returns
+    /// * A cascade with zero state.
     #[must_use]
     pub fn from_coefficients<T: Copy>(c: &SectionArray<T, L>) -> Self
     where
@@ -1288,6 +1343,9 @@ impl<S, const L: usize> BiquadCascade<S, L> {
     }
 
     /// The sections in execution order.
+    ///
+    /// # Returns
+    /// * The section array in execution order.
     #[must_use]
     pub const fn sections(&self) -> &[S; L] {
         &self.sections
@@ -1296,6 +1354,26 @@ impl<S, const L: usize> BiquadCascade<S, L> {
 
 impl<S, const L: usize> BiquadCascade<S, L> {
     /// Processes one input sample through every section in order.
+    ///
+    /// # Generic Arguments
+    /// * `T` - coefficient type.
+    ///
+    /// # Arguments
+    /// * `u` - input sample.
+    ///
+    /// # Returns
+    /// * The output of the last section.
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::classical_control::{BiquadCascade, Df1, SectionCoefficients};
+    ///
+    /// // y_k = u_k + 0.5 y_(k-1)
+    /// let c = SectionCoefficients { b0: 1.0, b1: 0.0, b2: 0.0, a1: -0.5, a2: 0.0 };
+    /// let mut f = BiquadCascade::<Df1<f64>, 1>::from_coefficients(&[c]);
+    /// assert_eq!(f.update(1.0), 1.0);
+    /// assert_eq!(f.update(0.0), 0.5);
+    /// ```
     #[inline]
     pub fn update<T>(&mut self, u: T) -> T
     where
@@ -1306,6 +1384,12 @@ impl<S, const L: usize> BiquadCascade<S, L> {
 
     /// Replaces every section's coefficients without clearing state
     /// (FR-18).
+    ///
+    /// # Generic Arguments
+    /// * `T` - coefficient type.
+    ///
+    /// # Arguments
+    /// * `c` - one coefficient set per section, first section first.
     pub fn set_coefficients<T>(&mut self, c: &SectionArray<T, L>)
     where
         S: Section<T>,
@@ -1339,6 +1423,24 @@ impl<T: Scalar + SaturatingNeg + MulAcc, const L: usize>
 /// inside the unit circle: `|a_2| < 1` and `|a_1| < 1 + a_2` (FR-20).
 ///
 /// Exact for `Fixed`; no root finding.
+///
+/// # Generic Arguments
+/// * `T` - coefficient type.
+///
+/// # Arguments
+/// * `c` - coefficients of one section.
+///
+/// # Returns
+/// * `true` when both poles are strictly inside the unit circle.
+///
+/// # Example
+/// ```
+/// use control_rs::classical_control::{SectionCoefficients, is_stable};
+///
+/// let c = SectionCoefficients { b0: 1.0, b1: 0.0, b2: 0.0, a1: -1.0, a2: 0.5 };
+/// assert!(is_stable(&c));
+/// assert!(!is_stable(&SectionCoefficients { a2: 1.0, ..c }));
+/// ```
 #[must_use]
 pub fn is_stable<T: Scalar + SaturatingNeg + PartialOrd + Copy>(
     c: &SectionCoefficients<T>,
@@ -1349,6 +1451,15 @@ pub fn is_stable<T: Scalar + SaturatingNeg + PartialOrd + Copy>(
 
 /// Reports whether every section in `sections` passes [`is_stable`]
 /// (FR-20).
+///
+/// # Generic Arguments
+/// * `T` - coefficient type.
+///
+/// # Arguments
+/// * `sections` - section coefficient sets.
+///
+/// # Returns
+/// * `true` when every section is stable.
 #[must_use]
 pub fn all_stable<T: Scalar + SaturatingNeg + PartialOrd + Copy>(
     sections: &SectionSlice<T>,
@@ -1359,12 +1470,40 @@ pub fn all_stable<T: Scalar + SaturatingNeg + PartialOrd + Copy>(
 /// Quantizes floating-point section coefficients to `Fixed<Repr, SHIFT>`
 /// with round-to-nearest (FR-19).
 ///
+/// # Generic Arguments
+/// * `Repr` - fixed-point storage type.
+/// * `SHIFT` - fractional bit count.
+/// * `L` - section count.
+///
+/// # Arguments
+/// * `sections` - floating-point section coefficients.
+///
+/// # Returns
+/// * `Ok(sections)` - the coefficients as `Fixed<Repr, SHIFT>`.
+/// * `Err` - see [Errors](#errors).
+///
 /// # Errors
 /// [`ClassicalError::CoefficientRange`] naming the first section with a
 /// coefficient that does not round into the representable range; no
 /// coefficient is saturated. The comparison is made in raw units, so the
 /// `f64` image of `Fixed::MIN` and `Fixed::MAX` is accepted for every
 /// `Repr`, including `i64`, where `MAX` has no exact `f64`.
+///
+/// # Example
+/// ```
+/// use control_rs::classical_control::{ClassicalError, SectionCoefficients, quantize};
+///
+/// let c = SectionCoefficients { b0: 0.5, b1: 0.0, b2: 0.0, a1: 0.0, a2: 0.0 };
+/// let q = quantize::<i16, 13, 1>(&[c])?;
+/// assert_eq!(q[0].b0.to_bits(), 4096);
+///
+/// let big = SectionCoefficients { b0: 4.0, ..c };
+/// assert!(matches!(
+///     quantize::<i16, 13, 1>(&[big]),
+///     Err(ClassicalError::CoefficientRange { section: 0 })
+/// ));
+/// # Ok::<(), ClassicalError>(())
+/// ```
 pub fn quantize<Repr: FixedRepr, const SHIFT: usize, const L: usize>(
     sections: &SectionArray<f64, L>,
 ) -> QuantizeResult<Repr, SHIFT, L>
@@ -1420,6 +1559,19 @@ where
 /// degree below denominator degree) become pure delays in their section.
 /// `L` must be `max(1, ceil((D - 1) / 2))` so a constant (`D = 1`) still
 /// has one section to hold the overall gain.
+///
+/// # Generic Arguments
+/// * `T` - scalar type, a [`Float`].
+/// * `N` - numerator coefficient count.
+/// * `D` - denominator coefficient count.
+/// * `L` - section count.
+///
+/// # Arguments
+/// * `tf` - discrete transfer function.
+///
+/// # Returns
+/// * `Ok(sections)` - `L` section coefficient sets, first section first.
+/// * `Err` - see [Errors](#errors).
 ///
 /// # Errors
 /// - [`ClassicalError::NotDiscrete`]: `tf` is continuous.

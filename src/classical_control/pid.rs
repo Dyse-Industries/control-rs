@@ -348,9 +348,29 @@ pub struct Pid<T> {
 impl<T: Float + Copy> Pid<T> {
     /// Builds a controller with zero state.
     ///
+    /// # Arguments
+    /// * `params` - gains, filter, sample period, limits and anti-windup mode.
+    ///
+    /// # Returns
+    /// * `Ok(controller)` - a controller with zero state.
+    /// * `Err` - see [Errors](#errors).
+    ///
     /// # Errors
     /// [`ClassicalError::InvalidParameter`] when `u_min > u_max`,
     /// `h <= 0`, `T_f < 0` or a back-calculation `T_t <= 0`.
+    ///
+    /// # Example
+    /// ```
+    /// use control_rs::classical_control::{AntiWindup, Pid, PidParams};
+    ///
+    /// let mut c = Pid::new(PidParams {
+    ///     kp: 2.0, ki: 0.0, kd: 0.0, tf: 0.0, h: 0.01,
+    ///     u_min: -1.0, u_max: 1.0, anti_windup: AntiWindup::Clamping,
+    /// })?;
+    /// assert_eq!(c.step(0.25, 0.0), 0.5);
+    /// assert_eq!(c.step(10.0, 0.0), 1.0);
+    /// # Ok::<(), control_rs::classical_control::ClassicalError>(())
+    /// ```
     pub fn new(params: PidParams<T>) -> Result<Self, ClassicalError> {
         let tt_ok = match params.anti_windup {
             AntiWindup::Clamping => true,
@@ -386,6 +406,13 @@ impl<T: Float + Copy> Pid<T> {
     ///
     /// `u = min(max(K_p e + I + K_d delta, u_min), u_max)` with
     /// `e = r - y`; the output is computed before the integrator update.
+    ///
+    /// # Arguments
+    /// * `r` - setpoint.
+    /// * `y` - measurement.
+    ///
+    /// # Returns
+    /// * The saturated control output `u` in `[u_min, u_max]`.
     #[inline]
     pub fn step(&mut self, r: T, y: T) -> T {
         let params = &self.params;
@@ -427,6 +454,11 @@ impl<T: Float + Copy> Pid<T> {
     /// Changes the gains between samples, correcting the integrator so the
     /// unsaturated output recomputed from the last sample is unchanged
     /// (FR-13): `I <- I + (K_p - K_p') e_k + (K_d - K_d') delta_k`.
+    ///
+    /// # Arguments
+    /// * `kp` - new proportional gain.
+    /// * `ki` - new integral gain.
+    /// * `kd` - new derivative gain.
     pub fn set_gains(&mut self, kp: T, ki: T, kd: T) {
         let dp = self
             .params
@@ -447,6 +479,14 @@ impl<T: Float + Copy> Pid<T> {
 
     /// Continuous-time model of the unsaturated controller: the parallel
     /// form of [`pid`] with derivative filter `T_f` (FR-14).
+    ///
+    /// # Generic Arguments
+    /// * `N` - numerator coefficient capacity.
+    /// * `D` - denominator coefficient capacity.
+    ///
+    /// # Returns
+    /// * `Ok(tf)` - the continuous model in capacities `(N, D)`.
+    /// * `Err` - see [Errors](#errors).
     ///
     /// # Errors
     /// [`ClassicalError::Improper`] when `T_f = 0` with a nonzero

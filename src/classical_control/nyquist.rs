@@ -78,7 +78,10 @@ impl<T: Float + Copy> Walker<T> {
         let sa = Complex::new(a.re.saturating_add(&T::ONE), a.im);
         let sb = Complex::new(b.re.saturating_add(&T::ONE), b.im);
         let (ma, mb) = (a.magnitude(), b.magnitude());
-        let scale = if ma > mb { ma } else { mb };
+        let scale = match ma.partial_cmp(&mb) {
+            Some(core::cmp::Ordering::Greater) => ma,
+            _ => mb,
+        };
         clear_of_origin(sa, sb, scale, self.tol)?;
         self.winding = self
             .winding
@@ -106,6 +109,22 @@ impl<T: Float + Copy> Walker<T> {
 /// `jw + sqrt(r^2 - (w - Im p)^2)`. The routine
 /// reports the count and `P`; it does not infer closed-loop stability.
 ///
+/// # Generic Arguments
+/// * `T` - scalar type, a [`Float`].
+/// * `N` - numerator coefficient count.
+/// * `D` - denominator coefficient count.
+/// * `M` - contour sample count.
+///
+/// # Arguments
+/// * `sys` - continuous open-loop transfer function `L`.
+/// * `omega_max` - contour radius `w_max`, positive.
+/// * `indent_radius` - indentation radius `r`, positive.
+/// * `contour` - output buffer for `L(s_k)`.
+///
+/// # Returns
+/// * `Ok(count)` - [`NyquistCount`] with `N` and `P`.
+/// * `Err` - see [Errors](#errors).
+///
 /// # Errors
 /// - [`ClassicalError::NotContinuous`]: `sys` is discrete.
 /// - [`ClassicalError::InvalidParameter`]: `w_max <= 0`, `r <= 0`
@@ -117,6 +136,20 @@ impl<T: Float + Copy> Walker<T> {
 /// - [`ClassicalError::ContourThroughCriticalPoint`]: a sample satisfies
 ///   `|1 + L| <= sqrt(eps) (1 + |L|)`, or `L` is non-finite (an open-loop
 ///   pole lies on the indented contour).
+///
+/// # Example
+/// ```
+/// use control_rs::classical_control::nyquist_encirclements;
+/// use control_rs::math::complex_num::Complex;
+/// use control_rs::transfer_function::ArrayTransferFunction;
+///
+/// let l = ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [1.0, 1.0]);
+/// let mut contour = [Complex::new(0.0, 0.0); 33];
+/// let count = nyquist_encirclements(&l, 100.0, 0.1, &mut contour)?;
+/// assert_eq!(count.encirclements, 0);
+/// assert_eq!(count.open_loop_rhp, 0);
+/// # Ok::<(), control_rs::classical_control::ClassicalError>(())
+/// ```
 pub fn nyquist_encirclements<
     T: Float + Copy,
     const N: usize,
@@ -171,9 +204,14 @@ where
         // grid spacing. They feed the winding count only.
         if let Some(lo) = prev_omega {
             let mut cur = lo;
-            while let Some(w) =
-                next_arc_point(axis_poles, indent_radius, cur, omega)
-            {
+            // Each pole contributes `ARC + 1` arc points, which bounds the
+            // number of arc points in a gap.
+            for _ in axis_poles.iter().flat_map(|_| 0..=ARC) {
+                let Some(w) =
+                    next_arc_point(axis_poles, indent_radius, cur, omega)
+                else {
+                    break;
+                };
                 walker.push(sys.evaluate_complex(indent(
                     w,
                     axis_poles,
@@ -553,5 +591,16 @@ mod tests {
             w.push(Complex::new(-1.0 + 1e-4, 1.0)),
             Err(ClassicalError::ContourThroughCriticalPoint)
         );
+    }
+
+    #[test]
+    fn arc_point_is_strictly_inside_and_minimal() {
+        let pole = |re, im| Complex::new(re, im);
+        let poles = [pole(0.0, 5.0), pole(0.0, 0.0)];
+        // Arc ends at -1 and 1 for the pole at 0 are excluded as bounds.
+        assert_eq!(next_arc_point(&poles, 1.0, 1.0, 2.0), None);
+        assert_eq!(next_arc_point(&poles, 1.0, -2.0, -1.0), None);
+        // The minimum over all poles, not the first found.
+        assert_eq!(next_arc_point(&poles, 1.0, -2.0, 9.0), Some(-1.0));
     }
 }

@@ -23,6 +23,21 @@ pub type LocusResult<T, const ORDER: usize, const K: usize> =
 /// `ORDER` is the denominator degree `D - 1` and `N <= D` (proper
 /// open loop). The cost is `K` root solves.
 ///
+/// # Generic Arguments
+/// * `T` - scalar type, a [`Float`].
+/// * `N` - numerator coefficient count.
+/// * `D` - denominator coefficient count.
+/// * `ORDER` - closed-loop order, `D - 1`.
+/// * `K` - number of gains.
+///
+/// # Arguments
+/// * `sys` - open-loop transfer function `L = N(s) / D(s)`.
+/// * `gains` - gain set `k_i`.
+///
+/// # Returns
+/// * `Ok(rows)` - `K` rows of `ORDER` unordered roots, one row per gain.
+/// * `Err` - see [Errors](#errors).
+///
 /// # Errors
 /// [`ClassicalError::Root`] when a characteristic polynomial has a zero
 /// leading coefficient or root finding fails.

@@ -917,3 +917,5 @@ Uno
 Seeed
 Hurwitz
 Hadamard
+kd
+kp

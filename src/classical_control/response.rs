@@ -64,6 +64,19 @@ impl<T: Float + Copy> PhaseUnwrap<T> {
 /// is one numerator and one denominator Horner evaluation per frequency
 /// (NFR-3).
 ///
+/// # Generic Arguments
+/// * `T` - scalar type, a [`Float`].
+/// * `N` - numerator coefficient count.
+/// * `D` - denominator coefficient count.
+/// * `M` - number of frequencies.
+///
+/// # Arguments
+/// * `sys` - transfer function; continuous or discrete.
+/// * `omegas` - angular frequencies, in sweep order.
+///
+/// # Returns
+/// * [`Response`] - one [`ResponsePoint`] per frequency. The function is infallible.
+///
 /// # Example
 /// ```
 /// use control_rs::classical_control::frequency_response;
