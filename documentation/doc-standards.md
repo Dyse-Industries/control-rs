@@ -6,7 +6,8 @@ Rust native control systems toolbox intended for safety-critical applications.
 §1 to §5 govern rustdoc and ETS documentation in source. §6 governs
 Architecture Decision Records (ADRs), the record of decisions at the
 workspace, crate or project level. §7 governs design documents. The
-process that produces an ADR is in [`CONTRIBUTING.md`](../CONTRIBUTING.md); the design-document skeleton is
+process that produces an ADR is in [`CONTRIBUTING.md`](../CONTRIBUTING.md); the
+design-document skeleton is
 [`design-template.md`](design-template.md) and its rules are §7.
 
 # 1. General Etiquette
@@ -17,7 +18,8 @@ documentation must adhere to the following rules:
 * **Module-level Documentation**: Module-level documentation must be written
   using inner doc comments (`//!` or `/*!`) placed at the top of the file.
   Do not use outer doc comments (`///` or `/**`) placed directly above module
-  declarations (for example, `pub mod my_module;`). Placing module-level docs at the
+  declarations (for example, `pub mod my_module;`). Placing module-level docs at
+  the
   top of the file keeps the module definition clean and ensures the rustdoc
   output is correctly associated with the module content.
 * **Language, Tone and Tense**: Write in clear, concise and professional
@@ -221,8 +223,8 @@ pub mod teensy_pid_suite {
 # 5. Examples and Testing
 
 * All examples must be runnable via cargo test.
-* Examples should use the ? operator for error handling and avoid unwrap(),
-  expect() or panic!() unless demonstrating
+* Examples should use the ? operator for error handling and avoid unwrap (),
+  expect () or panic!() unless demonstrating
   a panic condition.
 
 # 6. Architecture Decision Records
@@ -271,12 +273,12 @@ carries these sections in this order:
 
 ## 6.3. Status and Lifecycle
 
-| Status       | Badge markdown                                                                    | Set by                                 |
-|:-------------|:----------------------------------------------------------------------------------|:---------------------------------------|
-| `Proposed`   | `![Status Badge](https://img.shields.io/badge/ADR%20Status-Proposed-orange)`       | Author, on creation                    |
-| `Accepted`   | `![Status Badge](https://img.shields.io/badge/ADR%20Status-Accepted-brightgreen)`  | Maintainer, after review               |
-| `Deprecated` | `![Status Badge](https://img.shields.io/badge/ADR%20Status-Deprecated-lightgrey)`  | Maintainer, when the decision no longer applies |
-| `Superseded` | `![Status Badge](https://img.shields.io/badge/ADR%20Status-Superseded-red)`        | Maintainer, when a newer ADR replaces it |
+| Status       | Badge markdown                                                                    | Set by                                          |
+|:-------------|:----------------------------------------------------------------------------------|:------------------------------------------------|
+| `Proposed`   | `![Status Badge](https://img.shields.io/badge/ADR%20Status-Proposed-orange)`      | Author, on creation                             |
+| `Accepted`   | `![Status Badge](https://img.shields.io/badge/ADR%20Status-Accepted-brightgreen)` | Maintainer, after review                        |
+| `Deprecated` | `![Status Badge](https://img.shields.io/badge/ADR%20Status-Deprecated-lightgrey)` | Maintainer, when the decision no longer applies |
+| `Superseded` | `![Status Badge](https://img.shields.io/badge/ADR%20Status-Superseded-red)`       | Maintainer, when a newer ADR replaces it        |
 
 * A `Proposed` ADR is edited in place through review.
 * An `Accepted` ADR is immutable apart from its status badge and one line
@@ -298,115 +300,8 @@ carries these sections in this order:
   finds every citing document.
 * An ADR records a decision; it asserts nothing. Any requirement the decision
   creates is written into the design document it constrains, where the
-  `trace-reqs` gate checks it has a verification condition
-  ([`requirement-traceability-design.md`](vv/requirement-traceability-design.md)).
-
-# 7. Design Documents
-
-The skeleton is [`design-template.md`](design-template.md). It carries no
-guidance, so what it contains is only structure. The rules below govern the
-content and are for authors and reviewers; they are not part of the
-skeleton. The process is in [`CONTRIBUTING.md`](../CONTRIBUTING.md) §3.1.
-
-## 7.1. Header and sections
-
-Set the date badge to today (`September_5,_2026`, day not zero-padded) and
-the author badge to a GitHub handle. The status stays `Draft`; only a
-maintainer sets `Reviewed` or `Approved` (`CONTRIBUTING.md` §4). Add the
-document to its project table in `documentation/README.md`.
-
-Each section has one job:
-
-- **§1** names 2 to 5 jobs a user can succeed or fail at. Every
-  requirement in §2 traces to a scenario or an inherited constraint; one
-  that traces to neither is architecture and belongs in §4.
-- **§4** describes the implementation. Keep Error Handling and Dependencies
-  as the last two subsections, omitting Error Handling when the component
-  cannot fail and Dependencies when no third-party crate is added. Base each
-  dependency row on `cargo tree` (`CONTRIBUTING.md` §5).
-- **§5** gives one row per rejected option, stating the reason in terms of
-  §2 where possible ("violates C-2").
-- **§6.3** names requirements only review can check and configurations the
-  plan does not exercise. Planned work belongs in §9.
-- **§7** explains how the design meets each bound. A bound that must hold is
-  an NFR or C in §2. `no_std` and numeric-type support are decided here, per
-  module.
-- **§8** names the requirement or section each question affects. A question
-  that blocks implementation is resolved before approval.
-- **§9** has 3 to 5 phases, not a task list. Every requirement lands in at
-  least one phase. Effort is in engineer-days and status is `Planned`,
-  `In progress` or `Complete`.
-- **§10** has one row per revision, oldest first. Bump the major number for
-  a change that needs re-approval and the minor number otherwise. Name every
-  requirement ID the revision adds, changes or withdraws.
-- **References** are IEEE style, numbered in order of first citation, and
-  published works only.
-
-## 7.2. Requirements
-
-The requirement tracer (`vv/requirement-traceability-design.md` §4.1) parses
-§2, so the shape of each bullet matters:
-
-- One claim per bullet, written exactly as `- **FR-n — Name**: Text` with an
-  em dash. No nested bullets, no suffixed IDs (`NFR-1a`) and no ID families
-  other than `FR`, `NFR` and `C`.
-- Name the requirement after the need, not the solution.
-- IDs are permanent. Append new IDs and never renumber or reuse one. To
-  retire an ID, keep the bullet and replace its text:
-  `- **FR-4 — Strided reinterpretation (withdrawn)**: Withdrawn in revision 1.3; replaced by FR-9.`
-- An inherited bound is one `C-n` that points at its owner:
-  `- **C-1 — Inherited numeric types**: Conforms to num-types-design.md C-1.`
-- Cite another document's requirement as `<slug>-design.md` FR-n, in code
-  format.
-- A bound is either an NFR or a C, never both.
-
-## 7.3. Verification
-
-Decompose each requirement into verification conditions (`VC-x.y`), one row
-each. `Method` is `libtest`, `kani`, `pytest`, `gtest`, `analysis`,
-`inspection` or `review`. A condition with an automated method lists in
-`Target` the fully qualified test or harness that discharges it, as the
-result log prints it (`crate::module::tests::test_name`,
-`crate::module::proofs::harness_name`, `path/to/test_file.py::test_name` or
-`TestSuite.TestCase`). Other methods put `—` in `Target`. Conditions may
-share a target, and one condition may name more than one target, each in its own
-code span. `Criterion` is one declarative sentence with the exact pass
-bound, and names no other condition ID or method.
-
-For `kani` conditions the author discharges four obligations:
-
-- **O-1**: the Criterion decision is asserted as
-  `assert!(decision == f(c_1, ..., c_n))` or encoded in `#[kani::ensures]`.
-- **O-2**: assumptions (`kani::assume` or `#[kani::requires]`) define the
-  domain, and review compares them against the requirements.
-- **O-3**: `kani::cover!(c_i)` and `kani::cover!(!c_i)` witness each
-  predicate value and independence pair, so the proof is not vacuous.
-- **O-4**: the loop unwinding bound and dimension limits are stated, with
-  unwinding assertions enabled.
-
-MC/DC is evaluated over the input premise predicates of a condition. For
-`libtest` the named tests exercise the premise combinations, and for `kani`
-the `cover!` witnesses establish them. The `coverage` gate measures line
-coverage and enforces no threshold, so a reviewer checks the target stated
-in §6.1.
-
-## 7.4. Acceptance
-
-Omit §6.2 when the component makes no quantitative claim. Choose the
-strongest oracle that applies:
-
-1. Closed-form or manufactured solution.
-2. Independent reference implementation (`cross-check`).
-3. Metamorphic relation between input and output changes.
-4. Invariant or algebraic property over generated inputs.
-5. Recorded golden value, with the tool, version and inputs that produced it.
-
-The measure is exact equality for integer, fixed-point and structural
-results, and absolute, relative, ULP or scaled-residual error for floating
-point. Justify each bound from conditioning or a cited error analysis, never
-from what the current implementation achieves. A `cross-check` row cites its
-tolerance entry (`<case>/<signal>` in the suite's tolerance table) instead of
-restating the number, and a `bench` row states its budget.
+  `trace-reqs` gate checks it has a verification condition ([
+  `requirement-traceability-design.md`](vv/requirement-traceability-design.md)).
 
 # Resources
 
