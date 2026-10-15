@@ -92,21 +92,14 @@ implementation. Vale checks prose under `documentation/` and `src/` in CI.
 
 ### 3.2 Architecture Decision Record
 
-When a workspace, crate or project-level decision arises (§1), during design
-or at any other time:
-
-1. Take the next unused number from
-   [`documentation/adr/README.md`](documentation/adr/README.md). The file is
-   `documentation/adr/NNNN-<slug>.md`.
-2. Copy [`documentation/adr-template.md`](documentation/adr-template.md) and
-   fill every section. Follow
-   [`documentation/documentation-standards.md`](documentation/documentation-standards.md) §6:
-   one decision per record, one page.
-3. Set the status badge to `Proposed`, the date badge to today and the
-   author badge to your GitHub handle. Add the record's row to the index.
-4. Open a PR containing the ADR alone, or together with the design doc
-   revisions that cite it. An ADR is `Accepted` before any implementation
-   that depends on it merges.
+An ADR is written when a workspace, crate or project-level decision arises
+(§1), during design or at any other time. It is
+`documentation/adr/NNNN-<slug>.md`, numbered in order, and listed in the
+[ADR index](documentation/adr/README.md). The tracer reads its ID and status
+lines ([Configuration](documentation/vv/requirement-traceability-design.md#configuration)).
+Open a PR containing the ADR alone, or together with the design doc
+revisions that cite it. An ADR is `Accepted` before any implementation that
+depends on it merges.
 
 Design docs cite the ADR by number.
 
@@ -119,11 +112,9 @@ Review checks that requirements are testable, that §4 satisfies §2, that
 the References support the cited claims. `Reviewed` and `Approved` are
 always set by a maintainer. Tooling and automation never set them.
 
-An ADR carries its own status badge (`Proposed`, `Accepted`, `Deprecated`,
-`Superseded`; `documentation-standards.md` §6.3). Review checks that the decision is at
-the workspace, crate or project level, that each rejected option is a real
-alternative and that every follow-up names its owner. A maintainer sets
-`Accepted`.
+Review of an ADR checks that the decision is at the workspace, crate or
+project level, that each rejected option is a real alternative and that
+every follow-up names its owner. A maintainer sets `Accepted`.
 
 ---
 
