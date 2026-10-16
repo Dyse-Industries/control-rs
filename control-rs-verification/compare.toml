@@ -110,3 +110,21 @@ name = "tflite"
 type = "python_script"
 script = "python3/tensor_tflite_oracle.py"
 output_file = "../target/verification/tensor.tflite.h5"
+
+[[suite]]
+name = "classical_control"
+true_oracle = "scipy"
+tolerance_table = "tolerances/classical-control.toml"
+
+[[suite.variants]]
+name = "rust"
+type = "rust_bin"
+manifest_path = "Cargo.toml"
+bin = "validate"
+output_file = "../target/verification/classical_control.rust.h5"
+
+[[suite.variants]]
+name = "scipy"
+type = "python_script"
+script = "python3/classical_control_oracle.py"
+output_file = "../target/verification/classical_control.scipy.h5"

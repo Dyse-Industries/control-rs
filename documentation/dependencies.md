@@ -19,6 +19,7 @@ the [registry](#registry) says which area needs each tool.
 # Rust toolchain, components and targets
 rustup toolchain install stable --component rustfmt,clippy,llvm-tools
 rustup toolchain install 1.89.0
+rustup toolchain install nightly --component miri
 rustup target add thumbv7em-none-eabihf thumbv7em-none-eabi \
     riscv32imac-unknown-none-elf riscv64gc-unknown-none-elf
 
@@ -26,6 +27,8 @@ rustup target add thumbv7em-none-eabihf thumbv7em-none-eabi \
 cargo install cargo-binstall
 cargo binstall -y cargo-deny cargo-geiger cargo-semver-checks \
     cargo-tarpaulin cargo-mutants cargo-binutils
+cargo install --locked kani-verifier --version 0.68.0
+cargo kani setup
 
 # System packages
 sudo apt-get update
@@ -48,6 +51,7 @@ pip install -r control-rs-verification/python3/requirements.txt
 # Rust toolchain, components and targets
 rustup toolchain install stable --component rustfmt,clippy,llvm-tools
 rustup toolchain install 1.89.0
+rustup toolchain install nightly --component miri
 rustup target add thumbv7em-none-eabihf thumbv7em-none-eabi \
     riscv32imac-unknown-none-elf riscv64gc-unknown-none-elf
 
@@ -55,6 +59,8 @@ rustup target add thumbv7em-none-eabihf thumbv7em-none-eabi \
 cargo install cargo-binstall
 cargo binstall -y cargo-deny cargo-geiger cargo-semver-checks \
     cargo-tarpaulin cargo-mutants cargo-binutils
+cargo install --locked kani-verifier --version 0.68.0
+cargo kani setup
 
 # System packages
 brew install qemu llvm teensy_loader_cli python@3.12
@@ -90,6 +96,7 @@ cargo ci -v         # runs every default gate; a gate whose tool is missing fail
 |:-------------------------------------------------------------|:----------------------------------------------------|:----------------------------------------------------------------------------------------------|:--------------------------------------|
 | Rust                                                         | `1.89.0` minimum; CI also tests `stable` and `beta` | Everything                                                                                    | `rustup toolchain install stable`     |
 | `rustfmt`, `clippy`                                          | toolchain                                           | `fmt`, `clippy` gates                                                                         | `rustup component add rustfmt clippy` |
+| `nightly` toolchain with `miri`                              | `nightly`                                           | `miri` gate group, `kani` gate                                                                | `rustup toolchain install nightly --component miri` |
 | `llvm-tools`                                                 | toolchain                                           | `rust-objcopy` for the Teensy runner, `cargo size` and `cargo objdump` in `control-rs-macros` | `rustup component add llvm-tools`     |
 | `thumbv7em-none-eabihf`, `thumbv7em-none-eabi`               | toolchain                                           | `examples/qemu`, `examples/teensy4`, `examples/subprograms/thumbv7em`, ETS                    | `rustup target add ...`               |
 | `riscv32imac-unknown-none-elf`, `riscv64gc-unknown-none-elf` | toolchain                                           | `examples/qemu`, `examples/subprograms/riscv32imac`, ETS                                      | `rustup target add ...`               |
@@ -105,6 +112,7 @@ cargo ci -v         # runs every default gate; a gate whose tool is missing fail
 | `cargo-tarpaulin`     | latest  | `coverage` gate, `cargo coverage`              | `cargo binstall -y cargo-tarpaulin`     |
 | `cargo-mutants`       | latest  | `mutants` and `mutants-*` gates                | `cargo binstall -y cargo-mutants`       |
 | `cargo-binutils`      | latest  | `rust-objcopy`, `cargo size`, `cargo objdump`  | `cargo binstall -y cargo-binutils`      |
+| `kani-verifier`       | `0.68.0` | `kani` gate                                   | `cargo install --locked kani-verifier --version 0.68.0 && cargo kani setup` |
 
 ### System packages
 
@@ -136,7 +144,7 @@ Rust stand-ins.
 - A change that adds a gate to `gate.toml`, an installation step to
   `.github/workflows/CI.yml` or a runner to an example's `.cargo/config.toml`
   adds or updates a row here in the same pull request.
-- Pinned versions match `.github/workflows/CI.yml`. `vale` is the only tool
-  CI pins; the rest install the latest release.
+- Pinned versions match `.github/workflows/CI.yml`. `vale` and
+  `kani-verifier` are the only tools CI pins; the rest install the latest release.
 - Project README keep setup steps specific to their crate or board and link
   here for tools.

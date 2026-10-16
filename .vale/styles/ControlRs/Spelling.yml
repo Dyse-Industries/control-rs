@@ -1,0 +1,10 @@
+extends: spelling
+message: "Did you really mean '%s'?"
+level: error
+ignore:
+  - config/vocabularies/ControlRs/accept.txt
+# Subscripted math symbols and snake_case identifiers (K_p, T_s, y_init)
+# are names, not prose. Filters apply in every scope, including source
+# comments, where TokenIgnores have no effect.
+filters:
+  - '[A-Za-z0-9]+_[A-Za-z0-9_]+'

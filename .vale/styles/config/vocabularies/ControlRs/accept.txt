@@ -34,6 +34,7 @@ Bokeh
 Boldo
 Brunovsky
 Butterworth
+Chao
 CLIs
 CMake
 COBS's
@@ -114,6 +115,8 @@ Fortran
 Frias
 Frison
 Frobenius
+Gehrd
+Gesvd
 GPUs
 Gaithersburg
 Garlati
@@ -153,9 +156,11 @@ Hoeven
 Householder
 Hpmv
 Hpr
+Hseqr
 Hwang
 ICs
 IDEs
+idsp
 ISRs
 Igual
 Implementability
@@ -221,6 +226,7 @@ Mudge
 Mul
 Mullis
 Multilinear
+multivariable
 Munns
 NEON
 Naylor
@@ -236,10 +242,13 @@ O'Reilly
 ODE
 Ogata
 Oppenheim
+Orghr
 Ormqr
 Ostrouchov
 PID
 PNGs
+preprint
+prewarping
 PRs
 Pandoc
 Parameterization
@@ -268,6 +277,7 @@ Qx
 Rajan
 Rapita
 Ratatui
+rebases
 Redox
 Reimplementing
 Reitermarkus
@@ -278,12 +288,16 @@ Retarget
 Riccati
 Rierson
 Ronacher
+Routh
 Runciman
 Runge
 Rustdoc
+Seeed
+setpoint
 SIMD
 SLICOT's
 SSGs
+STMicroelectronics
 SVD
 Schafer
 Scherer
@@ -320,6 +334,8 @@ Toolchain
 Tortorella
 Tpmv
 Tpsv
+Trsen
+Trsyl
 Tukey
 Tustin
 Typst
@@ -327,8 +343,11 @@ UKF
 UMLs
 Unary
 Unconjugated
+underdamped
+unfused
 Unmqr
 Unnormalized
+Uno
 Unversioned
 Upscaling
 Valgrind
@@ -345,8 +364,10 @@ Volterra
 Watchpoint
 Weiser
 Whalen
+Wittenmark
 Wray
 Wycheproof
+xorshift
 YAML
 Yeo
 Yiu
@@ -755,6 +776,7 @@ serde
 serde_json
 serializer
 serializer's
+significand
 signoff
 signum
 size_of
@@ -893,3 +915,5 @@ Trsyl
 Gesvd
 Uno
 Seeed
+Hurwitz
+Hadamard

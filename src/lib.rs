@@ -17,8 +17,11 @@
 //!   interconnection and discretization.
 //! - [`state_space`]: continuous and discrete LTI models, simulation,
 //!   interconnection and discretization.
-//! - [`classical_tools`], [`modern_tools`], [`robust_tools`],
-//!   [`nonlinear_tools`], [`integrators`]: reserved for the control toolboxes.
+//! - [`classical_control`]: SISO analysis (root locus, Routh-Hurwitz,
+//!   frequency response, margins, step metrics), compensators and firmware
+//!   realizations (direct forms, second-order sections, discrete PID).
+//! - [`modern_tools`], [`robust_tools`], [`nonlinear_tools`],
+//!   [`integrators`]: reserved for the control toolboxes.
 //!
 //! # Usage
 //!
@@ -52,7 +55,7 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 #![recursion_limit = "256"]
 
-pub mod classical_tools;
+pub mod classical_control;
 pub mod integrators;
 pub mod math;
 pub mod matrix;

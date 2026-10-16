@@ -9,7 +9,10 @@ pub mod fixed_num_test_suite {
             Fixed, OneRepresentable, Q7, Q15, Q31, Q63, TwoRepresentable, UQ7,
             UQ15, UQ31, UQ63,
         },
-        num_traits::{Conjugate, One, SaturatingInteger, Scalar, Signed, Zero},
+        num_traits::{
+            Conjugate, MulAcc, One, SaturatingInteger, Scalar, Signed, Zero,
+        },
+        num_types::{Const, Dim, DimMax, U16},
         ops::{
             SaturatingAdd, SaturatingDiv, SaturatingMul, SaturatingSub, TryAdd,
             TryDiv, TryMul, TryNeg, TrySub,
@@ -456,6 +459,105 @@ pub mod fixed_num_test_suite {
         assert!((uq64.to_num() - 0.25).abs() < 1e-15);
 
         assert!(Q62::from_num(1.0).is_one());
+    }
+
+    /// Rounds `x / 2^shift` with ties to even (independent `i128` oracle).
+    fn oracle_round(x: i128, shift: u32) -> i128 {
+        let den = 1i128.checked_shl(shift).unwrap_or(1);
+        let q = x.div_euclid(den);
+        let twice_rem = x.rem_euclid(den).saturating_mul(2);
+        if twice_rem > den || (twice_rem == den && q.rem_euclid(2) == 1) {
+            q.saturating_add(1)
+        } else {
+            q
+        }
+    }
+
+    /// Next value of a 64-bit xorshift generator.
+    const fn xorshift(state: &mut u64) -> u64 {
+        *state ^= *state << 13;
+        *state ^= *state >> 7;
+        *state ^= *state << 17;
+        *state
+    }
+
+    /// Rounds `k * 0.5` through a `Fixed<i8, 1>` `MulAcc` from a zero accumulator.
+    fn mac_i8_q1(k: i8) -> i8 {
+        let half = Fixed::<i8, 1>::from_bits(1);
+        let zero = Fixed::<i8, 1>::from_bits(0);
+        Fixed::<i8, 1>::from_acc(Fixed::<i8, 1>::mac(
+            zero.to_acc(),
+            Fixed::<i8, 1>::from_bits(k),
+            half,
+        ))
+        .to_bits()
+    }
+
+    /// Checks one five-term chain of `Fixed<i16, S>` against the oracle.
+    fn check_i16_chain<const S: usize>(raws: [i16; 11])
+    where
+        Const<S>: Dim + DimMax<U16, Output = U16>,
+    {
+        let mut it = raws.into_iter();
+        let c = it.next().unwrap_or(0);
+        let mut acc = Fixed::<i16, S>::from_bits(c).to_acc();
+        let shift = u32::try_from(S).unwrap_or(0);
+        let mut exact = i128::from(c) << shift;
+        while let (Some(a), Some(b)) = (it.next(), it.next()) {
+            acc = Fixed::<i16, S>::mac(
+                acc,
+                Fixed::from_bits(a),
+                Fixed::from_bits(b),
+            );
+            exact = exact
+                .saturating_add(i128::from(a).saturating_mul(i128::from(b)));
+        }
+        let expected = Ord::clamp(
+            oracle_round(exact, shift),
+            i128::from(i16::MIN),
+            i128::from(i16::MAX),
+        );
+        let got = Fixed::<i16, S>::from_acc(acc).to_bits();
+        assert_eq!(i128::from(got), expected);
+    }
+
+    /// Draws eleven raw `i16` values from `state`.
+    fn draw_raws(state: &mut u64) -> [i16; 11] {
+        let mut raws = [0i16; 11];
+        for r in &mut raws {
+            let [b0, b1, ..] = xorshift(state).to_le_bytes();
+            *r = i16::from_le_bytes([b0, b1]);
+        }
+        raws
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies five-term `MulAcc` chains round once with ties to even and
+    /// saturate only at the output (`fixed-num-design.md` FR-8, VC-14.1).
+    fn test_mac_chain_single_rounding() {
+        let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+        for _ in 0..(if cfg!(miri) { 200 } else { 2_000 }) {
+            let raws = draw_raws(&mut state);
+            check_i16_chain::<0>(raws);
+            check_i16_chain::<8>(raws);
+            check_i16_chain::<14>(raws);
+        }
+        // Ties at SHIFT 1: raw k * 1 / 2 rounds to even.
+        assert_eq!(mac_i8_q1(1), 0);
+        assert_eq!(mac_i8_q1(3), 2);
+        assert_eq!(mac_i8_q1(5), 2);
+        assert_eq!(mac_i8_q1(7), 4);
+        assert_eq!(mac_i8_q1(-1), 0);
+        assert_eq!(mac_i8_q1(-7), -4);
+        // Intermediate sum leaves Q7 range; final sum returns inside it.
+        let big = Fixed::<i8, 7>::from_bits(i8::MAX);
+        let neg = Fixed::<i8, 7>::from_bits(i8::MIN);
+        let acc = Fixed::<i8, 7>::mac(
+            Fixed::<i8, 7>::mac(big.to_acc(), big, big),
+            neg,
+            big,
+        );
+        assert_eq!(Fixed::<i8, 7>::from_acc(acc).to_bits(), 126);
     }
 }
 

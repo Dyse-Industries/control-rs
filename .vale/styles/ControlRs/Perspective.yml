@@ -1,6 +1,6 @@
 extends: existence
 message: "Avoid first-person perspective ('%s'). Use objective third-person for concepts or second-person imperative for procedural steps."
-link: documentation/doc-standards.md
+link: documentation/documentation-standards.md
 level: error
 ignorecase: false
 tokens:

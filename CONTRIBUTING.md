@@ -20,26 +20,26 @@ local CI workflow are in the
 ```mermaid
 flowchart LR
     R["Research<br/>(prior art)"] --> D["Design doc<br/>Draft"]
-    D --> V["Review<br/>Reviewed"]
-    V --> A["Approval<br/>Approved"]
+    D --> V["Review"]
+    V --> A["Approval<br/>Ready"]
     A --> I["Implementation"]
     I --> Q["Verification<br/>(cargo ci)"]
     Q --> M["Pull request<br/>& merge"]
     I -. "design gap or error" .-> D
-    X["ADR<br/>Accepted"] -. "cited in §5" .-> D
+    X["ADR<br/>Accepted"] -. "cited by number" .-> D
 ```
 
 | Stage          | Output                                     | Exit condition                                    |
 |:---------------|:-------------------------------------------|:--------------------------------------------------|
 | Research       | Sources for the design's References        | Enough prior art to justify the design choices    |
-| Design         | `documentation/<project>/<slug>-design.md` | Doc complete against the template, status `Draft` |
-| Review         | Review comments, revisions                 | Maintainer sets status `Reviewed`                 |
-| Approval       | Approved design doc                        | Maintainer sets status `Approved`                 |
+| Design         | `documentation/<project>/<slug>-design.md` | Doc complete, status `Draft`                      |
+| Review         | Review comments, revisions                 | Review comments resolved                          |
+| Approval       | Design doc ready to implement              | Maintainer sets status `Ready`                    |
 | Implementation | Code, tests, examples, benches             | Code satisfies every requirement in the doc       |
 | Verification   | Passing quality gates                      | `cargo ci` passes locally and in GitHub Actions   |
 | Merge          | Squash-merged PR on `main`                 | Review approval                                   |
 
-Implementation does not start until the design doc is `Approved` and every
+Implementation does not start until the design doc is `Ready` and every
 ADR it cites is `Accepted`. ADRs sit outside this sequence: one is written
 when a workspace-level decision arises (§3.2).
 
@@ -51,15 +51,14 @@ when a workspace-level decision arises (§3.2).
 | Change to a public API, data layout, wire protocol or CI gate  | Revise the owning doc              |
 | New third-party dependency                                     | Revise the owning doc              |
 | Workspace, crate or project-level decision                     | ADR (§3.2); revise each citing doc |
-| Change that contradicts an `Approved` doc                      | Revise the doc first               |
+| Change that contradicts a `Ready` or `Shipped` doc             | Revise the doc first               |
 | Bug fix, test addition, refactor within an approved design     | None                               |
 | Typos, formatting, comments                                    | None                               |
 
 A decision is workspace-level when it binds more than one crate or sets a
 rule for the whole workspace: a dependency or toolchain policy, a workspace
 convention, a format shared between crates. A choice inside one crate or
-component belongs in that component's design doc: §5 Alternatives for the
-tradeoff and §10 Revision History for the change.
+component belongs in that component's design doc.
 
 ---
 
@@ -80,93 +79,49 @@ design prose.
 
 ### 3.1 Design document
 
-1. Pick the project directory under `documentation/` (`math`,
-   `numerical-models`, `ets`, `ets-host`, `ci`, `tui`, `macros`, `vv`, ...)
-   and a short slug. The file is `documentation/<project>/<slug>-design.md`.
-2. Copy [`documentation/design-template.md`](documentation/design-template.md)
-   and fill every section. Omit a subsection only when it does not apply
-   (for example, ETS verification for host-only code).
-3. Set the status badge to `Draft`, the date badge to today and the author
-   badge to your GitHub handle.
-4. Open a PR containing the design doc. Design docs normally merge ahead
-   of, and separately from, their implementation.
-
-**What the sections must carry.**
-
-- **§2 Requirements**: numbered `FR-n`, `NFR-n` and `C-n`, independent per
-  document. Each requirement states an observable behavior, a quality bound
-  or a constraint. Implementation detail belongs in §4; test rules belong
-  in §6.
-- **§4 Architecture**: types, traits, memory layout and algorithms, broad
-  to specific. Diagrams in Mermaid.
-- **§5 Alternatives**: rejected options framed as technical tradeoffs, not
-  as a history of drafts. A choice that an ADR already records is cited by
-  ADR number, not argued again.
-- **§6 Verification & Validation**: the plan (`test`, `bench`, `example`,
-  `cross-check`), quantitative acceptance bounds with their oracle, and
-  the limits of what the plan establishes. This section is the contract
-  the implementation is verified against.
-- **§7 Performance & Resource Considerations**: stack, allocation, timing
-  and `no_std` properties. `no_std` and numeric-type support are decided
-  here, per module.
-- **§9 Development Plan**: 3 to 5 phases, not a task list.
-- **§10 Revision History**: one row per revision.
-
-Write in the present tense, state the current design only and follow
-[`documentation/doc-standards.md`](documentation/doc-standards.md). Refer
-to other sections and documents with `§` references and code-format
-identifiers (`FR-3`, `Storage`, `§4.2`). Vale checks prose under
-`documentation/` and `src/` in CI.
+A design document is `documentation/<project>/<slug>-design.md`, where
+`<project>` is a directory under `documentation/` (`math`,
+`numerical-models`, `ets`, `ets-host`, `ci`, `tui`, `macros`, `vv`, ...)
+and `<slug>` is a short name. Its requirements and verification conditions
+follow the grammar the requirement tracer reads
+([Author Workflow](documentation/vv/requirement-traceability-design.md#author-workflow)).
+The `trace-reqs` gate checks every document listed in
+[`.cargo/trace/trace.toml`](.cargo/trace/trace.toml). Open a PR containing the
+design doc. Design docs normally merge ahead of, and separately from, their
+implementation. Vale checks prose under `documentation/` and `src/` in CI.
 
 ### 3.2 Architecture Decision Record
 
-When a workspace, crate or project-level decision arises (§1), during design
-or at any other time:
+An ADR is written when a workspace, crate or project-level decision arises
+(§1), during design or at any other time. It is
+`documentation/adr/NNNN-<slug>.md`, numbered in order, and listed in the
+[ADR index](documentation/adr/README.md). The tracer reads its ID and status
+lines ([Configuration](documentation/vv/requirement-traceability-design.md#configuration)).
+Open a PR containing the ADR alone, or together with the design doc
+revisions that cite it. An ADR is `Accepted` before any implementation that
+depends on it merges.
 
-1. Take the next unused number from
-   [`documentation/adr/README.md`](documentation/adr/README.md). The file is
-   `documentation/adr/NNNN-<slug>.md`.
-2. Copy [`documentation/adr-template.md`](documentation/adr-template.md) and
-   fill every section. Follow
-   [`documentation/doc-standards.md`](documentation/doc-standards.md) §6:
-   one decision per record, one page.
-3. Set the status badge to `Proposed`, the date badge to today and the
-   author badge to your GitHub handle. Add the record's row to the index.
-4. Open a PR containing the ADR alone, or together with the design doc
-   revisions that cite it. An ADR is `Accepted` before any implementation
-   that depends on it merges.
-
-Design docs cite the ADR by number in §5 Alternatives and in the Revision
-History row that starts following it.
+Design docs cite the ADR by number.
 
 ---
 
 ## 4. Review and approval
 
-Status is shown by the badge below the doc title:
-
-| Status     | Badge markdown                                                              | Set by                               |
-|:-----------|:----------------------------------------------------------------------------|:-------------------------------------|
-| `Draft`    | `![Status Badge](https://img.shields.io/badge/Doc%20Status-Draft-orange)`    | Author, on creation                  |
-| `Reviewed` | `![Status Badge](https://img.shields.io/badge/Doc%20Status-Reviewed-yellow)` | Maintainer, after a passing review   |
-| `Approved` | `![Status Badge](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)` | Maintainer, when ready to implement |
-
 Review checks that requirements are testable, that §4 satisfies §2, that
 §6 verifies every requirement with a concrete oracle and bound, and that
-the References support the cited claims. `Reviewed` and `Approved` are
-always set by a maintainer. Tooling and automation never set them.
+the References support the cited claims. A maintainer sets `Ready` when the
+doc may be implemented, `Shipped` when it is implemented and `Stale` when it
+needs re-review. Tooling and automation never set them.
 
-An ADR carries its own status badge (`Proposed`, `Accepted`, `Deprecated`,
-`Superseded`; `doc-standards.md` §6.3). Review checks that the decision is at
-the workspace, crate or project level, that each rejected option is a real
-alternative and that every follow-up names its owner. A maintainer sets
-`Accepted`.
+Review of an ADR checks that the decision is at the workspace, crate or
+project level, that each rejected option is a real alternative and that
+every follow-up names its owner. A maintainer sets `Accepted`.
 
 ---
 
 ## 5. Implementation
 
-Implement the `Approved` design. Do not choose between alternatives the
+Implement the `Ready` design. Do not choose between alternatives the
 doc leaves open, and do not add capability the doc does not specify.
 
 **When the design is silent or wrong**, stop and revise the doc: fix the
@@ -182,7 +137,7 @@ during implementation becomes an ADR before that code lands.
   `unwrap`, `expect`, `panic!` or `unimplemented!` outside tests
   and examples.
 - Every public item is documented (`missing_docs = "deny"`), following
-  [`documentation/doc-standards.md`](documentation/doc-standards.md),
+  [`documentation/documentation-standards.md`](documentation/documentation-standards.md),
   including `# Errors` and `# Safety` sections where they apply.
 - Minimize dependencies. Before adopting a crate, inspect its real
   dependency tree with `cargo tree` and record the decision in the design
@@ -260,7 +215,7 @@ Contributors may use AI assistants. Assistant instruction files
 (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`) and agent tooling directories are
 local and ignored by git; they encode this same process for automated
 tools. The process does not change: assistants follow the same gates,
-never set `Reviewed`, `Approved` or `Accepted`, and the contributor is
+never set `Ready`, `Shipped`, `Stale` or `Accepted`, and the contributor is
 accountable for every line submitted.
 
 ---

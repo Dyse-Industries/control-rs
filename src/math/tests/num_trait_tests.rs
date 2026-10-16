@@ -4,19 +4,21 @@
 //!
 //! ## Functional Requirement Coverage (`num-traits-design.md`)
 //!
-//! - **FR-1** (granular trait hierarchy: `Zero`/`One`/`AdditiveGroup`/
-//!   `Signed`/`Unsigned`/`Radical`/`Exponential`/`Trig`): per-trait axiom
-//!   and identity checks, plus the `Unsigned`/`Integer`/`SaturatingInteger`
-//!   marker test.
-//! - **FR-2** (functional containers `Integer`/`SaturatingInteger`/`Float`):
-//!   `test_num_trait_integer_axioms`, `test_num_trait_float_axioms` and
-//!   (in `op_tests.rs`) the saturating add/sub/mul suites.
-//! - **FR-3** (unified `Scalar`): `test_num_trait_scalar_properties` and
-//!   `test_num_trait_scalar_markers`; also exercised transitively via
-//!   `Complex<T>: Scalar` in `complex_num_tests.rs`.
+//! - **FR-1** (overflow modes): the wrapping and saturating add, subtract and
+//!   multiply suites in `op_tests.rs`.
+//! - **FR-2** (unsigned ring bound): `test_num_trait_unsigned_integer_markers`.
+//! - **FR-3**, **FR-4** (conjugation, real projection):
+//!   `test_num_trait_conjugate_and_scalar_projections` and
+//!   `test_num_trait_scalar_properties`.
+//! - **FR-5** (implementor partition): `test_num_trait_scalar_markers`.
+//! - **FR-6** (total arithmetic): the saturating suites in `op_tests.rs`.
+//! - **FR-7** (`MulAcc`): `test_mul_acc_float_unfused`,
+//!   `test_mul_acc_integer_exact_chain`, `test_mul_acc_complex_formula`,
+//!   `test_mul_acc_complex_min_imag`,
+//!   `test_mul_acc_complex_fixed_full_scale` and `test_mul_acc_open_trait`.
 //!
 //! `CartesianQuadrant2D`, hyperbolic functions and the custom-`atan2`
-//! fallback tests exercise implementation details of FR-1's `Trig`/`Float`
+//! fallback tests exercise implementation details of the `Trig`/`Float`
 //! traits rather than a separately numbered requirement.
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]
@@ -25,8 +27,8 @@ pub mod num_trait_test_suite {
     use crate::math::CartesianQuadrant2D;
     use crate::math::complex_num::Complex;
     use crate::math::num_traits::{
-        AdditiveGroup, Conjugate, Exponential, Float, Integer, One, Radical,
-        SaturatingInteger, Scalar, Signed, Trig, Unsigned, Zero,
+        AdditiveGroup, Conjugate, Exponential, Float, Integer, MulAcc, One,
+        Radical, SaturatingInteger, Scalar, Signed, Trig, Unsigned, Zero,
     };
     use crate::math::ops::{
         SaturatingAdd, SaturatingDiv, SaturatingMul, SaturatingNeg,
@@ -333,6 +335,23 @@ pub mod num_trait_test_suite {
 
     // --- Test Executables ---
 
+    /// External accelerated type: `mac` rounds once (fused).
+    impl MulAcc for TestFloat {
+        type Acc = Self;
+
+        fn to_acc(self) -> Self {
+            self
+        }
+
+        fn mac(acc: Self, a: Self, b: Self) -> Self {
+            Self(libm::fmaf(a.0, b.0, acc.0))
+        }
+
+        fn from_acc(acc: Self) -> Self {
+            acc
+        }
+    }
+
     #[cfg_attr(test, test)]
     /// `Scalar::clamp` bounds a value; equality returns the value unchanged.
     fn test_scalar_clamp_bounds() {
@@ -580,22 +599,30 @@ pub mod num_trait_test_suite {
     }
 
     #[cfg_attr(test, test)]
-    /// Verifies absolute value behavior of standard integers (including
-    /// wrapping boundary checks) (FR-1 of `num-traits-design.md`, `Signed`).
+    /// Verifies absolute value behavior of standard integers, including
+    /// saturating `|MIN| -> MAX` (FR-1 of `num-traits-design.md`, `Signed`).
     fn test_num_trait_integer_absolute_value() {
-        assert_eq!((i8::MIN + 1_i8).abs(), i8::MAX);
-        assert_eq!((i16::MIN + 1_i16).abs(), i16::MAX);
-        assert_eq!((i32::MIN + 1_i32).abs(), i32::MAX);
-        assert_eq!((i64::MIN + 1_i64).abs(), i64::MAX);
-        assert_eq!((i128::MIN + 1_i128).abs(), i128::MAX);
-        assert_eq!((isize::MIN + 1).abs(), isize::MAX);
+        // UFCS: inherent `iN::abs` still panics on `MIN`; the trait must not.
+        assert_eq!(Signed::abs(i8::MIN), i8::MAX);
+        assert_eq!(Signed::abs(i16::MIN), i16::MAX);
+        assert_eq!(Signed::abs(i32::MIN), i32::MAX);
+        assert_eq!(Signed::abs(i64::MIN), i64::MAX);
+        assert_eq!(Signed::abs(i128::MIN), i128::MAX);
+        assert_eq!(Signed::abs(isize::MIN), isize::MAX);
 
-        assert_eq!((-1i8).abs(), 1i8);
-        assert_eq!((-1i16).abs(), 1i16);
-        assert_eq!((-1i32).abs(), 1i32);
-        assert_eq!((-1i64).abs(), 1i64);
-        assert_eq!((-1i128).abs(), 1i128);
-        assert_eq!((-1isize).abs(), 1isize);
+        assert_eq!(Signed::abs(i8::MIN + 1_i8), i8::MAX);
+        assert_eq!(Signed::abs(i16::MIN + 1_i16), i16::MAX);
+        assert_eq!(Signed::abs(i32::MIN + 1_i32), i32::MAX);
+        assert_eq!(Signed::abs(i64::MIN + 1_i64), i64::MAX);
+        assert_eq!(Signed::abs(i128::MIN + 1_i128), i128::MAX);
+        assert_eq!(Signed::abs(isize::MIN + 1), isize::MAX);
+
+        assert_eq!(Signed::abs(-1i8), 1i8);
+        assert_eq!(Signed::abs(-1i16), 1i16);
+        assert_eq!(Signed::abs(-1i32), 1i32);
+        assert_eq!(Signed::abs(-1i64), 1i64);
+        assert_eq!(Signed::abs(-1i128), 1i128);
+        assert_eq!(Signed::abs(-1isize), 1isize);
     }
 
     #[cfg_attr(test, test)]
@@ -766,5 +793,113 @@ pub mod num_trait_test_suite {
 
         let quot = c1.try_div(&c2).unwrap();
         assert_eq!(quot, Complex::new(2.0, 0.0));
+    }
+
+    /// Five-term dot product through a generic `MulAcc` consumer.
+    fn mac_dot<T: Scalar + MulAcc>(a: [T; 5], b: [T; 5], c: T) -> T {
+        T::from_acc(
+            a.into_iter()
+                .zip(b)
+                .fold(c.to_acc(), |acc, (x, y)| T::mac(acc, x, y)),
+        )
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies the float `MulAcc` is the unfused multiply and add, bit for
+    /// bit (`num-traits-design.md` FR-7).
+    fn test_mul_acc_float_unfused() {
+        let (lhs, rhs, acc) = (0.1f64, 0.3f64, -0.03f64);
+        let got = f64::from_acc(f64::mac(acc.to_acc(), lhs, rhs));
+        assert_eq!(got.to_bits(), (lhs * rhs + acc).to_bits());
+        let (lhs32, rhs32, acc32) = (1.1f32, 2.3f32, 0.7f32);
+        let got32 = f32::from_acc(f32::mac(acc32.to_acc(), lhs32, rhs32));
+        assert_eq!(got32.to_bits(), (lhs32 * rhs32 + acc32).to_bits());
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies integer chains keep an intermediate sum outside `[MIN, MAX]`
+    /// exactly and clamp once (`num-traits-design.md` FR-7).
+    fn test_mul_acc_integer_exact_chain() {
+        assert_eq!(mac_dot([100i8, -100, 0, 0, 0], [2, 2, 0, 0, 0], 0), 0);
+        let saturating = 100i8
+            .saturating_mul(2)
+            .saturating_add((-100i8).saturating_mul(2));
+        assert_eq!(saturating, -1);
+        assert_eq!(
+            mac_dot([i16::MAX, i16::MAX, 0, 0, 0], [2, -2, 0, 0, 0], 7),
+            7
+        );
+        assert_eq!(mac_dot([200u8, 0, 0, 0, 0], [2, 0, 0, 0, 0], 0), u8::MAX);
+        assert_eq!(
+            mac_dot([i32::MIN, 0, 0, 0, 0], [2, 0, 0, 0, 0], 0),
+            i32::MIN
+        );
+        assert_eq!(
+            mac_dot([i64::MAX, i64::MAX, 0, 0, 0], [3, -3, 0, 0, 0], 1),
+            1
+        );
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies `Complex<T>` components equal the four-term formula exactly
+    /// (`num-traits-design.md` FR-7).
+    fn test_mul_acc_complex_formula() {
+        let acc = Complex::new(5i32, -3);
+        let (a, b) = (Complex::new(2i32, 3), Complex::new(-4i32, 7));
+        let got =
+            Complex::<i32>::from_acc(Complex::<i32>::mac(acc.to_acc(), a, b));
+        assert_eq!(got, Complex::new(5 + 2 * -4 - 3 * 7, -3 + 2 * 7 + 3 * -4));
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies `Complex` integer `MulAcc` keeps the exact `Acc` product when
+    /// an imaginary part is `T::MIN` (`num-traits-design.md` FR-7).
+    fn test_mul_acc_complex_min_imag() {
+        // (0 + MIN i)(0 + i) contributes +|MIN| to the real accumulator.
+        // Negating MIN before `mac` would lose one unit and yield 0 here.
+        let a1 = Complex::new(0i16, i16::MIN);
+        let b1 = Complex::new(0i16, 1);
+        let a2 = Complex::new(0i16, i16::MAX);
+        let b2 = Complex::new(0i16, 1);
+        let zero = Complex::<i16>::new(0, 0);
+        let acc = Complex::<i16>::mac(
+            Complex::<i16>::mac(zero.to_acc(), a1, b1),
+            a2,
+            b2,
+        );
+        assert_eq!(Complex::<i16>::from_acc(acc), Complex::new(1, 0));
+        // Prior real -10000 plus exact |MIN| stays inside i16 and must not
+        // lose the one unit that `saturating_neg(MIN)` would drop.
+        let got = Complex::<i16>::from_acc(Complex::<i16>::mac(
+            Complex::<i16>::new(-10_000, 0).to_acc(),
+            a1,
+            b1,
+        ));
+        assert_eq!(got, Complex::new(22_768, 0));
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies `Complex<Fixed>` `MulAcc` keeps the exact `Acc` product when
+    /// an imaginary part is `MIN` and `MAX` (`num-traits-design.md` FR-7).
+    fn test_mul_acc_complex_fixed_full_scale() {
+        type Q = crate::math::fixed_num::Fixed<i16, 13>;
+        let one = Q::from_bits(1 << 13);
+        let a1 = Complex::new(Q::from_bits(0), Q::from_bits(i16::MIN));
+        let a2 = Complex::new(Q::from_bits(0), Q::from_bits(i16::MAX));
+        let b = Complex::new(Q::from_bits(0), one);
+        let zero = Complex::new(Q::from_bits(0), Q::from_bits(0));
+        // |MIN| - MAX = one raw unit of the real part.
+        let acc =
+            Complex::<Q>::mac(Complex::<Q>::mac(zero.to_acc(), a1, b), a2, b);
+        assert_eq!(Complex::<Q>::from_acc(acc).re.to_bits(), 1);
+    }
+
+    #[cfg_attr(test, test)]
+    /// Verifies an external type implementing `MulAcc` compiles against a
+    /// generic `T: Scalar + MulAcc` consumer (`num-traits-design.md` FR-7).
+    fn test_mul_acc_open_trait() {
+        let one = TestFloat(1.0);
+        let got = mac_dot([one; 5], [TestFloat(0.5); 5], TestFloat(0.25));
+        assert_eq!(got.0.to_bits(), 2.75f32.to_bits());
     }
 }

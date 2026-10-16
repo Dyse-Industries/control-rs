@@ -1,6 +1,6 @@
 extends: existence
 message: "Consider simplifying bloated phrase '%s'."
-link: documentation/doc-standards.md
+link: documentation/documentation-standards.md
 level: warning
 ignorecase: true
 tokens:
