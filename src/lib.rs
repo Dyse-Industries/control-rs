@@ -20,7 +20,7 @@
 //! - [`classical_control`]: SISO analysis (root locus, Routh-Hurwitz,
 //!   frequency response, margins, step metrics), compensators and firmware
 //!   realizations (direct forms, second-order sections, discrete PID).
-//! - [`modern_tools`], [`robust_tools`], [`nonlinear_tools`],
+//! - [`modern_control`], [`robust_control`], [`nonlinear_control`],
 //!   [`integrators`]: reserved for the control toolboxes.
 //!
 //! # Usage
@@ -49,7 +49,8 @@
 //!
 //! # Limitations
 //!
-//! - The control toolbox modules are placeholders with no public API.
+//! - Only `classical_control` has a public API; the other control toolbox
+//!   modules are placeholders.
 //! - Design documents for each module are in `documentation/` in the
 //!   repository.
 #![cfg_attr(not(feature = "std"), no_std)]
@@ -59,10 +60,10 @@ pub mod classical_control;
 pub mod integrators;
 pub mod math;
 pub mod matrix;
-pub mod modern_tools;
-pub mod nonlinear_tools;
+pub mod modern_control;
+pub mod nonlinear_control;
 pub mod polynomial;
-pub mod robust_tools;
+pub mod robust_control;
 pub mod state_space;
 pub mod tensor;
 pub mod transfer_function;

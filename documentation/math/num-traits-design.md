@@ -373,7 +373,8 @@ whose `mac` issues the target's fused instruction, shipped beside
 `CmsisDspBlas` in `examples/subprograms/thumbv7em/` (§9). `MulAcc` is a
 separate trait rather than a `Scalar` supertrait, so existing `Scalar`
 implementors outside the crate do not break; consumers bound
-`T: Scalar + MulAcc`.
+`T: Scalar + MulAcc`. [ADR-0003](../adr/0003-mul-acc-accumulation-primitive.md)
+records the decision.
 
 ---
 
@@ -611,6 +612,16 @@ for Complex<T>`). Every implementor must name `Real` and provide
 8. **Const-traits citation**: `documentation/math/research/num-traits.bib`
    contains `scherer2025` (2025H1 web address). Inline cite and [10] remain at
    (Scherer, 2025).
+9. **Integer coverage (FR-7)**: `MulAcc` covers `i8` to `i64` and `u8` to
+   `u64`. `i128`, `u128`, `isize` and `usize` are `Scalar` but have no
+   accumulator, because no wider primitive holds their exact product. A
+   generic recurrence bounded `T: Scalar + MulAcc` therefore excludes them.
+10. **Saturating `conj` and `abs` (FR-6)**: `Complex::conj` bounds
+    `T: SaturatingNeg` instead of `Neg`, and the signed-integer
+    `Signed::abs` uses `saturating_abs`, so `MIN` saturates to `MAX` instead of
+    panicking in debug builds and wrapping in release builds. A component
+    type that implements `Neg` without `SaturatingNeg` no longer has `conj`
+    (ADR-0003).
 
 ---
 
@@ -641,6 +652,7 @@ for Complex<T>`). Every implementor must name `Real` and provide
 | 1.6      | September 24, 2026 | @MitchellDScott | §4.2 and §4.3: `Quantized` is `Scalar` only where `1` is representable (`fixed-num-design.md` FR-7); `Q7`/`Q15`/`Q31`/`Q63` are not. |
 | 1.7 | October 13, 2026 | Claude Sonnet 5.5 | Test-suite verification table, retargeted Complex MulAcc bounds and retitle. |
 | 1.8 | October 13, 2026 | Claude Sonnet 5.5 | Adds FR-7 MulAcc and section 4.5 for the classical-control realizations; header migrated to the Approval and Doc Status badge grammar. |
+| 1.9 | October 16, 2026 | Claude Sonnet 5.5 | Cites ADR-0003 for `MulAcc`; §8 items 9 and 10 record the integer coverage and the saturating `conj` and `abs`; `Quantized` rows cite `fixed-num-design.md` FR-8, which now exists. |
 
 ---
 

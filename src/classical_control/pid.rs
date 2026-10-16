@@ -111,6 +111,22 @@ pub mod tests {
                 anti_windup: AntiWindup::BackCalculation { tt: 0.0 },
                 ..base
             },
+            PidParams {
+                kp: f64::NAN,
+                ..base
+            },
+            PidParams {
+                ki: f64::INFINITY,
+                ..base
+            },
+            PidParams {
+                kd: f64::NEG_INFINITY,
+                ..base
+            },
+            PidParams {
+                u_max: f64::NAN,
+                ..base
+            },
         ] {
             assert_eq!(Pid::new(bad), Err(ClassicalError::InvalidParameter));
         }
@@ -350,15 +366,21 @@ impl<T: Float + Copy> Pid<T> {
     ///
     /// # Errors
     /// [`ClassicalError::InvalidParameter`] when `u_min > u_max`,
-    /// `h <= 0`, `T_f < 0` or a back-calculation `T_t <= 0`.
+    /// `h <= 0`, `T_f < 0`, a back-calculation `T_t <= 0`, or any parameter
+    /// is NaN or a gain is infinite. An infinite limit means no limit.
     pub fn new(params: PidParams<T>) -> Result<Self, ClassicalError> {
         let tt_ok = match params.anti_windup {
             AntiWindup::Clamping => true,
             AntiWindup::BackCalculation { tt } => tt > T::ZERO,
         };
+        // `x - x` is zero only for a finite `x`; NaN and infinity give NaN.
+        let finite = |x: T| x.saturating_sub(&x) == T::ZERO;
         let valid = params.u_min <= params.u_max
             && params.h > T::ZERO
             && params.tf >= T::ZERO
+            && finite(params.kp)
+            && finite(params.ki)
+            && finite(params.kd)
             && tt_ok;
         if !valid {
             return Err(ClassicalError::InvalidParameter);
@@ -386,6 +408,10 @@ impl<T: Float + Copy> Pid<T> {
     ///
     /// `u = min(max(K_p e + I + K_d delta, u_min), u_max)` with
     /// `e = r - y`; the output is computed before the integrator update.
+    ///
+    /// A non-finite `r` or `y` enters the integrator and filter state and
+    /// the output, and stays there. The caller screens sensor faults and
+    /// calls [`reset`](Self::reset) to recover.
     #[inline]
     pub fn step(&mut self, r: T, y: T) -> T {
         let params = &self.params;

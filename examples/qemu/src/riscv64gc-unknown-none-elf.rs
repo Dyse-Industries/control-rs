@@ -66,6 +66,9 @@ pub use control_rs::math::tests::suites::*;
 // Force linking of the matrix test suites by referencing them
 #[allow(unused_imports)]
 pub use control_rs::matrix::tests::suites::*;
+// Force linking of the classical control test suites by referencing them
+#[allow(unused_imports)]
+pub use control_rs::classical_control::suites::*;
 
 #[ets_setup]
 #[allow(dead_code)]
