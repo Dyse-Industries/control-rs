@@ -13,8 +13,8 @@
 use std::path::Path;
 
 use control_rs::classical_control::{
-    BiquadCascade, Df1, Df2t, DirectForm2T, SectionCoefficients, quantize,
-    stability_margins, to_sections,
+    BiquadCascade, Df1, Df2t, DirectForm2T, SectionCoefficients, margin,
+    quantize, to_sections,
 };
 use control_rs::math::complex_num::Complex;
 use control_rs::math::fixed_num::Fixed;
@@ -212,11 +212,12 @@ where
     let sys = ArrayTransferFunction::<f64, N, D>::continuous(num, den);
     let w: [f64; M] =
         std::array::from_fn(|k| 0.05f64.mul_add(index_f64(k), 0.01));
-    let m = stability_margins::<f64, N, D, M, 1, 60>(&sys, &w);
-    let [Some(gc)] = m.gain_crossings else {
+    let m = margin(&sys, &w);
+    let Some(gc) = m.gain_crossing else {
         return Err("no gain crossover".to_string());
     };
-    let (gm, w_pc) = m.phase_crossings[0]
+    let (gm, w_pc) = m
+        .phase_crossing
         .map_or((f64::INFINITY, f64::NAN), |p| (p.gain_margin, p.omega));
     Ok([gm, w_pc, gc.phase_margin_deg, gc.omega])
 }

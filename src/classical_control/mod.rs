@@ -5,7 +5,8 @@
 //! [`TransferFunction`](crate::transfer_function::TransferFunction).
 //!
 //! - **Analysis**: [`root_locus`], [`routh_count`], [`frequency_response`],
-//!   [`nyquist_encirclements`], [`stability_margins`] and [`step_info`].
+//!   [`nyquist_encirclements`], [`margin`], [`stability_margins`] and
+//!   [`step_info`].
 //! - **Compensators**: [`pid`](fn@pid), [`lead`] and [`lag`] build ordinary
 //!   `TransferFunction` values.
 //! - **Execution**: [`DirectForm2T`], [`Df1`] and [`Df2t`] sections in a
@@ -20,14 +21,14 @@
 pub use compensator::{PidForm, lag, lead, pid};
 pub use locus::{LocusResult, root_locus};
 pub use margins::{
-    GainCrossing, GainCrossings, Margins, PhaseCrossing, PhaseCrossings,
-    stability_margins,
+    BISECTION_STEPS, GainCrossing, GainCrossings, Margin, Margins,
+    PhaseCrossing, PhaseCrossings, margin, stability_margins,
 };
 pub use nyquist::{Contour, NyquistCount, nyquist_encirclements};
 pub use pid::{AntiWindup, Pid, PidParams};
 pub use realization::{
     BiquadCascade, Df1, Df2t, DirectForm2T, Section, SectionCoefficients,
-    all_stable, is_stable, quantize, to_sections,
+    all_stable, is_stable, quantize, section_count, to_sections,
 };
 pub use response::{Response, ResponsePoint, frequency_response};
 pub use routh::{RouthCount, routh_count};
