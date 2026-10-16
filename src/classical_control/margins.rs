@@ -5,7 +5,9 @@
 //! `Im L` while `Re L < 0`, which avoids the
 //! `+/- 180 deg` branch cut. Each bracket is refined by `B` bisection
 //! steps on `L`, so the crossover error is the bracket width divided by
-//! `2^B`. Only crossings inside the sweep are found.
+//! `2^B`. A refined point that fails its defining residual
+//! (`|Im L|` or `| |L| - 1 |` within `span / 2^B`) is dropped (FR-5).
+//! Only crossings inside the sweep are found.
 
 use super::response::degrees;
 use crate::math::complex_num::Complex;
@@ -154,6 +156,31 @@ fn store<V, const C: usize>(
     }
 }
 
+/// FR-5 residual bound: `max(span / 2^B, 10^{-6})`.
+///
+/// `span / 2^B` is the linear-predicate residual across the original
+/// bracket after `B` bisections. The `10^{-6}` floor matches VC-5.5 so a
+/// steep-but-well-refined crossing is not dropped when nonlinearity makes
+/// `span / 2^B` underestimate the floating-point residual.
+fn residual_bound<T: Float + Copy, const B: usize>(span: T) -> T {
+    let two = T::ONE.saturating_add(&T::ONE);
+    let mut bound = span;
+    for _ in 0..B {
+        bound = bound.saturating_div(&two);
+    }
+    let abs_tol = T::ONE.saturating_div(&T::from_usize(1_000_000));
+    max2(bound, abs_tol)
+}
+
+/// Larger of two non-NaN values; `a` when either compare fails.
+fn max2<T: Float + Copy>(a: T, b: T) -> T {
+    if b.partial_cmp(&a) == Some(core::cmp::Ordering::Greater) {
+        b
+    } else {
+        a
+    }
+}
+
 /// Refines a phase crossover bracketed by `a` and `b`.
 fn phase_crossing<
     T: Float + Copy,
@@ -180,6 +207,14 @@ where
     // Both endpoints can lie in `Re L < 0` while the refined Im-zero root
     // sits in `Re L >= 0`. FR-5 requires `Re L < 0` at that root.
     if l.re.partial_cmp(&T::ZERO) != Some(core::cmp::Ordering::Less) {
+        return None;
+    }
+    // Coarse `B` near a steep Im crossing (for example a pole) can leave
+    // `|Im L|` far from zero while `Re L < 0`. FR-5 drops that refinement.
+    let im_span = max2(a.1.im.abs(), b.1.im.abs());
+    if l.im.abs().partial_cmp(&residual_bound::<T, B>(im_span))
+        == Some(core::cmp::Ordering::Greater)
+    {
         return None;
     }
     Some(PhaseCrossing {
@@ -211,6 +246,20 @@ where
     let l = sys.eval_frequency(omega);
     // A refined crossover must still be a finite point of `L`.
     if !is_finite(l) {
+        return None;
+    }
+    // FR-5: `| |L| - 1 |` must lie within the residual bound, or the
+    // refinement is dropped (for example a pole-nudged coarse `B`).
+    let unit_dev = |z: Complex<T>| {
+        let m = z.magnitude();
+        if m > T::ONE {
+            m.saturating_sub(&T::ONE)
+        } else {
+            T::ONE.saturating_sub(&m)
+        }
+    };
+    let bound = residual_bound::<T, B>(max2(unit_dev(a.1), unit_dev(b.1)));
+    if unit_dev(l).partial_cmp(&bound) == Some(core::cmp::Ordering::Greater) {
         return None;
     }
     let neg = Complex::new(
@@ -521,5 +570,39 @@ mod tests {
         let wrapped = (pm + 180.0).rem_euclid(360.0) - 180.0;
         assert!((gc.phase_margin_deg - wrapped).abs() <= 1e-6);
         assert!(gc.delay_margin.is_finite());
+    }
+
+    #[test]
+    fn coarse_phase_refinement_near_steep_im_is_dropped() {
+        // FR-5: with B = 3 on [0.5, 2], the Im-zero of this loop sits next to
+        // a steep region. The refined midpoint still has |Im L| ≈ 3.6 and a
+        // gain margin ≈ 0.28; the true phase crossover has GM ≈ 0.026. Drop.
+        let sys = ArrayTransferFunction::<f64, 3, 3>::continuous(
+            [-0.409_520_93, -1.903_739_82, -1.233_868_07],
+            [0.793_404_87, 0.048_727_95, 3.134_675_36],
+        );
+        let coarse = stability_margins::<_, 3, 3, 2, 1, 3>(&sys, &[0.5, 2.0]);
+        assert!(coarse.phase_crossings[0].is_none());
+        let fine = stability_margins::<_, 3, 3, 2, 1, 40>(&sys, &[0.5, 2.0]);
+        let pc = fine.phase_crossings[0].expect("refined Im-zero");
+        let l = sys.eval_frequency(pc.omega);
+        assert!(l.re < 0.0 && l.im.abs() <= 1e-6);
+        assert!((pc.gain_margin - 0.025_595_908_373_494_41).abs() < 1e-9);
+    }
+
+    #[test]
+    fn coarse_gain_refinement_after_pole_nudge_is_dropped() {
+        // FR-5: L = 1/(s^2 + 1) on [0.5, 1.5] with B = 1 nudges past the
+        // pole at w = 1 and reports |L| ≈ 1.29. Drop that refinement.
+        let sys = ArrayTransferFunction::<f64, 1, 3>::continuous(
+            [1.0],
+            [1.0, 0.0, 1.0],
+        );
+        let coarse = stability_margins::<_, 1, 3, 2, 1, 1>(&sys, &[0.5, 1.5]);
+        assert!(coarse.gain_crossings[0].is_none());
+        let fine = stability_margins::<_, 1, 3, 2, 1, 40>(&sys, &[0.5, 1.5]);
+        let gc = fine.gain_crossings[0].expect("unit-gain root");
+        let l = sys.eval_frequency(gc.omega);
+        assert!((l.magnitude() - 1.0).abs() <= 1e-9);
     }
 }
