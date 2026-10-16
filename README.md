@@ -47,16 +47,19 @@ flowchart TB
         StateSpace["StateSpace (src/state_space)"]:::core
     end
 
-    subgraph Tools["Control Synthesis & Toolboxes (planned)"]
+    subgraph Tools["Control Toolboxes"]
         direction TB
-        Classical["Classical Control"]:::tools
-        Modern["Modern Control (LQR, Observers)"]:::tools
-        Robust["Robust Control"]:::tools
-        Integrators["Integrators & Solvers"]:::tools
+        Classical["Classical Control (src/classical_control)"]:::core
+        Modern["Modern Control (planned: LQR, Observers)"]:::tools
+        Robust["Robust Control (planned)"]:::tools
+        Integrators["Integrators & Solvers (planned)"]:::tools
     end
 
     Math --> Models
-    Models -.-> Tools
+    Models --> Classical
+    Models -.-> Modern
+    Models -.-> Robust
+    Models -.-> Integrators
     classDef core fill: #0d1b2a, stroke: #778da9, stroke-width: 2px, color: #e0e1dd
     classDef external fill: #1b263b, stroke: #8d99ae, stroke-width: 2px, color: #edf2f4
     classDef tools fill: #415a77, stroke: #a3b1c6, stroke-width: 2px, color: #ffffff
@@ -134,6 +137,47 @@ fn main() {
     assert_eq!(val, 2.5);
 }
 ```
+
+### 4. Loop Margins and a Firmware PID
+
+```rust
+use control_rs::classical_control::{
+    AntiWindup, Pid, PidParams, margin,
+};
+use control_rs::transfer_function::ArrayTransferFunction;
+
+fn main() {
+    // Open loop L(s) = 4 / (s + 1)^3 over a linear frequency sweep.
+    let l = ArrayTransferFunction::<f64, 1, 4>::continuous(
+        [4.0],
+        [1.0, 3.0, 3.0, 1.0],
+    );
+    let w: [f64; 200] = core::array::from_fn(|k| 0.02 * (k as f64) + 0.01);
+    let m = margin(&l, &w);
+    let gain_margin_db = m.phase_crossing.map(|p| p.gain_margin_db()); // 6.02 dB
+    let phase_margin = m.gain_crossing.map(|g| g.phase_margin_deg);
+
+    // The same design runs per sample on the target, with output limits.
+    let mut pid = Pid::new(PidParams {
+        kp: 1.5, ki: 0.8, kd: 0.4, tf: 0.05, h: 0.01,
+        u_min: -1.0, u_max: 1.0, anti_windup: AntiWindup::Clamping,
+    })
+    .expect("valid parameters");
+    let u = pid.step(0.8, 0.0);
+}
+```
+
+See [`examples/classical_loop.rs`](examples/classical_loop.rs) for the full
+design-to-firmware path.
+
+---
+
+## Control Toolboxes
+
+| Module                                              | Status  | Provides                                                                                                                                                                                                                                   |
+|:----------------------------------------------------|:--------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| **[`classical_control`](src/classical_control/mod.rs)** | Shipped | Root locus, Routh-Hurwitz, frequency response, Nyquist encirclements, gain/phase/delay margins, step metrics, PID/lead/lag compensators, direct-form and second-order-section realizations in float or fixed point, discrete PID with anti-windup ([design](documentation/control-toolboxes/classical-control-design.md)) |
+| `modern_control`, `robust_control`, `nonlinear_control` | Planned | Placeholders for the toolboxes in the [roadmap](documentation/roadmap.md)                                                                                                                                                                   |
 
 ---
 
