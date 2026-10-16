@@ -506,7 +506,8 @@ impl App {
                 Some(Request::Quit)
             }
             Command::RunAll if self.idle() => {
-                for id in self.catalog.case_ids() {
+                let ids = self.catalog.case_ids();
+                for id in ids.iter().copied() {
                     self.cases.insert(
                         id,
                         CaseRow {
@@ -516,6 +517,11 @@ impl App {
                     );
                 }
                 self.faults.clear();
+                // Mirror Enter: leave Idle before the worker emits CaseStarted so a
+                // second `r` or Enter cannot queue another run against the same target.
+                if let Some(id) = ids.first().copied() {
+                    self.status = Status::Running(id);
+                }
                 Some(Request::RunAll)
             }
             Command::Stop => Some(Request::Stop),
@@ -1143,6 +1149,18 @@ mod tests {
         assert_eq!(key(&mut app, KeyCode::Char('r')), None);
         app.on_update(Update::Idle);
         assert_eq!(app.status, Status::Idle);
+    }
+
+    #[test]
+    fn run_all_leaves_idle_so_a_second_run_is_blocked() {
+        let mut app = ready(false);
+        assert_eq!(key(&mut app, KeyCode::Char('r')), Some(Request::RunAll));
+        assert_eq!(app.status, Status::Running((0, 0)));
+        assert_eq!(key(&mut app, KeyCode::Char('r')), None);
+        assert_eq!(key(&mut app, KeyCode::Enter), None);
+        app.on_update(Update::Idle);
+        assert_eq!(app.status, Status::Idle);
+        assert_eq!(key(&mut app, KeyCode::Char('r')), Some(Request::RunAll));
     }
 
     #[test]

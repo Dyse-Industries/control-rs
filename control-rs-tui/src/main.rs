@@ -139,6 +139,17 @@ where
             Some(Event::Key(key)) => match app.on_key(key) {
                 Some(Request::Stop) => worker.control.stop(),
                 Some(request) => {
+                    // Withdraw a leftover Stop only when starting a new run. Clearing
+                    // in the worker at dequeue would discard a Stop that won the race
+                    // against a still-queued RunCase / RunAll / RunTask.
+                    if matches!(
+                        request,
+                        Request::RunCase(_)
+                            | Request::RunAll
+                            | Request::RunTask { .. }
+                    ) {
+                        worker.control.clear();
+                    }
                     let _ = worker.requests.send(request);
                 }
                 None => {}

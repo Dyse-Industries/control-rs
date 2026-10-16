@@ -1,8 +1,10 @@
 //! The worker thread that owns the session.
 //!
 //! The UI thread sends [`Request`]s and receives [`Update`]s. Stop requests go through the shared
-//! [`RunControl`], so they reach a running task without waiting for the worker. Rendering never
-//! blocks the session, and a stalled terminal cannot back-pressure a run.
+//! [`RunControl`], so they reach a running task without waiting for the worker. The UI withdraws a
+//! leftover stop when it issues a new run; this loop must not clear [`RunControl`] at dequeue, or a
+//! Stop that arrived while the request was queued is lost. Rendering never blocks the session, and
+//! a stalled terminal cannot back-pressure a run.
 
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender, channel};
@@ -201,7 +203,9 @@ fn serve(
         match requests.recv_timeout(IDLE) {
             Ok(Request::Quit) | Err(RecvTimeoutError::Disconnected) => break,
             Ok(request) => {
-                control.clear();
+                // Do not clear RunControl here: a Stop pressed after the UI queued
+                // this request but before dequeue must still abort the run. The UI
+                // clears when it issues a fresh run while idle.
                 let resets = session.results().resets;
                 if let Err(e) = handle(&mut session, request, updates, control)
                 {
@@ -456,5 +460,25 @@ mod tests {
         let fake = ETSBridge::fake(Some(1));
         let worker = Worker::spawn(fake.bridge, quick());
         assert!(matches!(next(&worker), Update::LinkLost(_)));
+    }
+
+    #[test]
+    fn stop_queued_before_dequeue_survives_into_handle() {
+        let fake = ETSBridge::fake(None);
+        for t in discovery(PROTOCOL_VERSION) {
+            fake.tx.send(BridgeMessage::Telemetry(t)).unwrap();
+        }
+        let worker = Worker::spawn(fake.bridge, quick());
+        assert!(matches!(next(&worker), Update::Catalog(_, _)));
+        assert_eq!(next(&worker), Update::Idle);
+        // Stop wins the race against a request already on the channel (UI would
+        // have cleared only when *sending* the run, not here).
+        worker.control.stop();
+        worker.requests.send(Request::RunAll).unwrap();
+        assert_eq!(next(&worker), Update::Idle);
+        assert!(
+            worker.control.stop_requested(),
+            "dequeue must not clear a Stop that arrived while a run was queued"
+        );
     }
 }
