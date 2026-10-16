@@ -35,28 +35,32 @@ Primary usage scenarios:
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — ARX estimation**: From $N$ samples of $u$ and $y$ and orders
-  $(n_a, n_b, n_k)$, returns the equation-error least-squares ARX model as a
-  discrete `TransferFunction`.
-- **FR-2 — Instrumental-variable estimation**: From the same data, returns
-  an ARX-structure model whose regression uses instruments built from $u$
-  and an auxiliary model's simulated output.
+- **FR-1 — ARX estimation**: From $N$ samples of $u$ and $y$, orders
+  $(n_a, n_b, n_k)$, and sample interval $T_s > 0$, returns the
+  equation-error least-squares ARX model as a discrete `TransferFunction`
+  (`TransferFunction::discrete`).
+- **FR-2 — Instrumental-variable estimation**: From the same data and
+  $T_s$, returns an ARX-structure discrete `TransferFunction` whose
+  regression uses instruments built from $u$ and an auxiliary model's
+  simulated output.
 - **FR-3 — Rational frequency fit**: From complex frequency samples
-  $G(j\omega_k)$, returns a rational `TransferFunction` by Levy's
+  $G(j\omega_k)$, returns a continuous rational `TransferFunction` by Levy's
   linearization followed by Sanathanan-Koerner reweighting for at most a
-  caller iteration count.
+  caller iteration count, with the denominator constrained to be monic.
 - **FR-4 — Vector fitting**: From the same samples and a starting pole set,
-  returns a stable pole-residue model as a `StateSpace` by iterative pole
-  relocation for at most a caller iteration count.
-- **FR-5 — Eigensystem realization**: From Markov parameters, returns a
-  discrete `StateSpace` of a caller order from the SVD of their block Hankel
-  matrix, together with the Hankel singular values.
-- **FR-6 — Subspace identification**: From input-output records, returns a
-  discrete `StateSpace` by QR compression of the block Hankel data and SVD
-  order revelation, with MOESP or N4SID weighting.
-- **FR-7 — Matrix pencil poles**: From a free-response record, returns the
-  discrete poles of a caller order (frequencies and damping ratios) from the
-  matrix pencil of its Hankel matrix.
+  returns a stable continuous pole-residue model as a `StateSpace` by
+  iterative pole relocation for at most a caller iteration count.
+- **FR-5 — Eigensystem realization**: From Markov parameters and sample
+  interval $T_s > 0$, returns a discrete `StateSpace`
+  (`StateSpace::discrete`) of a caller order from the SVD of their block
+  Hankel matrix, together with the Hankel singular values.
+- **FR-6 — Subspace identification**: From input-output records and sample
+  interval $T_s > 0$, returns a discrete `StateSpace` by QR compression of
+  the block Hankel data and SVD order revelation, with MOESP or N4SID
+  weighting.
+- **FR-7 — Matrix pencil poles**: From a free-response record and sample
+  interval $T_s$, returns the discrete poles of a caller order (frequencies
+  and damping ratios) from the matrix pencil of its Hankel matrix.
 - **FR-8 — Persistency of excitation**: Returns whether an input record is
   persistently exciting of order $k$, that is, whether its depth-$k$ block
   Hankel matrix has full row rank to a caller tolerance.
@@ -84,8 +88,8 @@ Primary usage scenarios:
   `control-rs` and adds no dependency.
 - **C-5 — Kernel dependencies**: Depends on a singular value decomposition
   kernel (`Gesvd`) specified by a revision of `subprograms-design.md`, on
-  the existing `Geqrf` and `Ormqr`, and on `modern_control::schur` for
-  eigenvalues.
+  the existing `Geqrf`, `Ormqr`, `Getrf` and `Getrs` (IV LU in §4.2), and on
+  `modern_control::schur` for eigenvalues.
 - **C-6 — Error convention**: Conforms to `error-design.md` NFR-1.
 
 ---
@@ -117,7 +121,7 @@ flowchart LR
         TF["TransferFunction"]
         SS["StateSpace"]
     end
-    K["Geqrf / Ormqr / Gesvd (C-5)<br/>modern_control::schur"]
+    K["Geqrf / Ormqr / Getrf / Getrs / Gesvd (C-5)<br/>modern_control::schur"]
     IO --> ARX --> TF
     IO --> PE
     IO --> SUB --> SS
@@ -158,8 +162,10 @@ are $[-y_{t-1}, \dots, -y_{t-n_a}, u_{t-n_k}, \dots, u_{t-n_k-n_b+1}]$ and
 the estimate solves $\min \lVert \Phi \theta - y \rVert$ [1] by `Geqrf` and a
 triangular solve, never by forming $\Phi^T \Phi$. A diagonal entry of $R$
 below the caller tolerance relative to $|R_{11}|$ returns
-`SysIdError::RankDeficient` (FR-9). Equation-error estimates take a noise
-model only through extensions such as pseudo-linear regression, which
+`SysIdError::RankDeficient` (FR-9). The caller supplies the sample interval
+$T_s > 0$; the factory builds the model with
+`TransferFunction::discrete(..., T_s)`. Equation-error estimates take a
+noise model only through extensions such as pseudo-linear regression, which
 first fits a high-order ARX model and regresses again on its residuals [1].
 FR-2 uses the same two-stage shape with instruments in place of residuals:
 stage one fits ARX, stage two replaces the lagged outputs in the
@@ -169,21 +175,29 @@ crate's and is flagged in §8.
 
 #### 4.3 Frequency-Domain Rational Fits
 
-Levy's method linearizes the fit by neglecting the denominator [2], which
-equals the true error only when the denominator is nearly constant [2].
-Sanathanan-Koerner iteration divides each row by the previous iteration's
-denominator, which acts as a frequency-dependent weight [2]. `levy_sk` runs
-Levy once, then SK until the relative coefficient change falls below the
-tolerance or the caller cap is reached; reaching the cap returns the last
-iterate with `Converged::No`. Real coefficients come from stacking real and
-imaginary parts.
+Levy's method linearizes the nonlinear magnitude error into
+$G(j\omega) D(j\omega) - N(j\omega) \approx 0$ [2]. That residual is
+homogeneous in $(N, D)$: $(kN, kD)$ leaves it unchanged for any $k \neq 0$,
+so a free coefficient vector makes the stacked real/imaginary least-squares
+matrix identically rank-deficient. The factory therefore constrains $D$ to
+be monic (leading coefficient fixed at one) before the solve; any equivalent
+scale fix is acceptable if documented. The linearization equals the true
+error only when the denominator is nearly constant [2]. Sanathanan-Koerner
+iteration divides each row by the previous iteration's denominator, which
+acts as a frequency-dependent weight [2], and keeps the same monic
+constraint on each reweighted solve. `levy_sk` runs Levy once, then SK until
+the relative coefficient change falls below the tolerance or the caller cap
+is reached; reaching the cap returns the last iterate with `Converged::No`.
+Real coefficients come from stacking real and imaginary parts. The result is
+a continuous `TransferFunction` (`TransferFunction::continuous`): the
+samples are $G(j\omega)$ on the $s$-axis, not $G(e^{j\omega T_s})$.
 
 Vector fitting relocates poles iteratively by repeated linear solves [2],
 [3] on a partial-fraction basis. Each iteration fits residues of an
 auxiliary function $\sigma(s)$, takes the new poles as the zeros of
-$\sigma$ (an eigenvalue problem), and flips unstable poles to the left half
-plane. The final pole-residue model is realized as a block-diagonal
-`StateSpace`.
+$\sigma$ (an eigenvalue problem), and flips unstable poles into the open
+left half-plane. The final pole-residue model is realized as a
+block-diagonal continuous `StateSpace` (`StateSpace::continuous`).
 
 #### 4.4 Eigensystem Realization
 
@@ -191,9 +205,11 @@ ERA builds a block Hankel matrix from Markov parameters and realizes a
 state-space model from its SVD [4]. With $H_0 = U \Sigma V^T$ truncated to
 order $n$, $A = \Sigma_n^{-1/2} U_n^T H_1 V_n \Sigma_n^{-1/2}$, $B$ and $C$
 are the first block column and row of $\Sigma_n^{1/2} V_n^T$ and
-$U_n \Sigma_n^{1/2}$, and $D$ is the zeroth Markov parameter. The Hankel
-singular values are returned for order selection. OKID derives Markov
-parameters from input-output data [4]; it is not part of v1 (§5).
+$U_n \Sigma_n^{1/2}$, and $D$ is the zeroth Markov parameter. The caller
+supplies $T_s > 0$; the factory builds the model with
+`StateSpace::discrete(..., T_s)`. The Hankel singular values are returned
+for order selection. OKID derives Markov parameters from input-output data
+[4]; it is not part of v1 (§5).
 
 #### 4.5 Subspace Identification
 
@@ -204,8 +220,10 @@ numerically stable one [5]. MOESP and N4SID differ in the weighting of that
 matrix [5], [4]. From the extended observability matrix,
 $C$ is its first block row and $A$ solves the shift-invariance equation in
 least squares; $B$ and $D$ follow from a linear regression on the data.
-The order is the caller's; fewer significant singular values than that
-order returns `RankDeficient` (FR-9).
+The caller supplies $T_s > 0$; the factory builds the model with
+`StateSpace::discrete(..., T_s)`. The order is the caller's; fewer
+significant singular values than that order returns `RankDeficient`
+(FR-9).
 
 #### 4.6 Matrix Pencil
 
@@ -214,7 +232,8 @@ the samples and solves a generalized eigenvalue problem [6]; the model order
 comes from truncating singular values [6]. With $Y = U \Sigma V^T$ truncated
 to order $M$, and $V_1$, $V_2$ the rows of $V_M$ without its last and first
 row, the poles are the eigenvalues of $V_1^{+} V_2$, a standard $M \times M$
-problem solved by the Schur layer. Each discrete pole $z$ gives
+problem solved by the Schur layer. The caller supplies the sample interval
+$T_s > 0$. Each discrete pole $z$ then gives
 $\omega = |\ln z| / T_s$ and $\zeta = -\operatorname{Re}(\ln z)/|\ln z|$.
 
 #### 4.7 Persistency of Excitation
@@ -275,7 +294,7 @@ and FR-4 return the iterate with a convergence flag.
 | VC-6.2 | FR-6 | `libtest` | `control_rs::sysid::subspace::tests::cross_check` | Noisy data match the cross-check tolerance |
 | VC-7.1 | FR-7 | `libtest` | `control_rs::sysid::pencil::tests::damped_sinusoids` | Two noise-free damped sinusoids return their frequencies and damping ratios within §6.2; FR-7 holds iff all conditions hold |
 | VC-8.1 | FR-8 | `libtest` | `control_rs::sysid::hankel::tests::persistency_orders` | A sum of $q$ sinusoids is reported persistently exciting of order $2q$ and not of $2q + 1$; FR-8 holds iff all conditions hold |
-| VC-9.1 | FR-9 | `libtest` | `control_rs::sysid::arx::tests::rank_deficient_errors` | A constant input with $n_b = 2$ returns `RankDeficient`, and a third-order ERA request on a first-order system returns `RankDeficient`; FR-9 holds iff all conditions hold |
+| VC-9.1 | FR-9 | `libtest` | `control_rs::sysid::arx::tests::rank_deficient_errors` | A constant input with $n_b = 2$ returns `NotPersistentlyExciting` (§4.7 runs FR-8 before ARX), and a third-order ERA request on a first-order system returns `RankDeficient`; FR-9 holds iff all conditions hold |
 | VC-10.1 | NFR-1 | `inspection` | — | No routine allocates; all storage is const-sized |
 | VC-11.1 | NFR-2 | `analysis` | — | Loop bounds of FR-1, FR-2, FR-5, FR-6 and FR-7 depend only on sizes, and FR-3 and FR-4 loops on the cap |
 | VC-12.1 | C-1 | `review` | — | Every size is a const generic |
@@ -359,6 +378,7 @@ condition number allows.
 |:--|:--|:--|:--|
 | 1.0 | October 4, 2026 | @MitchellDScott | Initial design document: FR-1 to FR-9, NFR-1 to NFR-2, C-1 to C-6. |
 | 1.1 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending review. |
+| 1.2 | October 16, 2026 | Cursor Agent | FR-3 monic $D$; FR-3/FR-4 continuous factories; FR-1/2/5/6/7 caller $T_s$; VC-9.1 PE error; C-5 `Getrf`/`Getrs`. |
 
 ---
 
