@@ -1225,9 +1225,6 @@ impl<T: Scalar + Signed + MulAcc, const ORDER: usize> DirectForm2T<T, ORDER> {
     }
 
     /// Processes one input sample and returns the output.
-    ///
-    /// # Panics
-    /// Never.
     #[inline]
     pub fn update(&mut self, u: T) -> T {
         let zero = T::ZERO.to_acc();
@@ -1246,17 +1243,11 @@ impl<T: Scalar + Signed + MulAcc, const ORDER: usize> DirectForm2T<T, ORDER> {
     }
 
     /// Sets every state to zero.
-    ///
-    /// # Panics
-    /// Never.
     pub fn reset(&mut self) {
         self.state = [T::ZERO.to_acc(); ORDER];
     }
 
     /// Replaces the coefficients without clearing the state (FR-18).
-    ///
-    /// # Panics
-    /// Never.
     pub fn set_coefficients(&mut self, b0: T, b: [T; ORDER], a: [T; ORDER]) {
         self.b0 = b0;
         self.b = b;
@@ -1375,9 +1366,6 @@ impl<T: Scalar + Signed + MulAcc, const L: usize> BiquadCascade<Df2t<T>, L> {
 /// Exact for `Fixed`; no root finding. Requires [`Signed`] so negative
 /// coefficients use a true absolute value rather than the unsigned
 /// `saturating_neg` no-op.
-///
-/// # Panics
-/// Never.
 #[must_use]
 pub fn is_stable<T: Scalar + Signed + Copy>(
     c: &SectionCoefficients<T>,
@@ -1388,9 +1376,6 @@ pub fn is_stable<T: Scalar + Signed + Copy>(
 
 /// Reports whether every section in `sections` passes [`is_stable`]
 /// (FR-20).
-///
-/// # Panics
-/// Never.
 #[must_use]
 pub fn all_stable<T: Scalar + Signed + Copy>(
     sections: &SectionSlice<T>,
@@ -1411,9 +1396,6 @@ pub fn all_stable<T: Scalar + Signed + Copy>(
 /// coefficient is saturated. The comparison is made in raw units, so the
 /// `f64` image of `Fixed::MIN` and `Fixed::MAX` is accepted for every
 /// `Repr`, including `i64`, where `MAX` has no exact `f64`.
-///
-/// # Panics
-/// Never.
 pub fn quantize<Repr: FixedRepr, const SHIFT: usize, const L: usize>(
     sections: &SectionArray<f64, L>,
 ) -> QuantizeResult<Repr, SHIFT, L>
