@@ -134,6 +134,8 @@ pub struct Runner<'a, L, P, B, M> {
 struct State {
     cycles: u64,
     deadline_ns: u64,
+    /// Origin of the `Periodic` release schedule (`k·T`); set when the source is armed.
+    epoch_ns: u64,
     input: [u8; MAX_PACKET_SIZE],
     input_len: usize,
     input_seq: Option<u64>,
@@ -184,6 +186,7 @@ impl State {
         Self {
             cycles: 0,
             deadline_ns: 0,
+            epoch_ns: 0,
             input: [0; MAX_PACKET_SIZE],
             input_len: 0,
             input_seq: None,
@@ -297,8 +300,9 @@ where
             state: ItemState::Running,
             message: None,
         })?;
+        // Wall-clock origin for `RunStats`; release pacing and the link deadline start after setup
+        // so setup time cannot consume the first periods or the host link budget (FR-5, FR-8).
         state.started_ns = self.now();
-        state.deadline_ns = Self::deadline_from(state.started_ns, exec);
         if let Err(message) = (exec.setup)() {
             state.end(Verdict::Error, Some(message));
             return Ok(());
@@ -306,7 +310,12 @@ where
         if M::PACING != Pacing::None {
             let period = (M::PACING == Pacing::Periodic).then_some(period_ns);
             self.board.arm(period);
+            // Board sources start counting at `arm`; the profiler clock must use the same epoch so
+            // setup time does not consume the first periods and trip `Overrun` before step 0.
+            state.epoch_ns = self.now();
         }
+        // Heartbeat timeout applies while waiting for input or a release, not during setup.
+        state.deadline_ns = Self::deadline_from(self.now(), exec);
         while state.verdict.is_none() {
             // A masked single step has no boundary: nothing can interrupt it, and a link that
             // can only block would stall it.
@@ -430,7 +439,7 @@ where
         if M::PACING != Pacing::Periodic || self.job.period_ns == 0 {
             return 0;
         }
-        let elapsed = self.now().saturating_sub(state.started_ns);
+        let elapsed = self.now().saturating_sub(state.epoch_ns);
         let due = elapsed
             .checked_div(u64::from(self.job.period_ns))
             .unwrap_or(0)
@@ -477,7 +486,7 @@ where
         state.step_max_ns = state.step_max_ns.max(took);
         if M::PACING == Pacing::Periodic && period_ns != 0 {
             let release = state
-                .started_ns
+                .epoch_ns
                 .saturating_add(state.k.saturating_mul(u64::from(period_ns)));
             let late = u32::try_from(started.saturating_sub(release))
                 .unwrap_or(u32::MAX);
@@ -590,9 +599,21 @@ mod tests {
     static RESETS: AtomicUsize = AtomicUsize::new(0);
     static SERIAL: Mutex<()> = Mutex::new(());
     static SETUPS: AtomicUsize = AtomicUsize::new(0);
+    static SLOW: ExecDescriptor = {
+        let mut d = task(echo, 0);
+        d.setup = slow_setup;
+        d
+    };
+    static SLOW_TIMED: ExecDescriptor = {
+        let mut d = task(echo, 1);
+        d.setup = slow_setup;
+        d
+    };
     const STOP: Command<'static> = Command::StopNow { suite: 0, item: 0 };
     static TEARDOWNS: AtomicUsize = AtomicUsize::new(0);
     static TIMED: ExecDescriptor = task(echo, 1);
+    /// Wall time advanced by [`slow_setup`] and read by [`Wall`].
+    static WALL_NS: AtomicUsize = AtomicUsize::new(0);
 
     /// Messages a link sent.
     type Sent = Vec<Vec<u8>>;
@@ -641,6 +662,9 @@ mod tests {
         now: Cell<u64>,
         tick: u64,
     }
+
+    /// A profiler that reads [`WALL_NS`] so setup can advance wall time.
+    struct Wall;
 
     impl Link for Script {
         type Error = &'static str;
@@ -707,6 +731,26 @@ mod tests {
         }
     }
 
+    impl CPUProfiler for Wall {
+        fn get_cycles(&self) -> u64 {
+            0
+        }
+
+        fn get_nanos(&self) -> u64 {
+            // Tick like `Clock`, but `slow_setup` can also advance [`WALL_NS`].
+            let prev = WALL_NS.fetch_add(1_000, Ordering::SeqCst);
+            u64::try_from(prev.saturating_add(1_000)).unwrap_or(u64::MAX)
+        }
+
+        fn get_sp(&self) -> usize {
+            0
+        }
+
+        fn get_stack_end(&self) -> usize {
+            0
+        }
+    }
+
     fn counted(counter: &AtomicUsize) -> HookOf {
         counter
             .fetch_add(1, Ordering::SeqCst)
@@ -721,6 +765,12 @@ mod tests {
 
     fn bad_setup() -> HookOf {
         counted(&SETUPS).and(Err("no sensor"))
+    }
+
+    /// Advances wall time by more than one period and more than a 1 ms link timeout.
+    fn slow_setup() -> HookOf {
+        WALL_NS.fetch_add(2_500_000, Ordering::SeqCst);
+        counted(&SETUPS)
     }
 
     fn reset() -> HookOf {
@@ -1030,6 +1080,83 @@ mod tests {
         assert_eq!(o.result, Ok(()));
         assert_eq!(verdict(&o), Some((Verdict::Bounded, None)));
         assert_eq!(stats(&o), Some((3, 0)));
+    }
+
+    /// Drives a run with [`Wall`] so [`slow_setup`] can advance time before arming.
+    fn drive_wall<M: Mode>(
+        exec: &'static ExecDescriptor,
+        job: (u64, u32),
+    ) -> Outcome {
+        WALL_NS.store(0, Ordering::SeqCst);
+        let mut context = Context::new(
+            Script {
+                commands: VecDeque::new(),
+                idle: 5000,
+                sent: Vec::new(),
+            },
+            Wall,
+        );
+        let mut board = Timer {
+            armed: Vec::new(),
+            disarms: 0,
+            feeds: 0,
+            releases: VecDeque::new(),
+            source: false,
+            waits: 0,
+        };
+        let mut rx = [0u8; MAX_MESSAGE_SIZE];
+        let job = Job {
+            exec,
+            item: 0,
+            max_steps: job.0,
+            params: PARAMS,
+            period_ns: job.1,
+            suite: 0,
+        };
+        let result =
+            Runner::<_, _, _, M>::new(&mut board, &mut context, &mut rx, job)
+                .run();
+        Outcome {
+            armed: board.armed,
+            disarms: board.disarms,
+            feeds: board.feeds,
+            result,
+            telemetry: context.link.sent,
+            waits: board.waits,
+        }
+    }
+
+    #[test]
+    fn setup_longer_than_one_period_does_not_overrun_before_step_zero() {
+        let _g = serial();
+        reset_counters();
+        // Period is 10 µs; slow_setup advances wall time by 2.5 ms before arming.
+        let o = drive_wall::<Periodic>(&SLOW, (3, 10_000));
+        assert_eq!(o.result, Ok(()));
+        assert_eq!(
+            verdict(&o),
+            Some((Verdict::Bounded, None)),
+            "setup time must not consume Periodic releases"
+        );
+        assert_eq!(stats(&o), Some((3, 0)));
+        assert_eq!(SETUPS.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn setup_longer_than_the_link_timeout_does_not_time_out_before_step_zero() {
+        let _g = serial();
+        reset_counters();
+        // SLOW_TIMED has a 1 ms link timeout; slow_setup advances 2.5 ms before the deadline starts.
+        let o = drive_wall::<Lockstep>(&SLOW_TIMED, (0, 0));
+        assert_eq!(o.result, Ok(()));
+        assert_eq!(
+            verdict(&o),
+            Some((Verdict::TimedOut, None)),
+            "timeout must start after setup, then fire while waiting for input"
+        );
+        assert_eq!(stats(&o), Some((0, 0)));
+        assert_eq!(SETUPS.load(Ordering::SeqCst), 1);
+        assert!(o.waits > 0, "run reached the wait loop after setup");
     }
 
     #[test]
