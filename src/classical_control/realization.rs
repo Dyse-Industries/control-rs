@@ -692,6 +692,30 @@ pub mod tests {
     }
 
     #[cfg_attr(test, test)]
+    /// Realizations compare equal exactly when every coefficient and state
+    /// matches.
+    fn realizations_compare_by_value() {
+        let base = DirectForm2T::<f64, 2>::new(1.0, [0.5, 0.25], [-0.5, 0.1]);
+        assert_eq!(base, base);
+        let mut moved = base;
+        moved.update(1.0);
+        assert_ne!(base, moved);
+        let others = [
+            DirectForm2T::<f64, 2>::new(2.0, [0.5, 0.25], [-0.5, 0.1]),
+            DirectForm2T::<f64, 2>::new(1.0, [0.6, 0.25], [-0.5, 0.1]),
+            DirectForm2T::<f64, 2>::new(1.0, [0.5, 0.25], [-0.4, 0.1]),
+        ];
+        for other in others {
+            assert_ne!(base, other);
+        }
+        let c = cascade_case(0.3)[0];
+        assert_eq!(Df2t::from(c), Df2t::from(c));
+        let mut running = Df2t::from(c);
+        running.update(1.0);
+        assert_ne!(Df2t::from(c), running);
+    }
+
+    #[cfg_attr(test, test)]
     /// `section_count` is `max(1, ceil((D - 1) / 2))` (FR-10).
     fn section_count_values() {
         assert_eq!(
