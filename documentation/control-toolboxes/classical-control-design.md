@@ -642,19 +642,21 @@ operations are the constructor, `step(r, y) -> u`, `reset`, `set_gains`
 and `to_transfer_function`.
 
 `new` returns `InvalidParameter` unless $u_{min} \le u_{max}$, $h > 0$,
-$T_f \ge 0$, the gains are finite and, for `BackCalculation`, $T_t > 0$; a NaN
-parameter fails its comparison, and an infinite limit means no limit. It
-computes `ad`, `bd`, `kih` and `hbt` ($h/T_t$ or 0) once, so `step` is a fixed
-sequence of saturating operations with no branch except the limit
-selection and the anti-windup test (NFR-4). The controller is `Copy` and
-holds no heap state. A non-finite setpoint or measurement enters the state
-and the output and stays until `reset`: screening sensor faults is the
-caller's, because a hold or fallback policy depends on the actuator.
-The derivative acts on the measurement, not the error, with the filter
-$T_f \dot D + D = -K_d \dot y$ discretized by backward difference as in
-Wittenmark et al. [24]. Backward difference keeps the filter coefficient
-$a_d = T_f/ (T_f + h)$ in $[0, 1]$ for all parameters [13, Sec. 6.7]. The
-filtered measurement derivative is stored without $K_d$ so a gain change
+$T_f \ge 0$, the gains, $h$ and $T_f$ are finite and, for `BackCalculation`,
+$T_t > 0$ and finite; a NaN parameter fails its comparison or the finite
+check, and an infinite limit means no limit. Infinite $h$ or $T_f$ is
+rejected: IEEE division then makes $a_d = T_f/(T_f + h)$ a NaN that poisons
+every later `step`. It computes `ad`, `bd`, `kih` and `hbt` ($h/T_t$ or 0)
+once, so `step` is a fixed sequence of saturating operations with no branch
+except the limit selection and the anti-windup test (NFR-4). The controller
+is `Copy` and holds no heap state. A non-finite setpoint or measurement
+enters the state and the output and stays until `reset`: screening sensor
+faults is the caller's, because a hold or fallback policy depends on the
+actuator. The derivative acts on the measurement, not the error, with the
+filter $T_f \dot D + D = -K_d \dot y$ discretized by backward difference as
+in Wittenmark et al. [24]. Backward difference keeps the filter coefficient
+$a_d = T_f/ (T_f + h)$ in $[0, 1]$ for all accepted parameters [13, Sec. 6.7].
+The filtered measurement derivative is stored without $K_d$ so a gain change
 does not rescale history:
 
 ```math
@@ -786,7 +788,7 @@ The enum has a hand-written `Display`, `impl core::error::Error` and
 | VC-10.3   | FR-10       | `libtest`    | `control_rs::classical_control::realization::tests::section_count_values`          | `section_count` equals $\max(1, \lceil (D-1)/2 \rceil)$ for $D \in \lbrace 0, 1, 2, 3, 4, 5, 6, 9 \rbrace$ |
 | VC-11.1   | FR-11       | `libtest`    | `control_rs::classical_control::pid::tests::unsaturated_matches_recurrence`        | Within limits, outputs equal the closed-form recurrence of §4.10 within §6.2                                                                                                               |
 | VC-11.2   | FR-11       | `libtest`    | `control_rs::classical_control::pid::tests::setpoint_step_no_derivative_kick`      | A setpoint step at constant measurement leaves $D$ unchanged exactly                                                                                                                       |
-| VC-11.3   | FR-11       | `libtest`    | `control_rs::classical_control::pid::tests::output_within_limits`                  | Every output lies in $[u_{min}, u_{max}]$ and `new` returns `InvalidParameter` for $u_{min} > u_{max}$, $h \le 0$ or $T_f < 0$                                                             |
+| VC-11.3   | FR-11       | `libtest`    | `control_rs::classical_control::pid::tests::output_within_limits`                  | Every output lies in $[u_{min}, u_{max}]$ and `new` returns `InvalidParameter` for $u_{min} > u_{max}$, $h \le 0$, $T_f < 0$, non-finite gains/$h$/$T_f$, or non-finite back-calculation $T_t$ |
 | VC-12.1   | FR-12       | `libtest`    | `control_rs::classical_control::pid::tests::clamping_holds_integrator`             | Under sustained saturation in `Clamping`, $I$ is constant exactly and resumes integrating when the error changes sign                                                                      |
 | VC-12.1b  | FR-12       | `libtest`    | `control_rs::classical_control::pid::tests::clamping_reverse_acting_holds`         | Reverse-acting `Clamping` ($K_i < 0$) holds $I$ at zero under sustained saturation, and a later zero error returns zero output                                                             |
 | VC-12.2   | FR-12       | `libtest`    | `control_rs::classical_control::pid::tests::back_calculation_fixed_point`          | Under sustained saturation in `BackCalculation`, $I$ converges to the closed-form fixed point within §6.2                                                                                  |

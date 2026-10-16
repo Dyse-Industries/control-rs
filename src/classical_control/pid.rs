@@ -127,6 +127,18 @@ pub mod tests {
                 u_max: f64::NAN,
                 ..base
             },
+            PidParams {
+                h: f64::INFINITY,
+                ..base
+            },
+            PidParams {
+                tf: f64::INFINITY,
+                ..base
+            },
+            PidParams {
+                anti_windup: AntiWindup::BackCalculation { tt: f64::INFINITY },
+                ..base
+            },
         ] {
             assert_eq!(Pid::new(bad), Err(ClassicalError::InvalidParameter));
         }
@@ -366,21 +378,25 @@ impl<T: Float + Copy> Pid<T> {
     ///
     /// # Errors
     /// [`ClassicalError::InvalidParameter`] when `u_min > u_max`,
-    /// `h <= 0`, `T_f < 0`, a back-calculation `T_t <= 0`, or any parameter
-    /// is NaN or a gain is infinite. An infinite limit means no limit.
+    /// `h <= 0`, `T_f < 0`, a back-calculation `T_t <= 0`, `h`, `T_f` or a
+    /// gain is non-finite, a back-calculation `T_t` is non-finite, or a
+    /// limit is NaN. An infinite limit means no limit; infinite `h` or
+    /// `T_f` is rejected because `a_d = T_f / (T_f + h)` is then NaN.
     pub fn new(params: PidParams<T>) -> Result<Self, ClassicalError> {
-        let tt_ok = match params.anti_windup {
-            AntiWindup::Clamping => true,
-            AntiWindup::BackCalculation { tt } => tt > T::ZERO,
-        };
         // `x - x` is zero only for a finite `x`; NaN and infinity give NaN.
         let finite = |x: T| x.saturating_sub(&x) == T::ZERO;
+        let tt_ok = match params.anti_windup {
+            AntiWindup::Clamping => true,
+            AntiWindup::BackCalculation { tt } => tt > T::ZERO && finite(tt),
+        };
         let valid = params.u_min <= params.u_max
             && params.h > T::ZERO
             && params.tf >= T::ZERO
             && finite(params.kp)
             && finite(params.ki)
             && finite(params.kd)
+            && finite(params.h)
+            && finite(params.tf)
             && tt_ok;
         if !valid {
             return Err(ClassicalError::InvalidParameter);
