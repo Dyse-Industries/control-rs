@@ -380,7 +380,8 @@ impl<L: HostLink<Error = HostError>> Session<L> {
     ///
     /// # Errors
     /// Returns [`HostError::ProtocolMismatch`] when the target speaks another revision,
-    /// [`HostError::Discovery`] when discovery does not finish in time, or a transport error.
+    /// [`HostError::Discovery`] when discovery does not finish in time or leaves an
+    /// executable slot empty, or a transport error.
     pub fn discover(&mut self) -> SessionResult<()> {
         self.catalog = Catalog::default();
         discover(&mut self.link)?;
@@ -421,6 +422,9 @@ impl<L: HostLink<Error = HostError>> Session<L> {
         if revision.is_none() {
             return Err(HostError::Discovery);
         }
+        if !self.catalog.missing_executables().is_empty() {
+            return Err(HostError::Discovery);
+        }
         for (suite, index) in self.catalog.missing_settings() {
             let _ = self.get_setting(suite, ParamKey::Index(index))?;
         }
@@ -442,8 +446,13 @@ impl<L: HostLink<Error = HostError>> Session<L> {
             match self.wait_event(until) {
                 Wait::Closed => return Err(closed()),
                 Wait::Timeout => {
-                    outcome.status = CaseStatus::UnreportedFault;
-                    self.recover()?;
+                    // Keep a wire Done verdict when RunStats never arrives; only silence
+                    // with no Done is an unreported fault.
+                    outcome.status = verdict
+                        .map_or(CaseStatus::UnreportedFault, CaseStatus::Done);
+                    // Best-effort recover: the outcome must still return so callers can
+                    // record Faulted/Done before a rediscovery failure aborts the suite.
+                    let _ = self.recover();
                     return Ok(outcome);
                 }
                 Wait::Event(event) => match *event {
@@ -478,7 +487,7 @@ impl<L: HostLink<Error = HostError>> Session<L> {
                             line,
                             message,
                         };
-                        self.recover()?;
+                        let _ = self.recover();
                         return Ok(outcome);
                     }
                     _ => {}
@@ -787,6 +796,30 @@ mod tests {
         assert_eq!(outcome.status, CaseStatus::UnreportedFault);
         assert_eq!(s.results().resets, 1);
         assert_eq!(s.device_state(), DeviceState::Idle);
+    }
+
+    #[test]
+    fn done_without_stats_keeps_the_verdict() {
+        let mut s = open(Fake {
+            fail_item: Some(0),
+            omit_stats: Some(0),
+            ..Fake::default()
+        });
+        let outcome = s.run_case((0, 0)).unwrap();
+        assert_eq!(outcome.status, CaseStatus::Done(Verdict::Fail));
+        assert!(outcome.stats.is_none());
+        assert_eq!(s.results().resets, 1);
+    }
+
+    #[test]
+    fn incomplete_executable_discovery_is_an_error() {
+        let link = Fake {
+            drop_exec: Some(1),
+            ..Fake::default()
+        }
+        .link();
+        let err = Session::open_with(link, quick()).err().unwrap();
+        assert!(matches!(err, HostError::Discovery));
     }
 
     #[test]

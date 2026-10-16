@@ -46,6 +46,14 @@ pub struct Fake {
     pub panic_item: Option<u16>,
     /// Setting index that discovery drops.
     pub drop_setting: Option<u16>,
+    /// Executable item that discovery drops.
+    pub drop_exec: Option<u16>,
+    /// Case item that reports Done then goes silent before `RunStats`.
+    pub omit_stats: Option<u16>,
+    /// Case item that reports Fail (with stats unless `omit_stats` matches).
+    pub fail_item: Option<u16>,
+    /// Task item whose settle skips Done and sends only `RunStats`.
+    pub omit_done: Option<u16>,
     /// Release-source flag of `TargetInfo`.
     pub release_source: bool,
     /// Wire revision reported.
@@ -76,6 +84,10 @@ impl Default for Fake {
             missed: 0,
             panic_item: None,
             drop_setting: None,
+            drop_exec: None,
+            omit_stats: None,
+            fail_item: None,
+            omit_done: None,
             release_source: false,
             version: PROTOCOL_VERSION,
             active: None,
@@ -152,6 +164,9 @@ impl Fake {
             (1, "boom", ExecMode::Atomic.bit(), PacketDecl::default()),
             (2, "loop", 0b1_1111, byte),
         ] {
+            if self.drop_exec == Some(item) {
+                continue;
+            }
             out.push(OwnedTelemetry::TestInfo {
                 description: String::new(),
                 input: io.clone(),
@@ -233,8 +248,19 @@ impl Fake {
             }
             (2, _) => self.active = Some((item, mode, max_steps)),
             _ => {
-                out.push(state(item, TestState::Passed, Some(Verdict::Pass)));
-                out.push(stats(item, 1, 0, 0));
+                let fail = self.fail_item == Some(item);
+                let verdict = if fail { Verdict::Fail } else { Verdict::Pass };
+                let done_state = if fail {
+                    TestState::Failed
+                } else {
+                    TestState::Passed
+                };
+                out.push(state(item, done_state, Some(verdict)));
+                if self.omit_stats == Some(item) {
+                    self.dead = true;
+                } else {
+                    out.push(stats(item, 1, 0, 0));
+                }
             }
         }
         out
@@ -253,21 +279,22 @@ impl Fake {
 
     fn finish(&mut self, steps: u64, verdict: Verdict) -> Vec<OwnedTelemetry> {
         self.active = None;
-        vec![
-            OwnedTelemetry::TeardownReport {
-                message: None,
-                ok: true,
-                suite_id: 0,
-                test_id: 2,
-            },
-            state(2, TestState::Passed, Some(verdict)),
-            stats(
-                2,
-                steps,
-                self.missed,
-                if self.missed == 0 { 0 } else { 500 },
-            ),
-        ]
+        let mut out = vec![OwnedTelemetry::TeardownReport {
+            message: None,
+            ok: true,
+            suite_id: 0,
+            test_id: 2,
+        }];
+        if self.omit_done != Some(2) {
+            out.push(state(2, TestState::Passed, Some(verdict)));
+        }
+        out.push(stats(
+            2,
+            steps,
+            self.missed,
+            if self.missed == 0 { 0 } else { 500 },
+        ));
+        out
     }
 }
 

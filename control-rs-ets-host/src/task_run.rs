@@ -440,7 +440,7 @@ impl<L: HostLink<Error = HostError>> Session<L> {
                         .is_some_and(|s| state.last_event.elapsed() > s)
                     {
                         state.record.status = RunStatus::UnreportedFault;
-                        self.recover()?;
+                        let _ = self.recover();
                         return Ok(());
                     }
                 }
@@ -478,7 +478,7 @@ impl<L: HostLink<Error = HostError>> Session<L> {
             .is_some_and(|t| t.elapsed() > self.opts.stop_timeout)
         {
             state.record.status = RunStatus::Unresponsive;
-            self.recover()?;
+            let _ = self.recover();
             return Ok(true);
         }
         if state.last_heartbeat.elapsed() >= HEARTBEAT {
@@ -533,19 +533,11 @@ impl<L: HostLink<Error = HostError>> Session<L> {
             OwnedTelemetry::RunStats {
                 suite_id, test_id, ..
             } if (*suite_id, *test_id) == id => {
-                if let Some(stats) = stats_of(event) {
-                    state.record.jitter_max_ns = stats.jitter_max_ns;
-                    state.record.missed_releases = stats.missed_releases;
-                    state.record.step_max_ns = stats.step_max_ns;
-                    state.record.step_min_ns = stats.step_min_ns;
-                    state.record.steps = stats.steps;
-                }
-                self.device = crate::session::DeviceState::Idle;
-                return Ok(true);
+                return Ok(self.on_run_stats(event, state));
             }
             OwnedTelemetry::TargetPanic { .. } => {
                 state.record.status = RunStatus::Faulted;
-                self.recover()?;
+                let _ = self.recover();
                 return Ok(true);
             }
             other => {
@@ -553,6 +545,27 @@ impl<L: HostLink<Error = HostError>> Session<L> {
             }
         }
         Ok(false)
+    }
+
+    /// Applies `RunStats` and ends the run. Without a prior Done verdict the status is
+    /// [`RunStatus::UnreportedFault`].
+    const fn on_run_stats(
+        &mut self,
+        event: &OwnedTelemetry,
+        state: &mut Loop<'_>,
+    ) -> bool {
+        if let Some(stats) = stats_of(event) {
+            state.record.jitter_max_ns = stats.jitter_max_ns;
+            state.record.missed_releases = stats.missed_releases;
+            state.record.step_max_ns = stats.step_max_ns;
+            state.record.step_min_ns = stats.step_min_ns;
+            state.record.steps = stats.steps;
+        }
+        if state.record.verdict.is_none() {
+            state.record.status = RunStatus::UnreportedFault;
+        }
+        self.device = crate::session::DeviceState::Idle;
+        true
     }
 
     /// Handles output sample `seq`: records gaps and answers with the next input.
@@ -769,6 +782,26 @@ mod tests {
         .unwrap();
         assert_eq!(rec.status, RunStatus::UnreportedFault);
         assert_eq!(s.results().resets, 1);
+    }
+
+    #[test]
+    fn run_stats_without_done_is_unreported_fault() {
+        let mut s = open(Fake {
+            omit_done: Some(2),
+            ..Fake::default()
+        });
+        let rec = go!(
+            s,
+            TASK,
+            &bounded(1),
+            Increment,
+            &mut MemoryObserver::default(),
+            &RunControl::default(),
+        )
+        .unwrap();
+        assert_eq!(rec.status, RunStatus::UnreportedFault);
+        assert_eq!(rec.verdict, None);
+        assert_eq!(rec.steps, 1);
     }
 
     #[test]

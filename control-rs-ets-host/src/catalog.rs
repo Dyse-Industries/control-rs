@@ -12,7 +12,8 @@
 //!   share one index space.
 //! - **Task**: An executable that allows any mode besides `Atomic`.
 //! - **Missing entries**: Each setting carries its index and the suite's count, so a dropped
-//!   value message leaves a hole the session detects and refills by index.
+//!   value message leaves a hole the session detects and refills by index. A dropped
+//!   `ExecutableInfo` leaves a hole; the session rejects discovery rather than skipping it.
 //!
 //! # Usage
 //!
@@ -257,6 +258,23 @@ impl Catalog {
             .collect()
     }
 
+    /// Executables a dropped `ExecutableInfo` left unreported, as `(suite, item)`.
+    ///
+    /// Unlike settings, the wire has no per-index refill; a hole must fail discovery so
+    /// `case_ids` cannot silently omit a registered case.
+    #[must_use]
+    pub fn missing_executables(&self) -> Vec<ItemId> {
+        (0_u16..)
+            .zip(&self.suites)
+            .flat_map(|(suite, s)| {
+                (0_u16..)
+                    .zip(&s.executables)
+                    .filter(|(_, e)| e.is_none())
+                    .map(move |(item, _)| (suite, item))
+            })
+            .collect()
+    }
+
     /// The setting `name` of `suite`, if it was reported.
     #[must_use]
     pub fn setting(&self, suite: u16, name: &str) -> Option<&SettingEntry> {
@@ -356,5 +374,17 @@ mod tests {
         assert_eq!(c.missing_settings(), Vec::<ItemId>::new());
         assert_eq!(c.setting(0, "k1").map(|s| s.index), Some(1));
         assert!(c.setting(0, "none").is_none());
+    }
+
+    #[test]
+    fn missing_executables_detects_holes() {
+        let mut c = Catalog::default();
+        c.apply(&suite_info(0, 2));
+        c.apply(&test_info(1, ExecMode::Atomic.bit()));
+        assert_eq!(c.missing_executables(), [(0, 0)]);
+        assert_eq!(c.case_ids(), [(0, 1)], "holes are skipped by case_ids");
+        c.apply(&test_info(0, ExecMode::Atomic.bit()));
+        assert_eq!(c.missing_executables(), Vec::<ItemId>::new());
+        assert_eq!(c.case_ids(), [(0, 0), (0, 1)]);
     }
 }
