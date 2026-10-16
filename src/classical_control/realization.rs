@@ -1214,9 +1214,6 @@ impl<T: Scalar + Signed + MulAcc, const ORDER: usize> DirectForm2T<T, ORDER> {
     ///
     /// Stores `-a_i` for the recurrence. `T: Signed` is required so the
     /// negation is not the unsigned `Fixed` no-op that clears feedback.
-    ///
-    /// # Panics
-    /// Never.
     #[must_use]
     pub fn new(b0: T, b: [T; ORDER], a: [T; ORDER]) -> Self {
         Self {
