@@ -120,9 +120,9 @@ record and its status.
 
 ## tui
 
-| Design                                       | Status | Implementation    |
-|:---------------------------------------------|:-------|:------------------|
-| [Terminal User Interface](tui/tui-design.md) | Stale  | `control-rs-tui/` |
+| Design | Status | Implementation |
+|:--|:--|:--|
+| [Terminal User Interface](ets/tui-design.md) | Stale | `control-rs-tui/` |
 
 ## ci
 
