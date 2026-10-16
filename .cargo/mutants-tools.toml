@@ -39,4 +39,14 @@ exclude_re = [
     # stall the telemetry retry loop; the test timeout detects the hang.
     "replace CommsLock::(try_lock -> bool with false|unlock with \\(\\))",
     "delete ! in Context<L, P>::send_telemetry_locked",
+    # A lockstep input older than the step is dropped, but the runner also
+    # reads at most one command per boundary and steps as soon as the input for
+    # step `k` is held, so a stale input never replaces a held one and storing
+    # it changes nothing observable. The same text names the non-lockstep
+    # comparison in `State::store`, which a test does kill.
+    "replace < with > in State::store",
+    # An unpaced single-step run that waits for a release never reaches a
+    # boundary, so the run cannot end; the new run tests fail on it, but the
+    # server tests that share the mutant loop forever.
+    "replace == with != in Runner<'_, L, P, B, M>::ready",
 ]

@@ -121,6 +121,11 @@ pub trait CPUProfiler {
     /// * `u64` - The current timestamp in nanoseconds.
     fn get_nanos(&self) -> u64;
 
+    /// Whether `get_nanos` advances; profilers without a time source return false.
+    fn has_clock(&self) -> bool {
+        true
+    }
+
     /// Get the current stack pointer.
     ///
     /// Used as a reference point for painting and reading stack usage.

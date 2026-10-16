@@ -8,6 +8,7 @@ is in [`CONTRIBUTING.md` §3.2](../../CONTRIBUTING.md).
 Numbers are assigned in order and never reused. A superseded record keeps its
 row and names its replacement.
 
-| ADR | Title | Status | Superseded by |
-|:--|:--|:--|:--|
-| [ADR-0001](0001-adopt-adrs.md) | Adopt ADRs for workspace decisions | Accepted | — |
+| ADR                                                      | Title                                | Status   | Superseded by |
+|:---------------------------------------------------------|:-------------------------------------|:---------|:--------------|
+| [ADR-0001](0001-adopt-adrs.md)                           | Adopt ADRs for workspace decisions   | Accepted | —             |
+| [ADR-0002](0002-single-job-executive-for-ets-and-hil.md) | Single-Job Executive for ETS and HIL | Proposed | —             |

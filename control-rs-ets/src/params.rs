@@ -35,8 +35,7 @@
 //!
 //! - **Types**: `u8`, `u16`, `u32`, `i32`, `f32` and `bool` only.
 
-use core::sync::atomic::{AtomicU32, Ordering};
-
+use crate::cell::StateCell;
 use crate::wire::Param;
 
 /// A table of parameters in a suite descriptor.
@@ -45,7 +44,7 @@ pub type ParamTable = &'static [&'static ParamEntry];
 /// The result of a write: success or a static description of the refusal.
 pub type SetResult = Result<(), &'static str>;
 
-/// A named, bounded, atomically stored primitive.
+/// A named, bounded primitive in a single-writer cell.
 ///
 /// # Safety
 /// This struct does not use `unsafe` code.
@@ -57,7 +56,7 @@ pub struct ParamEntry {
     max: Param,
     min: Param,
     name: &'static str,
-    bits: AtomicU32,
+    bits: StateCell<u32>,
 }
 
 impl ParamEntry {
@@ -97,7 +96,7 @@ impl ParamEntry {
             max: limits.1,
             min: limits.0,
             name,
-            bits: AtomicU32::new(init),
+            bits: StateCell::new(init),
         }
     }
 
@@ -205,7 +204,7 @@ impl ParamEntry {
     /// Reads the stored value.
     #[must_use]
     pub fn get(&self) -> Param {
-        let bits = self.bits.load(Ordering::Relaxed);
+        let bits = self.bits.get();
         match self.min {
             Param::U8(_) => Param::U8(u8::try_from(bits).unwrap_or(u8::MAX)),
             Param::U16(_) => {
@@ -238,7 +237,7 @@ impl ParamEntry {
         if !within(value, self.min, self.max) {
             return Err("Value out of bounds");
         }
-        self.bits.store(bits, Ordering::Relaxed);
+        self.bits.set(bits);
         Ok(())
     }
 }

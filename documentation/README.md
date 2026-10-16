@@ -110,7 +110,8 @@ record and its status.
 
 | Design | Status | Implementation |
 |:--|:--|:--|
-| [Embedded Test Server](ets/embedded-test-server-design.md) | Approved | `control-rs-ets/src/server.rs` |
+| [Embedded Test Server](ets/embedded-test-server-design.md) | Stale | `control-rs-ets/src/server.rs` |
+| [ETS Executive](ets/ets-executive-design.md) | Stale | `control-rs-ets/src/{exec,run,board,fault,cell}.rs` |
 | [ETS Link](ets/ets-link-design.md) | Draft | `control-rs-ets/src/link/`, `control-rs-ets/src/wire.rs` |
 | [`CPUProfiler`](ets/cpu-profiler-design.md) | Approved | `control-rs-ets/src/profiler.rs` |
 | [Exportable Test Suites](ets/test-suite-design.md) | Approved | `src/**/tests/` (`ets` feature) |
@@ -120,6 +121,9 @@ record and its status.
 | Design                                                                      | Status | Implementation       |
 |:----------------------------------------------------------------------------|:-------|:---------------------|
 | [Procedural Macros for Distributed Test Discovery](macros/macros-design.md) | Stale  | `control-rs-macros/` |
+| [`CPUProfiler`](ets/cpu-profiler-design.md) | Stale | `control-rs-ets/src/profiler.rs` |
+| [Exportable Test Suites](ets/test-suite-design.md) | Stale | `src/**/tests/` (`ets` feature) |
+| [Procedural Macros for Distributed Test Discovery](ets/macros-design.md) | Stale | `control-rs-macros/` |
 
 ## ets-host
 
