@@ -66,6 +66,7 @@ and `cargo ci` is green.
     - [ ] **PR4-1**: Design (`control-toolboxes/classical-control-design.md`);
       awaiting review and sign-off
     - [ ] **PR4-2**: Implementation; written on the stack, merges after PR4-1
+    - [ ] **PR4-3**: Fine-tuning and polish (not hardening).
 - [ ] **PR5**: Modern Control Toolbox (`src/modern_control`)
     - Design drafted (`control-toolboxes/modern-control-design.md`); needs the
       Gehrd, Orghr, Hseqr, Trsen and Trsyl kernels (see PR11)
