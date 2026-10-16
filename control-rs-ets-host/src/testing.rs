@@ -46,6 +46,14 @@ pub struct Fake {
     pub panic_item: Option<u16>,
     /// Setting index that discovery drops.
     pub drop_setting: Option<u16>,
+    /// Executable index that discovery drops.
+    pub drop_exec: Option<u16>,
+    /// Item that reports `Done` and omits `RunStats`.
+    pub omit_stats_item: Option<u16>,
+    /// Verdict used when `omit_stats_item` finishes without `RunStats`.
+    pub omit_stats_verdict: Verdict,
+    /// Item that reports `Done(Fail)` with `RunStats`.
+    pub fail_item: Option<u16>,
     /// Release-source flag of `TargetInfo`.
     pub release_source: bool,
     /// Wire revision reported.
@@ -76,6 +84,10 @@ impl Default for Fake {
             missed: 0,
             panic_item: None,
             drop_setting: None,
+            drop_exec: None,
+            omit_stats_item: None,
+            omit_stats_verdict: Verdict::Fail,
+            fail_item: None,
             release_source: false,
             version: PROTOCOL_VERSION,
             active: None,
@@ -152,6 +164,9 @@ impl Fake {
             (1, "boom", ExecMode::Atomic.bit(), PacketDecl::default()),
             (2, "loop", 0b1_1111, byte),
         ] {
+            if self.drop_exec == Some(item) {
+                continue;
+            }
             out.push(OwnedTelemetry::TestInfo {
                 description: String::new(),
                 input: io.clone(),
@@ -232,6 +247,23 @@ impl Fake {
                 out.extend(self.finish(1, Verdict::Bounded));
             }
             (2, _) => self.active = Some((item, mode, max_steps)),
+            _ if self.omit_stats_item == Some(item) => {
+                let verdict = self.omit_stats_verdict;
+                let failed = matches!(verdict, Verdict::Fail);
+                out.push(state(
+                    item,
+                    if failed {
+                        TestState::Failed
+                    } else {
+                        TestState::Passed
+                    },
+                    Some(verdict),
+                ));
+            }
+            _ if self.fail_item == Some(item) => {
+                out.push(state(item, TestState::Failed, Some(Verdict::Fail)));
+                out.push(stats(item, 1, 0, 0));
+            }
             _ => {
                 out.push(state(item, TestState::Passed, Some(Verdict::Pass)));
                 out.push(stats(item, 1, 0, 0));

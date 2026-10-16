@@ -162,15 +162,17 @@ pub(crate) fn drive<L: HostLink<Error = HostError>>(
     let mut results = Vec::new();
     let mut abort = None;
     for id in pending.clone() {
-        let Some(remaining) = options
+        // Wall budget is checked between cases. Mapping the remainder onto
+        // `case_timeout` would turn a near-deadline wait into `UnreportedFault`
+        // plus `recover` (FR-14) instead of `Completion::TimedOut` (FR-6).
+        if options
             .timeout
             .checked_sub(start.elapsed())
-            .filter(|r| !r.is_zero())
-        else {
+            .is_none_or(|remaining| remaining.is_zero())
+        {
             abort = Some(Completion::TimedOut);
             break;
-        };
-        session.opts.case_timeout = remaining;
+        }
         let Ok(outcome) = session.run_case(id) else {
             abort = Some(if session.link.exited().unwrap_or(true) {
                 Completion::TargetExited
@@ -283,16 +285,29 @@ mod tests {
     }
 
     #[test]
-    fn a_target_that_never_answers_times_out() {
+    fn a_silent_case_is_an_unreported_fault_and_the_run_continues() {
         let mut s = session(Fake {
             hang_on: Some(0),
             ..Fake::default()
         });
         let started = Instant::now();
-        let record = drive(&mut s, options(150, 9));
-        assert_eq!(record.completion(), Completion::TimedOut);
+        let record = drive(&mut s, options(2000, 9));
+        assert_eq!(record.completion(), Completion::Drained);
         assert!(started.elapsed() < Duration::from_secs(2));
-        assert_ne!(record.pending, Vec::<TestIndex>::new());
+        assert_eq!(record.pending, Vec::<TestIndex>::new());
+        assert_eq!(record.resets, 1);
+        assert_eq!(record.results.first().unwrap().state, TestState::Failed);
+        assert_eq!(record.results.get(1).unwrap().state, TestState::Passed);
+    }
+
+    #[test]
+    fn a_wall_bound_ends_with_timed_out_before_starting_cases() {
+        let mut s = session(Fake::default());
+        let record = drive(&mut s, options(0, 9));
+        assert_eq!(record.completion(), Completion::TimedOut);
+        assert_eq!(record.pending, [(0, 0), (0, 1)]);
+        assert_eq!(record.results, Vec::<TestOutcome>::new());
+        assert_eq!(record.resets, 0);
     }
 
     #[test]

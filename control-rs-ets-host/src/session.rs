@@ -424,11 +424,20 @@ impl<L: HostLink<Error = HostError>> Session<L> {
         for (suite, index) in self.catalog.missing_settings() {
             let _ = self.get_setting(suite, ParamKey::Index(index))?;
         }
+        // Executable holes have no index refill (unlike settings). Fail discovery
+        // rather than omit the case from `case_ids` and silently under-test.
+        if !self.catalog.missing_executables().is_empty() {
+            return Err(HostError::Discovery);
+        }
         self.device = DeviceState::Idle;
         Ok(())
     }
 
     /// Waits for the outcome of the case `id`, recovering the target after a fault.
+    ///
+    /// Wire settle order is `ItemState::Done(verdict)` then `RunStats`. A dropped
+    /// or late stats frame must not discard a verdict the target already reported:
+    /// that would rewrite Fail/Pass as `UnreportedFault` and reset a healthy target.
     fn collect_case(&mut self, id: ItemId) -> SessionResult<CaseOutcome> {
         let until = deadline(self.opts.case_timeout);
         let mut outcome = CaseOutcome {
@@ -442,6 +451,11 @@ impl<L: HostLink<Error = HostError>> Session<L> {
             match self.wait_event(until) {
                 Wait::Closed => return Err(closed()),
                 Wait::Timeout => {
+                    if let Some(v) = verdict {
+                        outcome.status = CaseStatus::Done(v);
+                        self.device = DeviceState::Idle;
+                        return Ok(outcome);
+                    }
                     outcome.status = CaseStatus::UnreportedFault;
                     self.recover()?;
                     return Ok(outcome);
@@ -787,6 +801,45 @@ mod tests {
         assert_eq!(outcome.status, CaseStatus::UnreportedFault);
         assert_eq!(s.results().resets, 1);
         assert_eq!(s.device_state(), DeviceState::Idle);
+    }
+
+    #[test]
+    fn done_without_run_stats_keeps_the_verdict() {
+        let mut s = open(Fake {
+            omit_stats_item: Some(0),
+            omit_stats_verdict: Verdict::Fail,
+            ..Fake::default()
+        });
+        let outcome = s.run_case((0, 0)).unwrap();
+        assert_eq!(outcome.status, CaseStatus::Done(Verdict::Fail));
+        assert_eq!(outcome.stats, None);
+        assert_eq!(s.results().resets, 0);
+        assert_eq!(s.device_state(), DeviceState::Idle);
+    }
+
+    #[test]
+    fn done_fail_with_run_stats_stays_failed() {
+        let mut s = open(Fake {
+            fail_item: Some(0),
+            ..Fake::default()
+        });
+        let outcome = s.run_case((0, 0)).unwrap();
+        assert_eq!(outcome.status, CaseStatus::Done(Verdict::Fail));
+        assert_eq!(outcome.stats.map(|st| st.cycles), Some(10));
+    }
+
+    #[test]
+    fn discovery_rejects_a_missing_executable() {
+        let err = Session::open_with(
+            Fake {
+                drop_exec: Some(1),
+                ..Fake::default()
+            }
+            .link(),
+            quick(),
+        )
+        .err();
+        assert!(matches!(err, Some(HostError::Discovery)));
     }
 
     #[test]
