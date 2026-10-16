@@ -142,7 +142,7 @@ description = "Executes host unit and integration test suites"
 [miri]
 mode = "fail"
 command = "cargo +nightly miri"
-args = ["test", "-p", "control-rs", "--lib"]
+args = ["test", "-p", "control-rs", "--lib", "--"]
 env = { MIRIFLAGS = "-Zmiri-disable-isolation", PROPTEST_DISABLE_FAILURE_PERSISTENCE = "1", PROPTEST_CASES = "8" }
 timeout_secs = 600
 description = "Executes library unit tests under Miri interpreter detecting undefined behavior and memory leaks"
