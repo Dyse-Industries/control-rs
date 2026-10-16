@@ -46,6 +46,12 @@ fixed quantization step $\Delta = 2^{-\text{SHIFT}}$ (ARM, 1996; Spiteri,
 - **FR-7 — Representable-Constant Gating**: A trait is implemented only when
   its properties hold. Do not implement `One` when `1` is not representable:
   then `1 * n ≠ n`. `SaturatingInteger` also requires `2`.
+- **FR-8 — Multiply Accumulate**: `Fixed<Repr, SHIFT>` implements `MulAcc`
+  (`num-traits-design.md` FR-7) with an accumulator `Repr::Acc` that holds
+  exact products at scale $2\,\text{SHIFT}$. `mac` adds the exact product of
+  two values to the accumulator and saturates only at the accumulator bounds.
+  `from_acc` rescales to `SHIFT` once with ties to even and saturates at the
+  representation bounds, so a chain of any length rounds once.
 
 #### 2.2 Non-Functional Requirements
 
@@ -303,6 +309,30 @@ destination width. Internal algorithm invariants are verified with
 `debug_assert!`
 to ensure zero branching penalty in release MCU builds.
 
+##### Multiply Accumulate (FR-8)
+
+`FixedRepr::Acc` is the integer that holds a sum of exact products at scale
+$2\,\text{SHIFT}$:
+
+| `Repr` | `Acc` | Guard bits above one full-scale product |
+|:-------|:------|:----------------------------------------|
+| `i8` | `i32` | 17 |
+| `u8` | `u32` | 16 |
+| `i16` | `i64` | 33 |
+| `u16` | `u64` | 32 |
+| `i32` | `i64` | 1 |
+| `u32` | `u64` | 0 |
+| `i64` | `i128` | 1 |
+| `u64` | `u128` | 0 |
+
+`to_acc` lifts a value to scale $2\,\text{SHIFT}$ by multiplying by
+$2^{\text{SHIFT}}$. `mac` adds `a * b`, formed exactly in `Acc`, with a
+saturating add. `from_acc` applies the convergent rescale of the previous
+subsection to `Acc` and narrows with saturation. A chain
+`from_acc(mac(mac(to_acc(c), a1, b1), a2, b2))` therefore equals the exact
+sum $c + a_1 b_1 + a_2 b_2$ rounded once, unless a partial sum leaves the
+`Acc` range, where `mac` saturates (§8).
+
 #### 4.4 Representability Gating (FR-7)
 
 For a signed integer `Repr` of bit width $n$ and scale exponent $\text{SHIFT}$,
@@ -527,6 +557,8 @@ of method-level traits. This design inherits that decision.
 | VC-5.1 | FR-5 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_scale_rescaling`, `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_fixed_display_assign_and_rescale` | Scale conversion (`rescale`) shifts left or right and saturates destination overflow |
 | VC-6.1 | FR-6 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_numeric_trait_hierarchy`, `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_unsigned_fixed_point` | Type implements `Zero`, `One`, `Conjugate`, `Scalar`, and `SaturatingInteger` and excludes `Float`/`Trig` |
 | VC-7.1 | FR-7 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_gate_separation_boundary_pin` | Numeric traits are gated and withheld when unity or two cannot be represented in the fractional span |
+| VC-14.1 | FR-8 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_mac_chain_single_rounding` | A five-term `mac` chain equals the exact integer sum rounded once with ties to even, and a partial sum outside the representation range does not clamp the result |
+| VC-14.2 | FR-8 | `kani` | `control_rs::math::fixed_num::proofs::prove_fixed_mac_total` | For all `Fixed<i16, S>` operands at scales 0, 8 and 14, a two-term `mac` chain returns the once-rounded, saturated exact result without panic |
 | VC-8.1 | NFR-1 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_memory_footprint_and_alignment` | Size and alignment of `Fixed<Repr, SHIFT>` equal those of `Repr` with zero storage overhead for `SHIFT` |
 | VC-9.1 | NFR-2 | `review` | — | Arithmetic compiles to direct integer instructions without runtime scale bookkeeping or trampolines |
 | VC-10.1 | C-1 | `review` | — | Implementation uses `core` only without heap allocation or `std` dependencies |
@@ -663,6 +695,12 @@ sequence an integer core would otherwise run (ARM, 1996).
     - Sign-aware convergent rounding on signed `Wide` products (§4.3).
     - Accumulator narrowing rules in hardware DSP extensions (ARM CMSIS-DSP,
       RISC-V NMSIS).
+9. **Accumulator Headroom (FR-8)**: `Fixed<i32, _>` and `Fixed<u32, _>` use a
+   64-bit `Acc` with at most one guard bit, so two full-scale products can
+   saturate a chain before `from_acc` narrows it. The result stays defined
+   (saturated, no panic or wrap) but differs from the exact sum. A caller
+   that needs more headroom uses `i16` operands or an accelerated `MulAcc`
+   type with a wider accumulator.
 
 ---
 
@@ -675,6 +713,7 @@ sequence an integer core would otherwise run (ARM, 1996).
 | **Phase 3: Numeric Trait Integration**   | Implement sealed `OneRepresentable` / `TwoRepresentable` markers and their macro enumeration (§4.4), then `Zero`, `One`, `Conjugate`, `Scalar`, `Signed`, and `SaturatingInteger` gated on those markers. |      Medium      |
 | **Phase 4: Verification Suite**          | Implement unit tests, proptest oracles, `compile_fail` doctests, memory footprint assertions, and `#[ets_suite]` verification.                                                                            |      Medium      |
 | **Phase 5: Downstream Model Validation** | Validate generic instantiation in matrix and tensor kernels across control toolboxes.                                                                                                                     |      Small       |
+| **Phase 6: Multiply Accumulate**         | `FixedRepr::Acc`, `to_acc_repr`, `mac_repr`, `from_acc_repr` and `MulAcc for Fixed` (FR-8, §4.3); VC-14.1 and VC-14.2.                                                                                    |      Small       |
 
 ---
 
@@ -689,6 +728,7 @@ sequence an integer core would otherwise run (ARM, 1996).
 | 1.4      | September 23, 2026 | @MitchellDScott | Division: `Div`, `DivAssign`, `SaturatingDiv` and `TryDiv` with a pre-shifted `u128` quotient and ties-to-even rounding (FR-3, §4.3). |
 | 1.5      | September 24, 2026 | @MitchellDScott | §8 rescale note: `i8` computation scales are `SHIFT <= 6` (`Scalar`) and `<= 5` (`SaturatingInteger`). |
 | 1.6 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. |
+| 1.7 | October 16, 2026 | Claude Sonnet 5.5 | Adds FR-8 (multiply accumulate), the `FixedRepr::Acc` table in §4.3, VC-14.1 and VC-14.2, §8 item 9 and Phase 6, which the `MulAcc` implementation and `num-traits-design.md` FR-7 already cite. |
 
 ---
 

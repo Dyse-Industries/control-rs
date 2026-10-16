@@ -104,6 +104,12 @@ record and its status.
 | [Tensor Type & Low-Cost Inference](numerical-models/tensor-design.md)                  | Stale  | `src/tensor/`              |
 | [Transfer Function Type](numerical-models/transfer-function-design.md)                 | Stale  | `src/transfer_function/`   |
 
+## control-toolboxes
+
+| Design | Status | Implementation |
+|:--|:--|:--|
+| [Classical Control Toolbox](control-toolboxes/classical-control-design.md) | In review | `src/classical_control/` |
+
 ## ets
 
 [Overview](ets/ets-overview.md)
