@@ -454,12 +454,24 @@ impl SessionState {
         }
     }
 
-    /// Handles discovery frames. They are ignored once the run has started.
+    /// Handles discovery frames. Suite and test catalog frames are ignored once
+    /// the run has started. [`OwnedTelemetry::SettingInfo`] still applies: the
+    /// same wire variant answers `Command::Param` (FR-11), so a refused write's
+    /// stored value must refresh the host copy while `Running`.
     fn handle_catalog(
         &mut self,
         telemetry: OwnedTelemetry,
     ) -> Vec<SessionAction> {
         if self.phase == SessionPhase::Running {
+            if let OwnedTelemetry::SettingInfo {
+                suite_id,
+                setting_id,
+                value,
+                ..
+            } = telemetry
+            {
+                self.apply_param_echo(suite_id, setting_id, value);
+            }
             return Vec::new();
         }
         match telemetry {
@@ -510,6 +522,25 @@ impl SessionState {
             | OwnedTelemetry::Log { .. } => {}
         }
         Vec::new()
+    }
+
+    /// Applies a `ParamValue` answer to a discovered setting (FR-11 write echo).
+    fn apply_param_echo(
+        &mut self,
+        suite_id: u16,
+        setting_id: u16,
+        value: Param,
+    ) {
+        let Some(suite) = self.suites.get_mut(usize::from(suite_id)) else {
+            return;
+        };
+        if let Some(setting) = suite
+            .settings
+            .iter_mut()
+            .find(|s| s.setting_id == setting_id)
+        {
+            setting.value = value;
+        }
     }
 
     /// Records suite metadata and marks components with a zero count ready.
@@ -1438,6 +1469,58 @@ mod tests {
         let first = suite.settings.iter().find(|s| s.setting_id == 0).unwrap();
         assert!(matches!(first.value, Param::U8(5)));
         assert!(suite.is_ready());
+    }
+
+    #[test]
+    fn a_param_echo_while_running_refreshes_the_stored_value() {
+        let mut state = matched();
+        feed(
+            &mut state,
+            vec![
+                OwnedTelemetry::SuiteInfo {
+                    suite_id: 0,
+                    name: "S".to_string(),
+                    description: String::new(),
+                    test_count: 0,
+                    setting_count: 1,
+                },
+                OwnedTelemetry::SettingInfo {
+                    suite_id: 0,
+                    setting_id: 0,
+                    name: "gain".to_string(),
+                    description: String::new(),
+                    value: Param::U8(10),
+                    count: 1,
+                    min: Param::U8(0),
+                    max: Param::U8(100),
+                },
+                OwnedTelemetry::DiscoveryComplete,
+            ],
+        );
+        assert_eq!(state.phase, SessionPhase::Running);
+        // Optimistic host edit that the target will refuse; echo carries stored 10.
+        let setting = state
+            .suites
+            .first_mut()
+            .and_then(|s| s.settings.first_mut())
+            .unwrap();
+        setting.value = Param::U8(200);
+        let _ = state.handle_message(BridgeMessage::Telemetry(
+            OwnedTelemetry::SettingInfo {
+                suite_id: 0,
+                setting_id: 0,
+                name: "gain".to_string(),
+                description: String::new(),
+                value: Param::U8(10),
+                count: 1,
+                min: Param::U8(0),
+                max: Param::U8(100),
+            },
+        ));
+        let suite = state.suites.first().unwrap();
+        let value = suite.settings.first().unwrap().value;
+        assert!(matches!(value, Param::U8(10)));
+        assert_eq!(suite.settings.len(), 1, "no catalog growth");
     }
 
     #[test]

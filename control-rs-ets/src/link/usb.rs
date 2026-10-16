@@ -46,6 +46,8 @@ pub struct Packets<'a> {
 pub struct Assembler<const N: usize> {
     buf: [u8; N],
     complete: bool,
+    /// True while discarding the remainder of an oversized transfer until its short packet.
+    discarding: bool,
     len: usize,
 }
 
@@ -98,6 +100,7 @@ impl<const N: usize> Assembler<N> {
         Self {
             buf: [0; N],
             complete: false,
+            discarding: false,
             len: 0,
         }
     }
@@ -105,22 +108,50 @@ impl<const N: usize> Assembler<N> {
     /// Discards any partial message.
     pub const fn reset(&mut self) {
         self.complete = false;
+        self.discarding = false;
         self.len = 0;
     }
 
     /// Adds one received packet and returns the message when the packet ends it.
     ///
     /// A packet shorter than `max_packet` ends the message. An empty message is not returned.
+    /// When a message exceeds `N`, this returns [`Overflow`] and then ignores further packets of
+    /// the same transfer until the short (or zero-length) packet that ends it, so a transfer tail
+    /// is never delivered as a new message (FR-5).
+    ///
+    /// # Arguments
+    /// * `packet` - One bulk packet from the endpoint.
+    /// * `max_packet` - Endpoint maximum packet size; packets shorter than this end a transfer.
+    ///
+    /// # Returns
+    /// * `Ok(Some(message))` - The completed message bytes (borrowed from this assembler).
+    /// * `Ok(None)` - More packets are required, the packet ended an empty transfer, or the
+    ///   assembler is discarding the rest of an oversized transfer.
     ///
     /// # Errors
-    /// Returns [`Overflow`] and discards the message if it exceeds `N` bytes.
+    /// Returns [`Overflow`] when the accumulated length would exceed `N`. The partial message is
+    /// discarded. If `packet` is still a full-sized packet, subsequent packets are ignored until
+    /// a short packet ends the transfer.
+    ///
+    /// # Panics
+    /// This function does not panic.
     pub fn push(&mut self, packet: &[u8], max_packet: usize) -> PushOf<'_> {
         if self.complete {
             self.reset();
         }
+        if self.discarding {
+            if packet.len() < max_packet {
+                self.discarding = false;
+            }
+            return Ok(None);
+        }
         let end = self.len.saturating_add(packet.len());
         let Some(dest) = self.buf.get_mut(self.len..end) else {
-            self.reset();
+            self.len = 0;
+            self.complete = false;
+            // A full packet mid-transfer means more packets of this message follow; discard them
+            // until the short packet. A short overflow packet already ended the transfer.
+            self.discarding = packet.len() >= max_packet;
             return Err(Overflow);
         };
         dest.copy_from_slice(packet);
@@ -187,8 +218,23 @@ mod tests {
     fn a_message_larger_than_the_assembler_is_discarded() {
         let mut rx = Assembler::<8>::new();
         assert_eq!(rx.push(&[1; 8], 8), Ok(None));
+        // Short overflow packet ends the transfer immediately.
         assert_eq!(rx.push(&[1; 1], 8), Err(Overflow));
         assert_eq!(rx.push(&[2; 3], 8), Ok(Some(&[2u8, 2, 2][..])));
+    }
+
+    #[test]
+    fn overflow_on_a_full_packet_discards_until_the_short_packet() {
+        let mut rx = Assembler::<512>::new();
+        for _ in 0..8 {
+            assert_eq!(rx.push(&[1; 64], 64), Ok(None));
+        }
+        assert_eq!(rx.push(&[1; 64], 64), Err(Overflow));
+        // Further full packets of the same oversized transfer stay discarded.
+        assert_eq!(rx.push(&[9; 64], 64), Ok(None));
+        // Short packet ends the transfer and must not yield a phantom message.
+        assert_eq!(rx.push(&[9; 24], 64), Ok(None));
+        assert_eq!(rx.push(&[2; 3], 64), Ok(Some(&[2u8, 2, 2][..])));
     }
 
     #[test]
