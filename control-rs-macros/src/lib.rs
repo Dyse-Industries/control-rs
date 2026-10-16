@@ -50,9 +50,9 @@ fn extract_doc_string(attrs: &[syn::Attribute]) -> String {
     }
 }
 
-/// Checks if a given `syn::Type` is a supported primitive setting.
-/// Returns the corresponding Atomic wrapper type name if matched.
-fn get_atomic_wrapper_name(ty: &syn::Type) -> Option<&'static str> {
+/// Checks if a given `syn::Type` is a supported primitive parameter.
+/// Returns the name of the matching `ParamEntry` constructor.
+fn get_param_constructor(ty: &syn::Type) -> Option<&'static str> {
     // Ensure the type is a standard path (for example, `u8` or `std::primitive::u8`)
     let path = match ty {
         syn::Type::Path(type_path) if type_path.qself.is_none() => {
@@ -66,46 +66,40 @@ fn get_atomic_wrapper_name(ty: &syn::Type) -> Option<&'static str> {
 
     // Convert to string and match in O(1)
     match ident.to_string().as_str() {
-        "u8" => Some("AtomicU8Setting"),
-        "u16" => Some("AtomicU16Setting"),
-        "u32" => Some("AtomicU32Setting"),
-        "u64" => Some("AtomicU64Setting"),
-        "i8" => Some("AtomicI8Setting"),
-        "i32" => Some("AtomicI32Setting"),
-        "bool" => Some("AtomicBoolSetting"),
-        "f32" => Some("AtomicF32Setting"),
+        "u8" => Some("u8"),
+        "u16" => Some("u16"),
+        "u32" => Some("u32"),
+        "i32" => Some("i32"),
+        "bool" => Some("bool"),
+        "f32" => Some("f32"),
         _ => None,
     }
 }
 
-/// If the static item matches a supported atomic setting type,
-/// mutates it into the corresponding `AtomicSetting` static definition and returns its identifier.
-fn process_static_setting(item_static: &mut ItemStatic) -> Option<syn::Ident> {
+/// If the static item has a supported primitive type, rewrites it into a
+/// `ParamEntry` static named after the item and returns its identifier.
+fn process_static_param(item_static: &mut ItemStatic) -> Option<syn::Ident> {
     // 1. Search phase: Delegate to the helper function
-    let atomic_type_str_option = get_atomic_wrapper_name(&item_static.ty);
+    let constructor = get_param_constructor(&item_static.ty)?;
 
-    // 2. Mutation phase: If matched, clone required fields and overwrite
-    if let Some(atomic_type_str) = atomic_type_str_option {
-        let vis = item_static.vis.clone();
-        let name_ident = item_static.ident.clone();
-        let init_expr = item_static.expr.clone();
-        let attrs = item_static.attrs.clone();
+    // 2. Mutation phase: clone required fields and overwrite
+    let vis = item_static.vis.clone();
+    let name_ident = item_static.ident.clone();
+    let init_expr = item_static.expr.clone();
+    let attrs = item_static.attrs.clone();
 
-        let setting_doc = extract_doc_string(&attrs);
-        let atomic_type_ident = format_ident!("{}", atomic_type_str);
+    let param_doc = extract_doc_string(&attrs);
+    let constructor_ident = format_ident!("{}", constructor);
 
-        let new_static: ItemStatic = parse_quote! {
-            #(#attrs)*
-            #vis static #name_ident: ::control_rs_ets::settings::#atomic_type_ident =
-                ::control_rs_ets::settings::#atomic_type_ident::new(stringify!(#name_ident), #setting_doc, #init_expr);
-        };
+    let new_static: ItemStatic = parse_quote! {
+        #(#attrs)*
+        #vis static #name_ident: ::control_rs_ets::params::ParamEntry =
+            ::control_rs_ets::params::ParamEntry::#constructor_ident(stringify!(#name_ident), #param_doc, #init_expr);
+    };
 
-        *item_static = new_static;
+    *item_static = new_static;
 
-        return Some(name_ident);
-    }
-
-    None
+    Some(name_ident)
 }
 
 /// If the function is a test executable (`fn()` and does not start with `_`),
@@ -129,7 +123,7 @@ fn generate_suite_descriptors(
     suite_name: &str,
     suite_doc: &str,
     tests: &[TestFnInfo],
-    settings: &[syn::Ident],
+    params: &[syn::Ident],
 ) -> [Item; 4] {
     let test_descriptors = tests.iter().map(|(t, doc)| {
         quote! {
@@ -141,7 +135,7 @@ fn generate_suite_descriptors(
         }
     });
 
-    let setting_ptrs = settings.iter().map(|s| {
+    let param_ptrs = params.iter().map(|s| {
         quote! {
             &#s
         }
@@ -154,8 +148,8 @@ fn generate_suite_descriptors(
             ];
         },
         parse_quote! {
-            static SETTINGS: &[&dyn ::control_rs_ets::Setting] = &[
-                #(#setting_ptrs),*
+            static PARAMS: &[&::control_rs_ets::params::ParamEntry] = &[
+                #(#param_ptrs),*
             ];
         },
         parse_quote! {
@@ -163,7 +157,7 @@ fn generate_suite_descriptors(
                 name: #suite_name,
                 description: #suite_doc,
                 executables: EXECUTABLES,
-                settings: SETTINGS,
+                params: PARAMS,
             };
         },
         parse_quote! {
@@ -193,14 +187,14 @@ fn ets_suite_impl(item: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
     let suite_doc = extract_doc_string(&item_mod.attrs);
 
     let mut tests = Vec::new();
-    let mut settings = Vec::new();
+    let mut params = Vec::new();
 
     if let Some((_, ref mut items)) = item_mod.content {
         for inner_item in items.iter_mut() {
             match inner_item {
                 Item::Static(item_static) => {
-                    if let Some(setting) = process_static_setting(item_static) {
-                        settings.push(setting);
+                    if let Some(param) = process_static_param(item_static) {
+                        params.push(param);
                     }
                 }
                 Item::Fn(item_fn) => {
@@ -216,7 +210,7 @@ fn ets_suite_impl(item: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
             &suite_name,
             &suite_doc,
             &tests,
-            &settings,
+            &params,
         );
         items.extend(suite_desc_code);
     }
@@ -228,7 +222,7 @@ fn ets_suite_impl(item: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
 
 /// Attribute macro for declaring a ETS test suite.
 ///
-/// Converts statics to atomic settings and registers functions as test executables.
+/// Converts statics to parameter table entries and registers functions as test executables.
 #[proc_macro_attribute]
 pub fn ets_suite(_attr: TokenStream, item: TokenStream) -> TokenStream {
     TokenStream::from(ets_suite_impl(item.into()))
@@ -337,6 +331,7 @@ fn ets_entrypoint_impl(
             ETS_SERVER.store(&mut server as *mut _, ::core::sync::atomic::Ordering::Release);
 
             let _ = server.run();
+            ETS_SERVER.store(::core::ptr::null_mut(), ::core::sync::atomic::Ordering::Release);
             server.exit();
         }
     }
@@ -479,8 +474,8 @@ mod tests {
     use super::{
         ets_entrypoint_impl, ets_exception_impl, ets_panic_impl,
         ets_setup_impl, ets_suite_impl, extract_context_generics,
-        extract_doc_string, generate_suite_descriptors,
-        get_atomic_wrapper_name, process_static_setting, process_test_fn,
+        extract_doc_string, generate_suite_descriptors, get_param_constructor,
+        process_static_param, process_test_fn,
     };
     use syn::{ItemFn, ItemStatic, parse_quote};
 
@@ -513,13 +508,13 @@ mod tests {
     }
 
     #[test]
-    fn qualified_self_types_are_not_settings() {
+    fn qualified_self_types_are_not_params() {
         let qualified: syn::Type = parse_quote!(<Wrapper as Trait>::u8);
-        assert_eq!(get_atomic_wrapper_name(&qualified), None);
+        assert_eq!(get_param_constructor(&qualified), None);
     }
 
     #[test]
-    fn atomic_wrapper_names_cover_supported_types() {
+    fn param_constructors_cover_supported_types() {
         let u8_ty: syn::Type = parse_quote!(u8);
         let u16_ty: syn::Type = parse_quote!(u16);
         let u32_ty: syn::Type = parse_quote!(u32);
@@ -530,19 +525,16 @@ mod tests {
         let f32_ty: syn::Type = parse_quote!(f32);
         let other: syn::Type = parse_quote!(String);
         let tuple: syn::Type = parse_quote!((u8, u8));
-        assert_eq!(get_atomic_wrapper_name(&u8_ty), Some("AtomicU8Setting"));
-        assert_eq!(get_atomic_wrapper_name(&u16_ty), Some("AtomicU16Setting"));
-        assert_eq!(get_atomic_wrapper_name(&u32_ty), Some("AtomicU32Setting"));
-        assert_eq!(get_atomic_wrapper_name(&u64_ty), Some("AtomicU64Setting"));
-        assert_eq!(get_atomic_wrapper_name(&i8_ty), Some("AtomicI8Setting"));
-        assert_eq!(get_atomic_wrapper_name(&i32_ty), Some("AtomicI32Setting"));
-        assert_eq!(
-            get_atomic_wrapper_name(&bool_ty),
-            Some("AtomicBoolSetting")
-        );
-        assert_eq!(get_atomic_wrapper_name(&f32_ty), Some("AtomicF32Setting"));
-        assert_eq!(get_atomic_wrapper_name(&other), None);
-        assert_eq!(get_atomic_wrapper_name(&tuple), None);
+        assert_eq!(get_param_constructor(&u8_ty), Some("u8"));
+        assert_eq!(get_param_constructor(&u16_ty), Some("u16"));
+        assert_eq!(get_param_constructor(&u32_ty), Some("u32"));
+        assert_eq!(get_param_constructor(&u64_ty), None);
+        assert_eq!(get_param_constructor(&i8_ty), None);
+        assert_eq!(get_param_constructor(&i32_ty), Some("i32"));
+        assert_eq!(get_param_constructor(&bool_ty), Some("bool"));
+        assert_eq!(get_param_constructor(&f32_ty), Some("f32"));
+        assert_eq!(get_param_constructor(&other), None);
+        assert_eq!(get_param_constructor(&tuple), None);
     }
 
     #[test]
@@ -577,17 +569,17 @@ mod tests {
     }
 
     #[test]
-    fn process_static_setting_rewrites_supported_types() {
+    fn process_static_param_rewrites_supported_types() {
         let mut item: ItemStatic = parse_quote! {
             /// gain
             static GAIN: u32 = 3;
         };
-        let ident = process_static_setting(&mut item).unwrap();
+        let ident = process_static_param(&mut item).unwrap();
         assert_eq!(ident.to_string(), "GAIN");
         let mut skip: ItemStatic = parse_quote! {
             static OTHER: f64 = 1.0;
         };
-        assert!(process_static_setting(&mut skip).is_none());
+        assert!(process_static_param(&mut skip).is_none());
     }
 
     #[test]
