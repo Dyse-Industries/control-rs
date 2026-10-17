@@ -1819,4 +1819,33 @@ mod tests {
             ["condition a#VC-1.1 target 'b#FR-9' not found in reqs.jsonl"]
         );
     }
+
+    #[test]
+    fn link_to_the_parent_requirement_fails_as_a_cycle() {
+        let parent_link = Row {
+            parents: vec!["a#FR-1".to_string()],
+            ..doc_condition("a", "link", &["a#FR-1"])
+        };
+        let sibling = Row {
+            id: "a#VC-1.2".to_string(),
+            parents: vec!["a#FR-1".to_string()],
+            ..doc_condition("a", "libtest", &["t::pass"])
+        };
+        let derived = derive_links(
+            "link_parent",
+            &[
+                [doc_definition("a"), parent_link],
+                [sibling.clone(), sibling],
+            ],
+        );
+        assert_eq!(requirement(&derived, "a"), Some(Status::Fail));
+        assert!(
+            derived
+                .1
+                .iter()
+                .any(|d| d.message.contains("lies on a link cycle")),
+            "{:?}",
+            derived.1
+        );
+    }
 }
