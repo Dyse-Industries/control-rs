@@ -112,6 +112,18 @@ mod path_gate {
         assert!(!matches("", "src/a.rs"));
     }
 
+    /// Harness gates must use `control-rs-ci/`, not `control-rs-ci/src/`: the
+    /// package manifest can retarget bins or ets-host features without touching
+    /// `src/`, and the runner-wide `Cargo.toml` entry matches only the workspace
+    /// root file.
+    #[test]
+    fn harness_crate_manifest_matches_crate_prefix_not_src_only() {
+        assert!(matches("control-rs-ci/", "control-rs-ci/Cargo.toml"));
+        assert!(matches("control-rs-ci/", "control-rs-ci/src/bin/ets.rs"));
+        assert!(!matches("control-rs-ci/src/", "control-rs-ci/Cargo.toml"));
+        assert!(!matches("Cargo.toml", "control-rs-ci/Cargo.toml"));
+    }
+
     #[test]
     fn a_gate_without_a_diff_trigger_always_runs() {
         assert_eq!(decide(&[], Some(&["anything"])), Decision::Run);
