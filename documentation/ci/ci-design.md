@@ -863,8 +863,9 @@ diff-trigger = ["src/matrix/", ".cargo/mutants.toml", "Cargo.toml", "Cargo.lock"
 ```
 
 **Changed files.** The runner lists them once per invocation with
-`git diff --name-status $(git merge-base <base> <head>) <head>`, taking both
-paths of a rename (FR-22). `base` and `head` come from `--base` and `--head`,
+`git diff -z --name-status $(git merge-base <base> <head>) <head>`, taking both
+paths of a rename (FR-22). `-z` keeps every path unquoted. `base` and `head`
+come from `--base` and `--head`,
 else `[runner]`, else `origin/main` and `HEAD` (FR-23). If a ref or the
 merge-base cannot be resolved, no gate is skipped.
 
@@ -1079,6 +1080,7 @@ full history so the merge-base resolves.
 | 1.43     | October 13, 2026   | @MitchellDScott, Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review.                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | 2.0      | October 17, 2026   | @MitchellDScott, Claude Sonnet 5.5 | Path-gated skip: `paths` per gate, default and configurable diff range, environment overrides (§4.11). Affects FR-22, FR-23, FR-24.                                                                                                                                                                                                                                                                                                                                                                                                     |
 | 3.0      | October 17, 2026   | @MitchellDScott, Claude Sonnet 5.5 | Gate key `diff-trigger` and a runner-wide list matched once; configurable diff range and environment overrides follow FR-22 to FR-24 (§4.11).                                                                                                                                                                                                                                                                                                                                                                                           |
+| 4.0      | October 17, 2026   | @MitchellDScott, Claude Sonnet 5.5 | §4.11 lists changed files with `git diff -z`; alternatives: workflow trigger filters are neither per gate nor local.                                                                                                                                                                                                                                                                                                                                                                                                                    |
 
 ---
 
