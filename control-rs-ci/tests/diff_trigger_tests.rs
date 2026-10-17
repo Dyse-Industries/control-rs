@@ -283,7 +283,7 @@ mod path_gate {
             "[runner]\nbase = \"main\"\nhead = \"topic\"\n",
         );
         fs::write(root.join(".cargo/gate.toml"), config).unwrap();
-        let out = run(&root, &[], &[]);
+        let out = run(&root, &["--diff"], &[]);
         assert!(out.status.success(), "{out:?}");
         assert!(ran(&root, "ran-docs") && !ran(&root, "ran-matrix"));
         let _ = fs::remove_file(root.join("ran-docs"));
@@ -389,6 +389,73 @@ mod path_gate {
         let files = changed_files(&root, "main", "topic").unwrap();
         assert_eq!(files, strings(&["src/matrix/na\u{ef}ve.rs"]));
         assert!(files.iter().all(|f| matches("src/matrix/", f)));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    /// A `git` that records each call, first on `PATH`.
+    #[cfg(unix)]
+    fn recording_git(root: &Path) -> String {
+        use std::os::unix::fs::PermissionsExt;
+        let bin = root.join("fakebin");
+        fs::create_dir_all(&bin).unwrap();
+        let git = bin.join("git");
+        fs::write(&git, "#!/bin/sh\ntouch \"$GIT_CALLED\"\nexit 1\n").unwrap();
+        fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).unwrap();
+        let path = std::env::var("PATH").unwrap_or_default();
+        format!("{}:{path}", bin.display())
+    }
+
+    #[cfg(unix)]
+    fn git_called(name: &str, config: &str, args: &[&str]) -> bool {
+        let root = std::env::temp_dir().join(format!(
+            "control_rs_ci_git_called_{name}_{}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join(".cargo")).unwrap();
+        fs::write(root.join(".cargo/gate.toml"), config).unwrap();
+        let marker = root.join("git-called");
+        let out = Command::new(CI_BIN)
+            .args(args)
+            .current_dir(&root)
+            .env("NO_COLOR", "1")
+            .env("PATH", recording_git(&root))
+            .env("GIT_CALLED", &marker)
+            .env_remove("CONTROL_RS_CI_GATES")
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        let called = marker.exists();
+        let _ = fs::remove_dir_all(&root);
+        called
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_diff_is_computed_unless_requested_and_a_gate_declares_a_trigger() {
+        let plain = "[runner]\nout_dir = \"artifacts\"\n\n[always]\ncommand = \"true\"\n";
+        assert!(!git_called("nodiff", plain, &["--diff"]));
+        let gated = format!("{plain}diff-trigger = [\"src/\"]\n");
+        assert!(!git_called("optout", &gated, &[]));
+        assert!(git_called("optin", &gated, &["--diff"]));
+    }
+
+    #[test]
+    fn a_plain_run_ignores_the_diff_and_runs_every_gate() {
+        let root = repo("plain", &[("documentation/a.md", "x")]);
+        let out = run(&root, &[], &[]);
+        assert!(out.status.success(), "{out:?}");
+        assert!(ran(&root, "ran-docs") && ran(&root, "ran-matrix"));
+        assert!(ran(&root, "ran-always"));
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn an_environment_skip_applies_without_diff() {
+        let root = repo("envplain", &[("documentation/a.md", "x")]);
+        let out = run(&root, &[], &[("CONTROL_RS_CI_GATE_DOCS", "skip")]);
+        assert!(out.status.success(), "{out:?}");
+        assert!(!ran(&root, "ran-docs") && ran(&root, "ran-matrix"));
         let _ = fs::remove_dir_all(&root);
     }
 }

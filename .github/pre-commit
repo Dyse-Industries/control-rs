@@ -46,7 +46,15 @@ fi
 
 status "Running" "clean, lint and audit in main workspace"
 cargo clean
-cargo gate lint audit
+# With --diff, gates with a diff-trigger run only when the staged changes touch it. The
+# index becomes a throwaway commit (no ref points at it) so the comparison
+# against HEAD sees exactly what this commit will contain.
+diff_args=()
+if git rev-parse --quiet --verify HEAD >/dev/null; then
+  staged_commit=$(git commit-tree "$(git write-tree)" -p HEAD -m "pre-commit")
+  diff_args=(--base HEAD --head "$staged_commit")
+fi
+cargo gate --diff "${diff_args[@]}" lint audit
 
 NESTED=(
   "examples/subprograms/aarch64"

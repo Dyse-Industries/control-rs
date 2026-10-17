@@ -119,9 +119,17 @@ pub struct PipelineOptions<'a> {
     pub extra_args: &'a [String],
     /// Bounded group concurrency limit (FR-13); overrides `[execution] max_jobs`.
     pub max_jobs: Option<usize>,
-    /// Base ref of the path-gating diff; overrides `[runner] base` (FR-23).
+    /// Skip gates whose `diff-trigger` the diff leaves untouched (FR-22).
+    /// Without it, only an environment override changes whether a gate runs.
+    pub diff: Option<DiffRefs<'a>>,
+}
+
+/// Refs of the path-gating diff; a missing one takes its default (FR-23).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct DiffRefs<'a> {
+    /// Base ref; overrides `[runner] base`.
     pub base: Option<&'a str>,
-    /// Head ref of the path-gating diff; overrides `[runner] head` (FR-23).
+    /// Head ref; overrides `[runner] head`.
     pub head: Option<&'a str>,
 }
 
@@ -327,20 +335,20 @@ fn split_by_diff_trigger(
     root: &Path,
 ) -> GateResult<PathSplit> {
     let lookup = |var: &str| std::env::var(var).ok();
-    let base = options
+    let refs = options.diff.unwrap_or_default();
+    let base = refs
         .base
         .or(config.runner.base.as_deref())
         .unwrap_or(diff_trigger::DEFAULT_BASE);
-    let head = options
+    let head = refs
         .head
         .or(config.runner.head.as_deref())
         .unwrap_or(diff_trigger::DEFAULT_HEAD);
     // One diff and one match of the `[runner]` list serve every gate.
-    let changed = gates
-        .iter()
-        .any(|g| !g.diff_trigger.is_empty())
-        .then(|| diff_trigger::changed_files(root, base, head))
-        .flatten();
+    let changed = (options.diff.is_some()
+        && gates.iter().any(|g| !g.diff_trigger.is_empty()))
+    .then(|| diff_trigger::changed_files(root, base, head))
+    .flatten();
     let global_hit = changed.as_deref().is_some_and(|files| {
         diff_trigger::global_hit(&config.runner.diff_trigger, files)
     });

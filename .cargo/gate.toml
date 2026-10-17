@@ -93,6 +93,7 @@ description = "Downloads workspace dependencies into the Cargo cache before the 
 mode = "fail"
 command = "cargo fmt"
 args = ["--all", "--", "--check"]
+diff-trigger = ["src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-tui/", "control-rs-verification/", "rustfmt.toml"]
 timeout_secs = 120
 description = "Verifies codebase formatting conformity with rustfmt"
 
@@ -100,6 +101,7 @@ description = "Verifies codebase formatting conformity with rustfmt"
 mode = "fail"
 command = "cargo clippy"
 args = ["--workspace", "--all-targets", "--", "-D", "warnings"]
+diff-trigger = ["src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-tui/", "control-rs-verification/", ".cargo/clippy.toml", ".cargo/clippy-allow-baseline.txt"]
 timeout_secs = 900
 description = "Executes Clippy linter across workspace targets"
 
@@ -107,6 +109,7 @@ description = "Executes Clippy linter across workspace targets"
 mode = "fail"
 command = "cargo run"
 args = ["--package", "control-rs-ci", "--bin", "allow-audit", "--", "--baseline", ".cargo/clippy-allow-baseline.txt", "--base-ref", "origin/main"]
+diff-trigger = ["src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-tui/", "control-rs-verification/", ".cargo/clippy-allow-baseline.txt"]
 timeout_secs = 900
 description = "Fails on clippy suppression sites (allow, expect, cfg_attr, manifest allow level) beyond .cargo/clippy-allow-baseline.txt, on stale baseline entries, and on baseline growth against origin/main"
 
@@ -115,6 +118,7 @@ mode = "fail"
 command = "cargo doc"
 args = ["--workspace", "--no-deps"]
 env = { RUSTDOCFLAGS = "-D warnings" }
+diff-trigger = ["src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-tui/", "control-rs-verification/"]
 timeout_secs = 900
 description = "Builds workspace API documentation with rustdoc warnings denied"
 
@@ -166,6 +170,7 @@ description = "Measures workspace line coverage using cargo-tarpaulin"
 mode = "fail"
 command = "cargo deny"
 args = ["check", "advisories", "licenses", "sources"]
+diff-trigger = [".cargo/deny.toml", "control-rs-ci/Cargo.toml", "control-rs-compare/Cargo.toml", "control-rs-ets/Cargo.toml", "control-rs-ets-host/Cargo.toml", "control-rs-macros/Cargo.toml", "control-rs-tui/Cargo.toml", "control-rs-verification/Cargo.toml"]
 timeout_secs = 300
 description = "Audits dependencies for security advisories, licenses and sources"
 
@@ -186,6 +191,7 @@ args = [
     "--all-features",
     "check", "bans",
 ]
+diff-trigger = [".cargo/deny.toml", "control-rs-ci/Cargo.toml", "control-rs-compare/Cargo.toml", "control-rs-ets/Cargo.toml", "control-rs-ets-host/Cargo.toml", "control-rs-macros/Cargo.toml", "control-rs-tui/Cargo.toml", "control-rs-verification/Cargo.toml"]
 timeout_secs = 300
 description = "Holds the crates that ship to one version per dependency"
 
@@ -215,6 +221,7 @@ args = [
     "examples",
     "--glob=!**/target/**",
 ]
+diff-trigger = ["documentation/", ".vale.ini", ".vale/", "src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-tui/", "control-rs-verification/"]
 timeout_secs = 300
 description = "Lints documentation and doc comments for prose style conformity"
 
@@ -239,6 +246,7 @@ mode = "fail"
 command = "cargo geiger"
 args = ["--output-format", "Json"]
 env = { CARGO_TARGET_DIR = "target/geiger" }
+diff-trigger = ["src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-tui/", "control-rs-verification/"]
 timeout_secs = 900
 description = "Scans workspace crates for unsafe code blocks and functions"
 

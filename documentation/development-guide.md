@@ -119,10 +119,14 @@ to simplify development, testing, formatting, linting and coverage reporting:
 
 ### Path-Gated Gates
 
-A gate with a `diff-trigger` in `.cargo/gate.toml` is skipped when no file changed under
-those entries between `origin/main` and `HEAD`. `--base <ref>` and `--head <ref>`
-(or `base` and `head` under `[runner]`) change the comparison. Committed changes
+With `--diff`, a gate with a `diff-trigger` in `.cargo/gate.toml` is skipped when
+no file changed under those entries between `origin/main` and `HEAD`.
+`--base <ref>` and `--head <ref>` (each implies `--diff`) or `base` and `head`
+under `[runner]` change the comparison. Plain `cargo ci` and `cargo gate` run
+every gate; CI and the pre-commit hook pass `--diff`. Committed changes
 only: stage nothing and commit before relying on the skip.
+The pre-commit hook compares `HEAD` with the staged tree, so it runs only the
+`lint` and `audit` gates the staged files touch.
 `CONTROL_RS_CI_GATES=run|skip` forces every gate, and
 `CONTROL_RS_CI_GATE_<NAME>=run|skip` forces one (the gate name in upper case,
 `-` as `_`) and wins over the global variable.
