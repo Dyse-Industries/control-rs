@@ -431,8 +431,12 @@ mod tests {
 
     #[test]
     fn defect_displays_as_path_line_message() {
-        let defect = Defect::at(&row("a.md", 7), "doc#FR-1 is retired");
-        assert_eq!(defect.to_string(), "a.md:7: doc#FR-1 is retired");
+        let defect =
+            Defect::at(&row("a.md", 7), "doc#FR-1 is defined more than once");
+        assert_eq!(
+            defect.to_string(),
+            "a.md:7: doc#FR-1 is defined more than once"
+        );
     }
 
     #[test]

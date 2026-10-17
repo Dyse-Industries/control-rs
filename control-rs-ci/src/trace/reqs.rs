@@ -84,8 +84,6 @@ pub struct TraceConfig {
     /// Result artifact per method.
     #[serde(default)]
     pub method: BTreeMap<String, MethodConfig>,
-    /// Qualified IDs that must not be defined or referenced again.
-    pub retired: Vec<String>,
     /// Decision records and their citations; absent, the decision checks
     /// do not run.
     #[serde(default)]
@@ -140,8 +138,6 @@ pub struct Rules {
     link_methods: BTreeSet<String>,
     /// Pattern matching the document ID declaration in Markdown.
     doc_id: Regex,
-    /// IDs that must not appear.
-    retired: BTreeSet<String>,
     /// The decision patterns, when the configuration has `[decisions]`.
     decisions: Option<DecisionRules>,
 }
@@ -252,7 +248,6 @@ impl TraceConfig {
             methods: self.methods.clone(),
             link_methods: self.link_methods.iter().cloned().collect(),
             doc_id: compile("doc_id", &self.doc_id)?,
-            retired: self.retired.iter().cloned().collect(),
             decisions,
         })
     }
@@ -719,14 +714,6 @@ pub fn check(rows: &[Row], rules: &Rules) -> Vec<Defect> {
     check_duplicate_document_ids(rows, &mut defects);
     check_links(rows, &conditions, rules, &mut defects);
 
-    for row in rows {
-        for id in std::iter::once(&row.id).chain(&row.parents) {
-            if rules.retired.contains(id) {
-                defects.push(Defect::at(row, format!("{id} is retired")));
-            }
-        }
-    }
-
     defects.sort_by(|a, b| {
         (a.file.as_str(), a.line).cmp(&(b.file.as_str(), b.line))
     });
@@ -934,8 +921,7 @@ mod tests {
 | VC-1.1    | FR-1        | `test` | Exact size match |
 ";
 
-    const DECISIONS: &str = r#"retired = []
-
+    const DECISIONS: &str = r#"
 [decisions]
 files = ["docs/adr"]
 id = 'ADR-[0-9]{4}'
@@ -970,7 +956,7 @@ automated_methods = []
     }
 
     fn rules() -> Rules {
-        rules_with("retired = []")
+        rules_with("")
     }
 
     fn scan(source: &str, rules: &Rules) -> Vec<Found> {
@@ -1122,8 +1108,7 @@ automated_methods = []
             .filter(|l| !l.starts_with("doc_id"))
             .collect::<Vec<_>>()
             .join("\n");
-        let config: TraceConfig =
-            toml::from_str(&format!("{keys}\nretired = []")).unwrap();
+        let config: TraceConfig = toml::from_str(&format!("{keys}\n")).unwrap();
         let rules = config.rules(Path::new("trace.toml")).unwrap();
         assert_eq!(
             scan(CLEAN, &rules).first(),
@@ -1224,18 +1209,6 @@ automated_methods = []
     }
 
     #[test]
-    fn retired_ids_are_reported_where_they_appear() {
-        let retired = rules_with("retired = [\"widget#FR-1\"]");
-        let defects = messages(CLEAN, &retired);
-        assert_eq!(
-            defects.iter().filter(|m| m.ends_with("is retired")).count(),
-            2
-        );
-        let got = messages(CLEAN, &rules_with("retired = [\"widget#FR-2\"]"));
-        assert!(got.is_empty(), "{got:?}");
-    }
-
-    #[test]
     fn unknown_keys_and_reserved_kinds_are_rejected() {
         for key in [
             "extra = 1",
@@ -1243,15 +1216,17 @@ automated_methods = []
             "exclude_phrases = []",
             "require_phrases = []",
             "references = {}",
+            "retired = []",
         ] {
-            let unknown = format!("{KEYS}retired = []\n{key}");
+            let unknown = format!("{KEYS}{key}");
             assert!(toml::from_str::<TraceConfig>(&unknown).is_err(), "{key}");
         }
     }
 
     #[test]
     fn invalid_patterns_are_rejected() {
-        let bad = format!("{KEYS}retired = []")
+        let bad = KEYS
+            .to_string()
             .replace("definition = '^- \\*\\*", "definition = '(");
         let config: TraceConfig = toml::from_str(&bad).unwrap();
         assert!(matches!(
@@ -1325,7 +1300,7 @@ automated_methods = []
     #[test]
     fn an_automated_method_needs_a_listed_name_and_a_result_artifact() {
         let rejected = |method: &str, tail: &str| {
-            let text = format!("{KEYS}retired = []{tail}").replace(
+            let text = format!("{KEYS}{tail}").replace(
                 "automated_methods = []",
                 &format!("automated_methods = [\"{method}\"]"),
             );
@@ -1375,8 +1350,7 @@ automated_methods = []
     fn condition_pattern_is_required() {
         let missing =
             KEYS.replace("condition = 'VC-[0-9]+(?:\\.[0-9]+[a-z]?)?'\n", "");
-        let toml_str = format!("{missing}retired = []");
-        assert!(toml::from_str::<TraceConfig>(&toml_str).is_err());
+        assert!(toml::from_str::<TraceConfig>(&missing).is_err());
     }
 
     #[test]
@@ -1601,7 +1575,7 @@ automated_methods = []
     /// The fixture keys with method `link`, `automated` as the automated
     /// methods and `tail` appended.
     fn link_config(automated: &str, tail: &str) -> GateResult<Rules> {
-        let text = format!("{KEYS}retired = []\n{tail}")
+        let text = format!("{KEYS}{tail}")
             .replace("\"review\"]", "\"review\", \"link\"]")
             .replace(
                 "automated_methods = []",

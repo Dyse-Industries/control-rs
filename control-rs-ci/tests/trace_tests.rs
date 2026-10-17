@@ -63,8 +63,7 @@ mod cli {
          definition = '^- \\*\\*(?:FR|NFR|C)-'\n\
          verification = '^\\| *(?:[a-z0-9-]+#)?VC-'\n\
          methods = [\"libtest\", \"analysis\", \"inspection\", \"review\"]\n\
-         automated_methods = [\"libtest\"]\n\
-         retired = []\n\n\
+         automated_methods = [\"libtest\"]\n\n\
          [method.libtest]\n\
          result_artifact = \"out/test.log\"\n"
             .to_string()
@@ -429,7 +428,10 @@ mod cli {
 ";
         let linked = config()
             .replace("\"review\"]", "\"review\", \"link\"]")
-            .replace("retired = []", "link_methods = [\"link\"]\nretired = []");
+            .replace(
+                "automated_methods = [\"libtest\"]\n",
+                "automated_methods = [\"libtest\"]\nlink_methods = [\"link\"]\n",
+            );
         for (log, code, status) in [
             ("test widget::tests::size ... ok\n", 0, "Pass"),
             ("test widget::tests::size ... FAILED\n", 1, "Fail"),
