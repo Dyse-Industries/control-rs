@@ -5,7 +5,7 @@ timeout_secs = 90
 
 # Added to the diff-trigger of every gate that declares its own; a gate without
 # one always runs.
-diff-trigger = [".cargo/gate.toml", ".github/workflows/", "Cargo.toml", "Cargo.lock"]
+diff-trigger = [".cargo/gate.toml", ".cargo/config.toml", ".github/workflows/", "Cargo.toml", "Cargo.lock"]
 
 [execution]
 # Concurrent groups at once; the default is the number of declared groups.

@@ -419,6 +419,13 @@ jobs:
             echo "::notice::No baseline revision; benchmarks run without one."
             exit 0
           fi
+          if [ "$EVENT" = "pull_request" ] \
+            && git diff --quiet "$base" HEAD -- \
+              src/ benches/ control-rs-ci/ .cargo/regression.toml \
+              .cargo/gate.toml .cargo/config.toml .github/workflows/ Cargo.toml Cargo.lock; then
+            echo "::notice::No regression trigger changed; skipping baseline benchmarks."
+            exit 0
+          fi
           git worktree add ../baseline "$base"
           if (cd ../baseline && cargo bench); then
             mkdir -p target

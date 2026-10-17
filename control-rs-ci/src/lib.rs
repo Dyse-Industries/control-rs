@@ -325,15 +325,12 @@ fn record_disabled_gates(
 ///
 /// The diff is computed once, and only when a gate has a `diff-trigger` and is not
 /// forced by an override.
-///
-/// # Errors
-/// Returns `GateError::Config` when an override variable is invalid.
 fn split_by_diff_trigger(
     gates: GateList,
     config: &GateConfig,
     options: &PipelineOptions<'_>,
     root: &Path,
-) -> GateResult<PathSplit> {
+) -> Result<PathSplit, String> {
     let lookup = |var: &str| std::env::var(var).ok();
     let refs = options.diff.unwrap_or_default();
     let base = refs
@@ -364,11 +361,7 @@ fn split_by_diff_trigger(
             triggers,
             changed.as_deref(),
             &lookup,
-        )
-        .map_err(|message| GateError::Config {
-            path: root.join(".cargo/gate.toml"),
-            message,
-        })?;
+        )?;
         match decision {
             diff_trigger::Decision::Run => running.push(gate),
             diff_trigger::Decision::Skip(reason) => {
@@ -456,7 +449,11 @@ pub fn run_pipeline(
         .partition(|g| g.mode() == GatePolicy::Skip);
     record_disabled_gates(&disabled, &ctx)?;
     let (unchanged, active_gates) =
-        split_by_diff_trigger(active_gates, &config, options, workspace_root)?;
+        split_by_diff_trigger(active_gates, &config, options, workspace_root)
+            .map_err(|message| GateError::Config {
+            path: config_path.to_path_buf(),
+            message,
+        })?;
     record_skipped_gates(&unchanged, &ctx)?;
 
     let schedule = partition_gates(active_gates, &config);
