@@ -116,6 +116,8 @@ pub struct Gate {
     pub default: bool,
     /// Working directory relative to the workspace root.
     pub cwd: Option<PathBuf>,
+    /// Path prefixes or files whose change runs this gate (FR-22).
+    pub diff_trigger: Vec<String>,
 }
 
 impl GateOutcome {
@@ -170,6 +172,7 @@ impl Gate {
             skip_exit_codes: Vec::new(),
             default: true,
             cwd: None,
+            diff_trigger: Vec::new(),
         }
     }
 
@@ -208,6 +211,7 @@ impl Gate {
             skip_exit_codes: def.skip_exit_codes.clone(),
             default: def.default,
             cwd: def.cwd.clone(),
+            diff_trigger: def.diff_trigger.clone(),
         }
     }
 
@@ -238,16 +242,29 @@ impl Gate {
         &self,
         ctx: &GateContext,
     ) -> GateResult<GateOutcome> {
+        self.record_skipped(
+            ctx,
+            &format!("{} disabled by mode = \"skip\"; not executed", self.name),
+        )
+    }
+
+    /// Records and saves a `Skipped` outcome carrying `summary`. The gate
+    /// does not execute.
+    ///
+    /// # Errors
+    /// Returns `GateError` if the outcome artifact cannot be written.
+    pub fn record_skipped(
+        &self,
+        ctx: &GateContext,
+        summary: &str,
+    ) -> GateResult<GateOutcome> {
         let outcome = GateOutcome {
             schema: OUTCOME_SCHEMA,
             gate: self.name.clone(),
             verdict: Verdict::Skipped,
             exit_code: None,
             duration_secs: 0.0,
-            summary: Some(format!(
-                "{} disabled by mode = \"skip\"; not executed",
-                self.name
-            )),
+            summary: Some(summary.to_string()),
             log_file: format!("{}.log", self.name),
         };
         let _ = outcome.save_to_dir(&ctx.out_dir)?;

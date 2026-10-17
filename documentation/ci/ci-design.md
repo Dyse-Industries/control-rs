@@ -2,7 +2,7 @@
 
 ![Date Badge](https://img.shields.io/badge/Date-October_17,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
-![Design Status Badge](https://img.shields.io/badge/Design%20Status-Stale-lightgrey)
+![Design Status Badge](https://img.shields.io/badge/Design%20Status-Ready-brightgreen)
 
 ---
 
@@ -349,8 +349,8 @@ pub struct GateDefinition {
     #[serde(default)]
     pub skip_exit_codes: Vec<i32>,
     /// Path prefixes or files whose change runs this gate (FR-22).
-    #[serde(default)]
-    pub paths: Vec<String>,
+    #[serde(default, rename = "diff-trigger")]
+    pub diff_trigger: Vec<String>,
 }
 
 /// The single, concrete quality gate type used for all gates.
@@ -806,7 +806,6 @@ as a JSON array with one entry per target:
     "error": null,
     "record": {
       "results": [
-        ...
       ],
       "pending": [],
       "resets": 0,
@@ -857,6 +856,7 @@ a result (FR-10).
 [runner]
 base = "origin/main"   # optional; this is the default
 head = "HEAD"          # optional; this is the default
+diff-trigger = [".cargo/gate.toml", ".github/workflows/", "Cargo.toml", "Cargo.lock"]
 
 [mutants-matrix]
 diff-trigger = ["src/matrix/", ".cargo/mutants.toml", "Cargo.toml", "Cargo.lock"]
@@ -867,6 +867,13 @@ diff-trigger = ["src/matrix/", ".cargo/mutants.toml", "Cargo.toml", "Cargo.lock"
 paths of a rename (FR-22). `base` and `head` come from `--base` and `--head`,
 else `[runner]`, else `origin/main` and `HEAD` (FR-23). If a ref or the
 merge-base cannot be resolved, no gate is skipped.
+
+**Global list.** `[runner] diff-trigger` is added to the list of every gate that
+declares its own, so shared entries are written once. A gate without its own
+list
+always runs; the global list never gives it one. The runner matches the
+global list against the changed files once per invocation, and each gate adds
+that result to the match of its own list.
 
 **Match.** A changed file matches a `diff-trigger` entry that equals it or lies
 below it; there are no globs. A gate without `diff-trigger` always runs. A gate
@@ -901,7 +908,7 @@ full history so the merge-base resolves.
 | **Separate Process Group per Gate**                              | `setpgid` makes timeout termination a single `kill -<pgid>`, but moves the gate out of the terminal's foreground group, so an interactive interrupt stops the runner and orphans every running gate. Tree termination (§4.2) keeps interrupts working.                                                                                                                                                                                           |           |
 | **`default = false` Expressed as `mode = "skip"`**               | Overloads one field with two meanings, "not selected by default" and "never fails"; a selected skip gate could not fail its job, which violated C-3 for the mutation and regression jobs before revision 1.26.                                                                                                                                                                                                                                   |           |
 | **Treat Every `default = false` Gate as Optional in the Report** | Lets the monolithic `mutants` gate have no result, but also lets a `mutants-*` chunk job that never ran or never uploaded pass unnoticed. A per-gate `required = false` exempts only the gate that has no CI job.                                                                                                                                                                                                                                |           |
-| **Workflow-Level `diff-trigger`Filters**                         | One list for the whole workflow runs every job or none: a documentation edit starts every mutation chunk, and a change outside the list leaves required checks unreported. Selection per gate cannot be written in `on.*.paths`.                                                                                                                                                                                                                 | [1]       |
+| **Workflow-Level `on.*.paths` Filters**                          | One list for the whole workflow runs every job or none: a documentation edit starts every mutation chunk, and a change outside the list leaves required checks unreported. Selection per gate cannot be written in `on.*.paths`.                                                                                                                                                                                                                 | [1]       |
 | **Third-Party Path-Filter Action**                               | Adds an unpinned external dependency, keeps the path map in workflow YAML where `cargo ci` cannot read it, and gives local runs no equivalent selection.                                                                                                                                                                                                                                                                                         |           |
 | **Shell Script Orchestration**                                   | Hand-rolled shell scripts drift across local and CI environments, lack structured artifact generation, and cannot provide compile-time shape verification or robust timeout isolation.                                                                                                                                                                                                                                                           |           |
 
@@ -927,7 +934,7 @@ full history so the merge-base resolves.
 | `test` | Process-Tree Termination Tests        | Verifies a timed-out gate leaves no live descendant: a probe gate records the id of a background grandchild, which must be gone after the timeout (FR-16).                                                                                                                                                                                                                                           |
 | `test` | ETS Verdict Tests                     | Verifies the `ets` verdict rule against drained, aborted, pending, empty and failed-case `RunRecord`s (FR-19).                                                                                                                                                                                                                                                                                       |
 | `test` | Verbose Echo Tests                    | Verifies `-v`/`--verbose` parsing, and that an echoed gate still records both streams in `<gate>.log` with the correct exit code and verdict (FR-5, FR-12).                                                                                                                                                                                                                                          |
-| `test` | Path-Gated Skip Tests                 | Verifies a gate runs when a changed file equals or lies below a `diff-trigger`entry, is skipped otherwise, matches by both paths of a rename and by a deleted file, does not match a sibling name sharing a prefix, and always runs without `diff-trigger`(FR-22).                                                                                                                                   |
+| `test` | Path-Gated Skip Tests                 | Verifies a gate runs when a changed file equals or lies below a `diff-trigger` entry, is skipped otherwise, matches by both paths of a rename and by a deleted file, does not match a sibling name sharing a prefix, always runs without its own `diff-trigger` even when `[runner]` declares one, and adds the `[runner]` entries to a gate that declares a list(FR-22).                            |
 | `test` | Diff Range Tests                      | Verifies the defaults (`origin/main`, `HEAD`), that `--base`/`--head` override `[runner]` and `[runner]` overrides the defaults, and that an unresolvable ref skips no gate (FR-23).                                                                                                                                                                                                                 |
 | `test` | Environment Override Tests            | Verifies `CONTROL_RS_CI_GATES` forces every gate to run or skip, a per-gate variable beats the global one, an unset variable defers to the path check, and another value is a usage error (FR-24).                                                                                                                                                                                                   |
 
@@ -1071,6 +1078,7 @@ full history so the merge-base resolves.
 | 1.42     | October 1, 2026    | @MitchellDScott                    | `miri` and `kani` gate examples match `gate.toml` (§4.3). The workflow path filters include `Cargo.lock`, so a lockfile change runs the gates. FR-20 and FR-21 state the checks the `kani` and `miri` gates perform (no empty-target rule, no 32-bit target, no ignored-test baseline). Teensy and workflow deferrals point at roadmap PR10; the mutation limit records the equivalent-mutant exclusions.                                                                                                                               |
 | 1.43     | October 13, 2026   | @MitchellDScott, Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review.                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | 2.0      | October 17, 2026   | @MitchellDScott, Claude Sonnet 5.5 | Path-gated skip: `paths` per gate, default and configurable diff range, environment overrides (§4.11). Affects FR-22, FR-23, FR-24.                                                                                                                                                                                                                                                                                                                                                                                                     |
+| 3.0      | October 17, 2026   | @MitchellDScott, Claude Sonnet 5.5 | Gate key `diff-trigger` and a runner-wide list matched once; configurable diff range and environment overrides follow FR-22 to FR-24 (§4.11).                                                                                                                                                                                                                                                                                                                                                                                           |
 
 ---
 

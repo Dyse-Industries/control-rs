@@ -117,6 +117,16 @@ to simplify development, testing, formatting, linting and coverage reporting:
 | **Coverage**                           | `cargo coverage`    | `tarpaulin --config .cargo/tarpaulin.toml --verbose --workspace` | Measures test code coverage via `cargo-tarpaulin`.                  |
 |                                        | `cargo coverage-ci` | `cargo coverage --color never --out Html --out Json`           | Runs coverage in CI mode, exporting reports in HTML and JSON.       |
 
+### Path-Gated Gates
+
+A gate with a `diff-trigger` in `.cargo/gate.toml` is skipped when no file changed under
+those entries between `origin/main` and `HEAD`. `--base <ref>` and `--head <ref>`
+(or `base` and `head` under `[runner]`) change the comparison. Committed changes
+only: stage nothing and commit before relying on the skip.
+`CONTROL_RS_CI_GATES=run|skip` forces every gate, and
+`CONTROL_RS_CI_GATE_<NAME>=run|skip` forces one (the gate name in upper case,
+`-` as `_`) and wins over the global variable.
+
 ---
 
 ## Interactive Testing (Host TUI)
