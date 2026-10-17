@@ -3,6 +3,10 @@ title = "control-rs"
 out_dir = "target/ci-artifacts"
 timeout_secs = 90
 
+# Added to the diff-trigger of every gate that declares its own; a gate without
+# one always runs.
+diff-trigger = [".cargo/gate.toml", ".cargo/config.toml", ".github/workflows/", "Cargo.toml", "Cargo.lock"]
+
 [execution]
 # Concurrent groups at once; the default is the number of declared groups.
 # `--max-jobs <n>` overrides it for one invocation.
@@ -89,6 +93,7 @@ description = "Downloads workspace dependencies into the Cargo cache before the 
 mode = "fail"
 command = "cargo fmt"
 args = ["--all", "--", "--check"]
+diff-trigger = ["src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-tui/", "control-rs-verification/", "rustfmt.toml"]
 timeout_secs = 120
 description = "Verifies codebase formatting conformity with rustfmt"
 
@@ -96,6 +101,7 @@ description = "Verifies codebase formatting conformity with rustfmt"
 mode = "fail"
 command = "cargo clippy"
 args = ["--workspace", "--all-targets", "--", "-D", "warnings"]
+diff-trigger = ["src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-tui/", "control-rs-verification/", ".cargo/clippy.toml", ".cargo/clippy-allow-baseline.txt"]
 timeout_secs = 900
 description = "Executes Clippy linter across workspace targets"
 
@@ -103,6 +109,7 @@ description = "Executes Clippy linter across workspace targets"
 mode = "fail"
 command = "cargo run"
 args = ["--package", "control-rs-ci", "--bin", "allow-audit", "--", "--baseline", ".cargo/clippy-allow-baseline.txt", "--base-ref", "origin/main"]
+diff-trigger = ["src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-tui/", "control-rs-verification/", ".cargo/clippy-allow-baseline.txt"]
 timeout_secs = 900
 description = "Fails on clippy suppression sites (allow, expect, cfg_attr, manifest allow level) beyond .cargo/clippy-allow-baseline.txt, on stale baseline entries, and on baseline growth against origin/main"
 
@@ -111,6 +118,7 @@ mode = "fail"
 command = "cargo doc"
 args = ["--workspace", "--no-deps"]
 env = { RUSTDOCFLAGS = "-D warnings" }
+diff-trigger = ["src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-tui/", "control-rs-verification/"]
 timeout_secs = 900
 description = "Builds workspace API documentation with rustdoc warnings denied"
 
@@ -162,6 +170,7 @@ description = "Measures workspace line coverage using cargo-tarpaulin"
 mode = "fail"
 command = "cargo deny"
 args = ["check", "advisories", "licenses", "sources"]
+diff-trigger = [".cargo/deny.toml", "control-rs-ci/Cargo.toml", "control-rs-compare/Cargo.toml", "control-rs-ets/Cargo.toml", "control-rs-ets-host/Cargo.toml", "control-rs-macros/Cargo.toml", "control-rs-tui/Cargo.toml", "control-rs-verification/Cargo.toml"]
 timeout_secs = 300
 description = "Audits dependencies for security advisories, licenses and sources"
 
@@ -182,6 +191,7 @@ args = [
     "--all-features",
     "check", "bans",
 ]
+diff-trigger = [".cargo/deny.toml", "control-rs-ci/Cargo.toml", "control-rs-compare/Cargo.toml", "control-rs-ets/Cargo.toml", "control-rs-ets-host/Cargo.toml", "control-rs-macros/Cargo.toml", "control-rs-tui/Cargo.toml", "control-rs-verification/Cargo.toml"]
 timeout_secs = 300
 description = "Holds the crates that ship to one version per dependency"
 
@@ -211,6 +221,7 @@ args = [
     "examples",
     "--glob=!**/target/**",
 ]
+diff-trigger = ["documentation/", ".vale.ini", ".vale/", "src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-tui/", "control-rs-verification/"]
 timeout_secs = 300
 description = "Lints documentation and doc comments for prose style conformity"
 
@@ -222,6 +233,7 @@ description = "Lints documentation and doc comments for prose style conformity"
 mode = "fail"
 command = "cargo run"
 args = ["--package", "control-rs-ci", "--bin", "ets", "--", "--timeout", "120", "qemu", "all", "--release"]
+diff-trigger = ["src/", "examples/qemu/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-ci/"]
 timeout_secs = 2400
 description = "Builds QEMU ETS firmware and runs every suite headless on each target"
 
@@ -234,6 +246,7 @@ mode = "fail"
 command = "cargo geiger"
 args = ["--output-format", "Json"]
 env = { CARGO_TARGET_DIR = "target/geiger" }
+diff-trigger = ["src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-tui/", "control-rs-verification/"]
 timeout_secs = 900
 description = "Scans workspace crates for unsafe code blocks and functions"
 
@@ -242,6 +255,7 @@ mode = "fail"
 command = "cargo run"
 args = ["--package", "control-rs-compare", "--bin", "compare", "--", "--config", ".cargo/compare.toml"]
 env = { CARGO_TARGET_DIR = "target/cross-compare" }
+diff-trigger = ["src/", "control-rs-compare/", "control-rs-verification/", ".cargo/compare.toml"]
 timeout_secs = 1800
 description = "Executes multi-language reference oracles and verifies HDF5 tolerance bounds"
 
@@ -251,6 +265,7 @@ description = "Executes multi-language reference oracles and verifies HDF5 toler
 mode = "fail"
 command = "cargo run"
 args = ["--package", "control-rs-ci", "--bin", "valgrind", "--", "--example", "dc_motor", "--example", "buck_converter", "--example", "fixed_point_math", "--example", "dsp_spectral_analysis"]
+diff-trigger = ["src/", "examples/dc_motor.rs", "examples/buck_converter.rs", "examples/fixed_point_math.rs", "examples/dsp_spectral_analysis.rs", "control-rs-ci/"]
 timeout_secs = 3600
 description = "Executes Valgrind Memcheck against the listed workspace examples to verify zero memory leaks"
 
@@ -297,6 +312,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "-f", "src/math/storage.rs", "--shard", "0/5", "--output", "target/ci-artifacts/mutants-storage-0.out"]
+diff-trigger = ["src/math/storage.rs", ".cargo/mutants.toml"]
 timeout_secs = 19800
 description = "Mutation testing: src/math/storage.rs, chunk 1 of 5"
 
@@ -305,6 +321,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "-f", "src/math/storage.rs", "--shard", "1/5", "--output", "target/ci-artifacts/mutants-storage-1.out"]
+diff-trigger = ["src/math/storage.rs", ".cargo/mutants.toml"]
 timeout_secs = 19800
 description = "Mutation testing: src/math/storage.rs, chunk 2 of 5"
 
@@ -313,6 +330,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "-f", "src/math/storage.rs", "--shard", "2/5", "--output", "target/ci-artifacts/mutants-storage-2.out"]
+diff-trigger = ["src/math/storage.rs", ".cargo/mutants.toml"]
 timeout_secs = 19800
 description = "Mutation testing: src/math/storage.rs, chunk 3 of 5"
 
@@ -321,6 +339,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "-f", "src/math/storage.rs", "--shard", "3/5", "--output", "target/ci-artifacts/mutants-storage-3.out"]
+diff-trigger = ["src/math/storage.rs", ".cargo/mutants.toml"]
 timeout_secs = 19800
 description = "Mutation testing: src/math/storage.rs, chunk 4 of 5"
 
@@ -329,6 +348,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "-f", "src/math/storage.rs", "--shard", "4/5", "--output", "target/ci-artifacts/mutants-storage-4.out"]
+diff-trigger = ["src/math/storage.rs", ".cargo/mutants.toml"]
 timeout_secs = 19800
 description = "Mutation testing: src/math/storage.rs, chunk 5 of 5"
 
@@ -337,6 +357,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "-f", "src/math/subprograms.rs", "--shard", "0/4", "--output", "target/ci-artifacts/mutants-subprograms-0.out"]
+diff-trigger = ["src/math/subprograms.rs", ".cargo/mutants.toml"]
 timeout_secs = 19800
 description = "Mutation testing: src/math/subprograms.rs, chunk 1 of 4"
 
@@ -345,6 +366,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "-f", "src/math/subprograms.rs", "--shard", "1/4", "--output", "target/ci-artifacts/mutants-subprograms-1.out"]
+diff-trigger = ["src/math/subprograms.rs", ".cargo/mutants.toml"]
 timeout_secs = 19800
 description = "Mutation testing: src/math/subprograms.rs, chunk 2 of 4"
 
@@ -353,6 +375,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "-f", "src/math/subprograms.rs", "--shard", "2/4", "--output", "target/ci-artifacts/mutants-subprograms-2.out"]
+diff-trigger = ["src/math/subprograms.rs", ".cargo/mutants.toml"]
 timeout_secs = 19800
 description = "Mutation testing: src/math/subprograms.rs, chunk 3 of 4"
 
@@ -361,6 +384,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "-f", "src/math/subprograms.rs", "--shard", "3/4", "--output", "target/ci-artifacts/mutants-subprograms-3.out"]
+diff-trigger = ["src/math/subprograms.rs", ".cargo/mutants.toml"]
 timeout_secs = 19800
 description = "Mutation testing: src/math/subprograms.rs, chunk 4 of 4"
 
@@ -369,6 +393,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "-f", "src/math/**", "-e", "src/math/storage.rs", "-e", "src/math/subprograms.rs", "--shard", "0/2", "--output", "target/ci-artifacts/mutants-math-0.out"]
+diff-trigger = ["src/math/", ".cargo/mutants.toml"]
 timeout_secs = 19800
 description = "Mutation testing: src/math except storage.rs and subprograms.rs, chunk 1 of 2"
 
@@ -377,6 +402,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "-f", "src/math/**", "-e", "src/math/storage.rs", "-e", "src/math/subprograms.rs", "--shard", "1/2", "--output", "target/ci-artifacts/mutants-math-1.out"]
+diff-trigger = ["src/math/", ".cargo/mutants.toml"]
 timeout_secs = 19800
 description = "Mutation testing: src/math except storage.rs and subprograms.rs, chunk 2 of 2"
 
@@ -385,6 +411,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "-f", "src/matrix/**", "--output", "target/ci-artifacts/mutants-matrix.out"]
+diff-trigger = ["src/matrix/", ".cargo/mutants.toml"]
 timeout_secs = 19800
 description = "Mutation testing: src/matrix"
 
@@ -393,6 +420,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "-f", "src/tensor/**", "--output", "target/ci-artifacts/mutants-tensor.out"]
+diff-trigger = ["src/tensor/", ".cargo/mutants.toml"]
 timeout_secs = 19800
 description = "Mutation testing: src/tensor"
 
@@ -401,6 +429,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "-f", "src/transfer_function/**", "-f", "src/state_space/**", "--output", "target/ci-artifacts/mutants-tf-ss.out"]
+diff-trigger = ["src/transfer_function/", "src/state_space/", ".cargo/mutants.toml"]
 timeout_secs = 19800
 description = "Mutation testing: src/transfer_function and src/state_space"
 
@@ -409,6 +438,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "-f", "src/polynomial/**", "--shard", "0/2", "--output", "target/ci-artifacts/mutants-polynomial-0.out"]
+diff-trigger = ["src/polynomial/", ".cargo/mutants.toml"]
 timeout_secs = 19800
 description = "Mutation testing: src/polynomial, chunk 1 of 2"
 
@@ -417,6 +447,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "-f", "src/polynomial/**", "--shard", "1/2", "--output", "target/ci-artifacts/mutants-polynomial-1.out"]
+diff-trigger = ["src/polynomial/", ".cargo/mutants.toml"]
 timeout_secs = 19800
 description = "Mutation testing: src/polynomial, chunk 2 of 2"
 
@@ -425,6 +456,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "-e", "src/math/**", "-e", "src/matrix/**", "-e", "src/tensor/**", "-e", "src/transfer_function/**", "-e", "src/state_space/**", "-e", "src/polynomial/**", "--output", "target/ci-artifacts/mutants-rest.out"]
+diff-trigger = ["src/", ".cargo/mutants.toml"]
 timeout_secs = 19800
 description = "Mutation testing: every file not claimed by another mutants-* gate"
 
@@ -448,6 +480,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "replace terminate_child_only with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--shard", "0/2", "--output", "target/ci-artifacts/mutants-ci-0.out"]
+diff-trigger = ["control-rs-ci/"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ci, chunk 1 of 2"
 
@@ -456,6 +489,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "replace terminate_child_only with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--shard", "1/2", "--output", "target/ci-artifacts/mutants-ci-1.out"]
+diff-trigger = ["control-rs-ci/"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ci, chunk 2 of 2"
 
@@ -473,6 +507,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "--no-config", "--package", "control-rs-compare", "--exclude-re", "replace > with >= in compute_chunk_stats", "--exclude-re", "replace < with <= in compare_float_arrays_parallel", "--exclude-re", "replace > with >= in execute_variant", "--output", "target/ci-artifacts/mutants-compare.out"]
+diff-trigger = ["control-rs-compare/"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-compare"
 
@@ -485,6 +520,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "--no-config", "--package", "control-rs-ets-host", "--exclude-re", "replace RunEnd::drained -> Self with Default::default\\(\\)", "--exclude-re", "replace > with >= in HeadlessRun<'t>::(drive|retry_discovery)", "--output", "target/ci-artifacts/mutants-ets-host.out"]
+diff-trigger = ["control-rs-ets-host/"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ets-host"
 
@@ -498,6 +534,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "--no-config", "--package", "control-rs-ets", "--exclude-re", "replace \\| with \\^ in FrameReader::handle_byte", "--exclude-re", "replace < with (==|<=) in FrameEncoder::serialize_then_frame", "--exclude-re", "<impl CPUProfiler for (CortexMProfiler|RiscvProfiler)>", "--exclude-re", "replace CPUProfiler::fpu_flags -> u8 with 0", "--output", "target/ci-artifacts/mutants-ets.out"]
+diff-trigger = ["control-rs-ets/"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ets"
 
@@ -506,6 +543,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "--no-config", "--package", "control-rs-macros", "--output", "target/ci-artifacts/mutants-macros.out"]
+diff-trigger = ["control-rs-macros/"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-macros"
 
@@ -514,6 +552,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "--no-config", "--package", "control-rs-tui", "--output", "target/ci-artifacts/mutants-tui.out"]
+diff-trigger = ["control-rs-tui/"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-tui"
 
@@ -522,5 +561,6 @@ mode = "fail"
 default = false
 command = "cargo run"
 args = ["--package", "control-rs-ci", "--bin", "regression", "--", "--all", "--budgets", ".cargo/regression.toml"]
+diff-trigger = ["src/", "benches/", ".cargo/regression.toml", "control-rs-ci/"]
 timeout_secs = 7200
 description = "Evaluates Criterion benchmark outputs against performance budgets and regression baselines"
