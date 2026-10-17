@@ -154,7 +154,7 @@ minimal-parsing design principle**:
 - **FR-23 — Relative Diff**: The tool uses default paths for the head and
   base of the comparison, but alternates may be specified through arguments
   or the gate.toml file.
-- **FR-24 - Environment Variable Gate Trigger**: A caller can override any
+- **FR-24 — Environment Variable Gate Trigger**: A caller can override any
   condition on all gates or individual gates.
 
 #### 2.2 Non-Functional Requirements
@@ -367,6 +367,7 @@ pub struct Gate {
     pub skip_exit_codes: Vec<i32>,
     pub default: bool,
     pub cwd: Option<PathBuf>,
+    pub diff_trigger: Vec<String>,
 }
 
 impl Gate {
@@ -848,10 +849,10 @@ The `lint` job checks out full history for `--base-ref`.
 
 #### 4.11 Path-Gated Skip
 
-One function, `should_run(gate, changed, env)`, runs before each gate and
-returns run or skip. It does not select, order or group gates. A skip records
-`Verdict::Skipped` and a log line naming the reason, which the report accepts as
-a result (FR-10).
+One function, `should_run(gate, triggers, changed, lookup)`, runs before each
+gate and returns run or skip. It does not select, order or group gates. A skip
+records `Verdict::Skipped` with the reason in `summary`, which the report
+accepts as a result (FR-10).
 
 **Opt-in.** Diff skipping is off unless the caller passes `--diff`, or `--base`
 or `--head`, which imply it. Plain `cargo ci` and `cargo gate` run every gate,
@@ -862,16 +863,16 @@ environment override applies with or without it.
 [runner]
 base = "origin/main"   # optional; this is the default
 head = "HEAD"          # optional; this is the default
-diff-trigger = [".cargo/gate.toml", ".github/workflows/", "Cargo.toml", "Cargo.lock"]
+diff-trigger = [".cargo/gate.toml", ".cargo/config.toml", ".github/workflows/", "Cargo.toml", "Cargo.lock"]
 
 [mutants-matrix]
-diff-trigger = ["src/matrix/", ".cargo/mutants.toml", "Cargo.toml", "Cargo.lock"]
+diff-trigger = ["src/matrix/", ".cargo/mutants.toml"]
 ```
 
 **Changed files.** The runner lists them once per invocation with
-`git diff -z --name-status $(git merge-base <base> <head>) <head>`, taking both
-paths of a rename (FR-22). `-z` keeps every path unquoted. `base` and `head`
-come from `--base` and `--head`,
+`git diff -z --name-status -M $(git merge-base <base> <head>) <head>`, taking
+both paths of a rename (FR-22). `-z` keeps every path unquoted. `base` and
+`head` come from `--base` and `--head`,
 else `[runner]`, else `origin/main` and `HEAD` (FR-23). If a ref or the
 merge-base cannot be resolved, no gate is skipped.
 
@@ -883,9 +884,8 @@ global list against the changed files once per invocation, and each gate adds
 that result to the match of its own list.
 
 **Match.** A changed file matches a `diff-trigger` entry that equals it or lies
-below it; there are no globs. A gate without `diff-trigger` always runs. A gate
-that reads another gate's artifacts (`trace` reads `test.log`) lists the paths
-of both. Mutation shards of one file share a `diff-trigger` list.
+below it; there are no globs. A gate without `diff-trigger` always runs.
+Mutation shards of one file share a `diff-trigger` list.
 
 **Overrides (FR-24).** Environment variables replace the path check:
 
@@ -941,7 +941,7 @@ full history so the merge-base resolves.
 | `test` | Process-Tree Termination Tests        | Verifies a timed-out gate leaves no live descendant: a probe gate records the id of a background grandchild, which must be gone after the timeout (FR-16).                                                                                                                                                                                                                                           |
 | `test` | ETS Verdict Tests                     | Verifies the `ets` verdict rule against drained, aborted, pending, empty and failed-case `RunRecord`s (FR-19).                                                                                                                                                                                                                                                                                       |
 | `test` | Verbose Echo Tests                    | Verifies `-v`/`--verbose` parsing, and that an echoed gate still records both streams in `<gate>.log` with the correct exit code and verdict (FR-5, FR-12).                                                                                                                                                                                                                                          |
-| `test` | Path-Gated Skip Tests                 | Verifies a gate runs when a changed file equals or lies below a `diff-trigger` entry, is skipped otherwise, matches by both paths of a rename and by a deleted file, does not match a sibling name sharing a prefix, always runs without its own `diff-trigger` even when `[runner]` declares one, and adds the `[runner]` entries to a gate that declares a list(FR-22).                            |
+| `test` | Path-Gated Skip Tests                 | Verifies a gate runs when a changed file equals or lies below a `diff-trigger` entry, is skipped otherwise, matches by both paths of a rename and by a deleted file, does not match a sibling name sharing a prefix, always runs without its own `diff-trigger` even when `[runner]` declares one, and adds the `[runner]` entries to a gate that declares a list (FR-22).                           |
 | `test` | Diff Range Tests                      | Verifies the defaults (`origin/main`, `HEAD`), that `--base`/`--head` override `[runner]` and `[runner]` overrides the defaults, and that an unresolvable ref skips no gate (FR-23).                                                                                                                                                                                                                 |
 | `test` | Environment Override Tests            | Verifies `CONTROL_RS_CI_GATES` forces every gate to run or skip, a per-gate variable beats the global one, an unset variable defers to the path check, and another value is a usage error (FR-24).                                                                                                                                                                                                   |
 
@@ -975,6 +975,10 @@ full history so the merge-base resolves.
 - Behaviorally equivalent mutants are excluded by `--exclude-re` in the
   `mutants-*` gates (`.cargo/gate.toml`) and `.cargo/mutants.toml`; every
   other mutant must be caught.
+- Per-module `mutants-*` gates list their own module path and
+  `.cargo/mutants.toml` in `diff-trigger` (FR-22); pushes to `main` set
+  `CONTROL_RS_CI_GATES=run`, so cross-module mutation interactions still run on
+  merge.
 - Process-tree termination depends on `pgrep`; where it is absent, only the
   direct gate process is killed.
 - The bounded-concurrency test infers overlap from probe-gate timestamps with
@@ -1045,6 +1049,7 @@ full history so the merge-base resolves.
 | **Phase 5: Bounded Concurrency & Argument Passthrough**       | Replace one-thread-per-group with a `max_jobs` worker pool over a group queue, add `--max-jobs`, and add `--` passthrough to `cargo gate` with single-gate validation.                                                             | 2                |
 | **Phase 6: Selection, Tree Termination & Target Gates**       | Split `default` from `mode` (FR-15) and require selected results; terminate process trees on timeout (FR-16); add `cwd` and the `ets` binary and gate (FR-18, FR-19); align CI jobs. The `target-build` gate (FR-17) moves to PR9. | 3                |
 | **Phase 7: Exclusive Stages & Debt Repair**                   | Split `exclusive_gates` into `pre` and `post` with the `fetch` gate; declaration order; configuration validation; versioned outcomes; budget-safe report; valgrind fail-closed; remove retired schema and dead code.               | 2                |
+| **Phase 8: Path-Gated Skip**                                  | Add `diff-trigger` per gate and under `[runner]`, configurable `--diff`/`--base`/`--head` range with `git diff -z --name-status -M`, and environment variable overrides (`CONTROL_RS_CI_GATES`, `CONTROL_RS_CI_GATE_<NAME>`) (FR-22, FR-23, FR-24). | 1                |
 
 ---
 

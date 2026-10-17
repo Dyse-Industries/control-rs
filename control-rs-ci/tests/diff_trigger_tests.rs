@@ -329,12 +329,16 @@ mod path_gate {
     #[test]
     fn an_invalid_override_is_a_usage_error() {
         let root = repo("badenv", &[("documentation/a.md", "x")]);
+        let custom = root.join("custom-gate.toml");
+        fs::write(&custom, CONFIG).unwrap();
         let out = run(
             &root,
-            &["--base", "main"],
+            &["--config", "custom-gate.toml", "--base", "main"],
             &[("CONTROL_RS_CI_GATES", "maybe")],
         );
         assert_eq!(out.status.code(), Some(2), "{out:?}");
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("custom-gate.toml"), "{stderr}");
         let _ = fs::remove_dir_all(&root);
     }
 
@@ -457,5 +461,51 @@ mod path_gate {
         assert!(out.status.success(), "{out:?}");
         assert!(!ran(&root, "ran-docs") && ran(&root, "ran-matrix"));
         let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn workspace_gate_toml_triggers_cover_every_gate_package_and_config() {
+        use control_rs_ci::config::GateConfig;
+
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let gate_toml = manifest_dir.parent().unwrap().join(".cargo/gate.toml");
+        let config = GateConfig::load_from_path(&gate_toml).unwrap();
+        let global = &config.runner.diff_trigger;
+
+        for entry in [
+            ".cargo/gate.toml",
+            ".cargo/config.toml",
+            ".github/workflows/",
+            "Cargo.toml",
+            "Cargo.lock",
+        ] {
+            assert!(global.iter().any(|e| e == entry), "missing {entry}");
+        }
+
+        for (name, def) in &config.gate_definitions {
+            if def.diff_trigger.is_empty() {
+                continue;
+            }
+            for win in def.args.windows(2) {
+                if let [flag, pkg] = win
+                    && flag == "--package"
+                {
+                    let pkg_prefix = format!("{pkg}/");
+                    assert!(
+                        def.diff_trigger.iter().any(|e| e == &pkg_prefix),
+                        "gate [{name}] lacks {pkg_prefix} in {:?}",
+                        def.diff_trigger
+                    );
+                }
+            }
+            for arg in def.args.iter().filter(|a| a.starts_with(".cargo/")) {
+                let covered = def.diff_trigger.iter().any(|e| e == arg)
+                    || global.iter().any(|e| e == arg);
+                assert!(covered, "gate [{name}] lacks {arg}");
+            }
+        }
+
+        let reg = config.gate_def("regression").unwrap();
+        assert!(!reg.args.iter().any(|a| a.ends_with('/')));
     }
 }
