@@ -6,10 +6,11 @@
 //! - `Unrun`: method in `automated_methods`, any target absent from its result log (fails gate).
 //! - `Uncovered`: method in `automated_methods` and no target named (fails gate).
 //! - `Review`: method outside `automated_methods`; awaits sign-off.
-//! - `Deferred`: method `deferred`; verification is planned for a later phase.
+//! - A method in `link_methods` takes the worst status of the requirements of
+//!   the documents it names, derived after their conditions.
 //!
 //! A requirement takes the worst status among its conditions in order:
-//! `Fail` > `Unrun` > `Uncovered` > `Deferred` > `Review` > `Pass`.
+//! `Fail` > `Unrun` > `Uncovered` > `Review` > `Pass`.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
@@ -19,12 +20,10 @@ use serde::{Deserialize, Serialize};
 
 use super::reqs::TraceConfig;
 use super::{
-    CONDITION, DEFINITION, Defect, Defects, Row, SCHEMA, read_text, write_file,
+    CONDITION, DEFINITION, Defect, Defects, Row, SCHEMA, doc_of,
+    links_on_cycles, read_text, write_file,
 };
 use crate::error::GateResult;
-
-/// The method whose conditions are planned but not yet verifiable.
-const DEFERRED: &str = "deferred";
 
 /// A report and its defects.
 pub type Derived = (TraceReport, Defects);
@@ -47,12 +46,17 @@ type TestResultMap = HashMap<String, bool>;
 /// Map from method name to its parsed result log.
 type MethodResultMap = HashMap<String, ResultLog>;
 
-/// Evaluated conditions, pending reviews and deferred conditions.
-type ConditionEvalResult = (
-    Vec<ConditionStatus>,
-    Vec<ReviewCondition>,
-    Vec<ReviewCondition>,
-);
+/// IDs grouped under a key, in insertion order.
+type Grouped<'a> = BTreeMap<&'a str, Vec<&'a str>>;
+
+/// Derived condition statuses by condition ID.
+type Statuses<'a> = BTreeMap<&'a str, ConditionStatus>;
+
+/// Derived statuses by requirement ID.
+type RequirementStatuses<'a> = BTreeMap<&'a str, Status>;
+
+/// Evaluated conditions and pending reviews.
+type ConditionEvalResult = (Vec<ConditionStatus>, Vec<ReviewCondition>);
 
 /// What a result log says about one target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,8 +85,6 @@ pub enum Status {
     Pass,
     /// Method outside `automated_methods`; awaits sign-off.
     Review,
-    /// Method `deferred`; verification is planned for a later phase.
-    Deferred,
     /// Automated method and no target named; fails the gate.
     Uncovered,
     /// Automated method and a target has no recorded result; fails the gate.
@@ -131,7 +133,7 @@ pub struct RequirementStatus {
     pub conditions: Vec<ConditionStatus>,
 }
 
-/// A review condition awaiting sign-off, or a deferred condition.
+/// A review condition awaiting sign-off.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewCondition {
     /// Qualified condition ID.
@@ -182,6 +184,29 @@ struct StatusCtx<'a> {
     warnings: &'a mut Vec<InterpreterWarning>,
 }
 
+/// The link conditions of a trace run and the requirement structure their
+/// status depends on.
+struct Links<'a> {
+    /// Requirement IDs by document, in order of first definition.
+    requirements: Grouped<'a>,
+    /// Defined requirement IDs.
+    defined: BTreeSet<&'a str>,
+    /// Defined condition IDs.
+    condition_ids: BTreeSet<&'a str>,
+    /// Condition IDs by parent requirement.
+    children: Grouped<'a>,
+    /// Documents that any row names.
+    docs: BTreeSet<&'a str>,
+    /// Link conditions by ID.
+    rows: ById<'a>,
+    /// Link conditions with a target on a link cycle.
+    cyclic: BTreeSet<&'a str>,
+    /// Derived requirement statuses.
+    requirement_status: RequirementStatuses<'a>,
+    /// Defects found while deriving link conditions.
+    defects: Defects,
+}
+
 /// `trace-report.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraceReport {
@@ -194,9 +219,6 @@ pub struct TraceReport {
     /// Review conditions awaiting sign-off.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub review: Vec<ReviewCondition>,
-    /// Conditions whose verification is deferred.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub deferred: Vec<ReviewCondition>,
     /// Non-fatal interpreter warnings.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<InterpreterWarning>,
@@ -259,6 +281,207 @@ impl TraceReport {
         json.push(b'\n');
         write_file(path, &json)
     }
+}
+
+impl<'a> Links<'a> {
+    fn new(
+        reqs: &'a [Row],
+        order: &[&'a str],
+        conditions: &ById<'a>,
+        config: &TraceConfig,
+    ) -> Self {
+        let mut requirements = Grouped::new();
+        for &id in order {
+            requirements.entry(doc_of(id)).or_default().push(id);
+        }
+        let mut children = Grouped::new();
+        for (&id, row) in conditions {
+            for parent in &row.parents {
+                children.entry(parent.as_str()).or_default().push(id);
+            }
+        }
+        let rows: ById<'a> = conditions
+            .iter()
+            .filter(|(_, row)| is_link(row, config))
+            .map(|(&id, &row)| (id, row))
+            .collect();
+        let mut links = Self {
+            requirements,
+            defined: order.iter().copied().collect(),
+            condition_ids: conditions.keys().copied().collect(),
+            children,
+            docs: reqs.iter().map(|r| doc_of(&r.id)).collect(),
+            rows,
+            cyclic: BTreeSet::new(),
+            requirement_status: RequirementStatuses::new(),
+            defects: Defects::new(),
+        };
+        let mut edges = Vec::new();
+        let mut owners = Vec::new();
+        for (&id, row) in conditions {
+            for parent in &row.parents {
+                edges.push((parent.as_str(), id));
+                owners.push(None);
+            }
+        }
+        for (&id, row) in &links.rows {
+            for target in &row.targets {
+                for named in links.named(target) {
+                    edges.push((id, named));
+                    owners.push(Some(id));
+                }
+            }
+        }
+        links.cyclic = links_on_cycles(&edges)
+            .into_iter()
+            .filter_map(|index| owners.get(index).copied().flatten())
+            .collect();
+        links
+    }
+
+    /// The requirements and conditions `target` names: itself when it is a
+    /// defined requirement or condition ID, else every requirement of the
+    /// document it names.
+    fn named(&self, target: &'a str) -> Vec<&'a str> {
+        if target.contains('#') {
+            self.defined
+                .get(target)
+                .or_else(|| self.condition_ids.get(target))
+                .copied()
+                .into_iter()
+                .collect()
+        } else {
+            self.requirements.get(target).cloned().unwrap_or_default()
+        }
+    }
+
+    /// Derives every link condition into `statuses`.
+    fn derive_all(&mut self, statuses: &mut Statuses<'a>) {
+        let ids: Vec<&'a str> = self.rows.keys().copied().collect();
+        for id in ids {
+            self.condition(id, statuses);
+        }
+    }
+
+    /// The status of condition `id`: the one in `statuses`, else the link
+    /// condition derived and recorded there.
+    fn condition(
+        &mut self,
+        id: &'a str,
+        statuses: &mut Statuses<'a>,
+    ) -> Status {
+        if let Some(done) = statuses.get(id) {
+            return done.status;
+        }
+        let Some(&row) = self.rows.get(id) else {
+            return Status::Uncovered;
+        };
+        let mut items = Vec::new();
+        let status = if row.targets.is_empty() {
+            self.defects
+                .push(Defect::at(row, format!("{} names no target", row.id)));
+            Status::Uncovered
+        } else if self.cyclic.contains(id) {
+            self.defects.push(Defect::at(
+                row,
+                format!("condition {} lies on a link cycle", row.id),
+            ));
+            Status::Fail
+        } else {
+            let mut worst_status = Status::Pass;
+            for target in &row.targets {
+                let named = self.target(row, target, statuses);
+                worst_status = worst_status.max(named);
+                items.push(ItemOutcome {
+                    target: target.clone(),
+                    passed: !fails_gate(named),
+                    message: Some(format!("status {named:?}")),
+                });
+            }
+            worst_status
+        };
+        statuses.insert(
+            id,
+            ConditionStatus {
+                id: row.id.clone(),
+                parents: row.parents.clone(),
+                method: row.method.clone().unwrap_or_default(),
+                status,
+                items,
+            },
+        );
+        status
+    }
+
+    /// The worst status of the requirements and conditions `target` names,
+    /// which `row` lists.
+    fn target(
+        &mut self,
+        row: &'a Row,
+        target: &'a str,
+        statuses: &mut Statuses<'a>,
+    ) -> Status {
+        let at = |message: &str| {
+            Defect::at(
+                row,
+                format!("condition {} target '{target}' {message}", row.id),
+            )
+        };
+        let named = self.named(target);
+        if named.is_empty()
+            && (target.contains('#') || !self.docs.contains(target))
+        {
+            self.defects.push(at("not found in reqs.jsonl"));
+            return Status::Unrun;
+        }
+        if named.is_empty() {
+            self.defects.push(at("defines no requirement"));
+            return Status::Uncovered;
+        }
+        named
+            .into_iter()
+            .map(|node| {
+                if self.defined.contains(node) {
+                    self.requirement(node, statuses)
+                } else {
+                    self.condition(node, statuses)
+                }
+            })
+            .max()
+            .unwrap_or(Status::Uncovered)
+    }
+
+    /// The worst status of the conditions of `requirement`, derived once.
+    fn requirement(
+        &mut self,
+        requirement: &'a str,
+        statuses: &mut Statuses<'a>,
+    ) -> Status {
+        if let Some(&done) = self.requirement_status.get(requirement) {
+            return done;
+        }
+        let children =
+            self.children.get(requirement).cloned().unwrap_or_default();
+        let status = children
+            .into_iter()
+            .map(|child| self.condition(child, statuses))
+            .max()
+            .unwrap_or(Status::Uncovered);
+        self.requirement_status.insert(requirement, status);
+        status
+    }
+}
+
+/// Whether a condition or requirement of `status` fails the gate.
+const fn fails_gate(status: Status) -> bool {
+    matches!(status, Status::Fail | Status::Unrun | Status::Uncovered)
+}
+
+/// Whether `row` names a method in `link_methods`.
+fn is_link(row: &Row, config: &TraceConfig) -> bool {
+    row.method
+        .as_ref()
+        .is_some_and(|m| config.link_methods.contains(m))
 }
 
 /// The test binary a libtest `Running` header names: the file stem of the
@@ -616,9 +839,6 @@ fn condition_status(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
         status,
         items,
     };
-    if method == DEFERRED {
-        return status(Status::Deferred, Vec::new());
-    }
     if !ctx.config.automated_methods.contains(&method) {
         return status(Status::Review, Vec::new());
     }
@@ -772,7 +992,6 @@ fn initial_status_counts() -> StatusCounts {
     [
         Status::Pass,
         Status::Review,
-        Status::Deferred,
         Status::Uncovered,
         Status::Unrun,
         Status::Fail,
@@ -782,29 +1001,35 @@ fn initial_status_counts() -> StatusCounts {
     .collect()
 }
 
-fn evaluate_all_conditions(
-    cond_idx: &Indexed<'_>,
+fn evaluate_all_conditions<'a>(
+    cond_idx: &Indexed<'a>,
+    links: &mut Links<'a>,
     ctx: &mut StatusCtx<'_>,
     counts: &mut StatusCounts,
 ) -> ConditionEvalResult {
     let (conditions, condition_order) = cond_idx;
     let mut evaluated = Vec::new();
     let mut review = Vec::new();
-    let mut deferred = Vec::new();
+
+    let mut statuses = Statuses::new();
+    for (&id, row) in conditions {
+        if !is_link(row, ctx.config) {
+            statuses.insert(id, condition_status(row, ctx));
+        }
+    }
+    links.derive_all(&mut statuses);
+    ctx.defects.append(&mut links.defects);
 
     for row in condition_order.iter().filter_map(|id| conditions.get(id)) {
-        let status = condition_status(row, ctx);
+        let Some(status) = statuses.remove(row.id.as_str()) else {
+            continue;
+        };
 
         if let Some(count) = counts.get_mut(&status.status) {
             *count = count.saturating_add(1);
         }
-        let pending = match status.status {
-            Status::Review => Some(&mut review),
-            Status::Deferred => Some(&mut deferred),
-            _ => None,
-        };
-        if let Some(pending) = pending {
-            pending.push(ReviewCondition {
+        if status.status == Status::Review && !is_link(row, ctx.config) {
+            review.push(ReviewCondition {
                 id: row.id.clone(),
                 parents: row.parents.clone(),
                 method: status.method.clone(),
@@ -815,7 +1040,7 @@ fn evaluate_all_conditions(
         evaluated.push(status);
     }
 
-    (evaluated, review, deferred)
+    (evaluated, review)
 }
 
 /// Derives condition and requirement status from the rows of `trace-reqs`,
@@ -834,6 +1059,7 @@ pub fn derive_with_base(
 ) -> Derived {
     let (_, order) = first_by_id(reqs, DEFINITION);
     let cond_idx = first_by_id(reqs, CONDITION);
+    let mut links = Links::new(reqs, &order, &cond_idx.0, config);
 
     let mut defects = Vec::new();
     let mut warnings = Vec::new();
@@ -849,8 +1075,8 @@ pub fn derive_with_base(
         warnings: &mut warnings,
     };
 
-    let (evaluated, review, deferred) =
-        evaluate_all_conditions(&cond_idx, &mut ctx, &mut counts);
+    let (evaluated, review) =
+        evaluate_all_conditions(&cond_idx, &mut links, &mut ctx, &mut counts);
 
     let requirements = requirement_statuses(&order, &evaluated);
     check_staleness(reqs, config, base, &mut warnings);
@@ -867,7 +1093,6 @@ pub fn derive_with_base(
         counts,
         requirements,
         review,
-        deferred,
         warnings,
     };
 
@@ -885,6 +1110,9 @@ mod tests {
     /// A condition status and how many conditions have it.
     type Count = (Status, usize);
 
+    /// A document's requirement and its condition.
+    type DocRows = [Row; 2];
+
     fn test_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "control_rs_ci_status_{name}_{}_{}",
@@ -901,7 +1129,7 @@ mod tests {
 
     fn report(counts: &[Count], requirements: &[Status]) -> TraceReport {
         TraceReport {
-            schema: 4,
+            schema: SCHEMA,
             counts: counts.iter().copied().collect(),
             requirements: requirements
                 .iter()
@@ -913,7 +1141,6 @@ mod tests {
                 })
                 .collect(),
             review: Vec::new(),
-            deferred: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -993,16 +1220,14 @@ mod tests {
             doc_id: r"^#\s+.*\((?P<doc>[a-z0-9-]+)\)".to_string(),
             definition: r"^- \*\*(?:FR|NFR|C)-".to_string(),
             verification: r"^\| *(?:[a-z0-9-]+#)?VC-".to_string(),
-            methods: [
-                "libtest", "kani", "pytest", "gtest", "review", "deferred",
-            ]
-            .map(String::from)
-            .to_vec(),
+            methods: ["libtest", "kani", "pytest", "gtest", "review"]
+                .map(String::from)
+                .to_vec(),
             automated_methods: ["libtest", "kani", "pytest", "gtest"]
                 .map(String::from)
                 .to_vec(),
+            link_methods: Vec::new(),
             method,
-            retired: vec![],
             decisions: None,
         }
     }
@@ -1348,21 +1573,6 @@ mod tests {
         assert!(report.warnings.is_empty(), "{:?}", report.warnings);
     }
 
-    #[test]
-    fn deferred_condition_is_listed_and_does_not_fail() {
-        let derived = derive(
-            &[definition(), condition("deferred", &[])],
-            &default_config(),
-        );
-        assert_eq!(status(&derived), Some(Status::Deferred));
-        assert!(derived.0.passes());
-        assert!(derived.1.is_empty(), "{:?}", derived.1);
-        assert_eq!(derived.0.deferred.len(), 1);
-        assert!(derived.0.review.is_empty(), "{:?}", derived.0.review);
-        assert_eq!(derived.0.counts.get(&Status::Deferred), Some(&1));
-        assert_eq!(derived.0.counts.get(&Status::Review), Some(&0));
-    }
-
     /// Sets the modification time of `path` to `secs` after the epoch.
     fn touch(path: &Path, secs: u64) {
         let time = std::time::UNIX_EPOCH
@@ -1404,5 +1614,209 @@ mod tests {
         touch(&log, 2_000);
         let (equal, _) = derive_with_base(&rows, &default_config(), &dir);
         assert!(equal.warnings.iter().all(|w| w.code != "W-3"));
+    }
+
+    /// The definition of `doc#FR-1`.
+    fn doc_definition(doc: &str) -> Row {
+        Row {
+            id: format!("{doc}#FR-1"),
+            file: format!("docs/{doc}.md"),
+            ..definition()
+        }
+    }
+
+    /// The condition `doc#VC-1.1` of `doc#FR-1`.
+    fn doc_condition(doc: &str, method: &str, targets: &[&str]) -> Row {
+        Row {
+            id: format!("{doc}#VC-1.1"),
+            parents: vec![format!("{doc}#FR-1")],
+            file: format!("docs/{doc}.md"),
+            ..condition(method, targets)
+        }
+    }
+
+    /// A document with one requirement verified by one condition.
+    fn document(doc: &str, method: &str, targets: &[&str]) -> DocRows {
+        [doc_definition(doc), doc_condition(doc, method, targets)]
+    }
+
+    /// Derives `docs` with method `link` and a libtest log holding a passing
+    /// `t::pass` and a failing `t::fail`.
+    fn derive_links(name: &str, docs: &[DocRows]) -> Derived {
+        let dir = test_dir(name);
+        write_log(
+            &dir,
+            "libtest.log",
+            "test t::pass ... ok\ntest t::fail ... FAILED\n",
+        );
+        let mut config = default_config();
+        config.methods.push("link".to_string());
+        config.link_methods = vec!["link".to_string()];
+        let rows: Vec<Row> = docs.iter().flatten().cloned().collect();
+        derive_with_base(&rows, &config, &dir)
+    }
+
+    /// The status of requirement `doc#FR-1`.
+    fn requirement(derived: &Derived, doc: &str) -> Option<Status> {
+        let id = format!("{doc}#FR-1");
+        derived
+            .0
+            .requirements
+            .iter()
+            .find(|r| r.id == id)
+            .map(|r| r.status)
+    }
+
+    #[test]
+    fn link_takes_the_worst_status_of_the_named_documents() {
+        let named = [
+            document("b", "libtest", &["t::pass"]),
+            document("c", "review", &[]),
+            document("d", "libtest", &["t::fail"]),
+        ];
+        for (targets, expected) in [
+            (["b", "b"], Status::Pass),
+            (["b", "c"], Status::Review),
+            (["c", "d"], Status::Fail),
+        ] {
+            let mut docs = named.to_vec();
+            docs.push(document("a", "link", &targets));
+            let derived = derive_links("link_worst", &docs);
+            assert_eq!(
+                requirement(&derived, "a"),
+                Some(expected),
+                "{targets:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn link_status_follows_a_chain_of_documents() {
+        for (target, expected) in
+            [("t::pass", Status::Pass), ("t::fail", Status::Fail)]
+        {
+            let derived = derive_links(
+                "link_chain",
+                &[
+                    document("a", "link", &["b"]),
+                    document("b", "link", &["c"]),
+                    document("c", "libtest", &[target]),
+                ],
+            );
+            assert_eq!(requirement(&derived, "a"), Some(expected), "{target}");
+            assert_eq!(derived.0.passes(), expected == Status::Pass);
+        }
+    }
+
+    #[test]
+    fn link_to_a_document_without_requirements_is_uncovered() {
+        let orphan = Row {
+            parents: vec!["x#FR-9".to_string()],
+            ..doc_condition("e", "review", &[])
+        };
+        let rows = [document("a", "link", &["e"]), [orphan.clone(), orphan]];
+        let derived = derive_links("link_empty", &rows);
+        assert_eq!(requirement(&derived, "a"), Some(Status::Uncovered));
+        assert_eq!(
+            derived
+                .1
+                .iter()
+                .map(|d| d.message.as_str())
+                .collect::<Vec<_>>(),
+            ["condition a#VC-1.1 target 'e' defines no requirement"]
+        );
+    }
+
+    #[test]
+    fn link_to_an_unknown_document_is_unrun() {
+        let derived =
+            derive_links("link_unknown", &[document("a", "link", &["zz"])]);
+        assert_eq!(requirement(&derived, "a"), Some(Status::Unrun));
+        assert!(!derived.0.passes());
+        assert_eq!(
+            derived
+                .1
+                .iter()
+                .map(|d| d.message.as_str())
+                .collect::<Vec<_>>(),
+            ["condition a#VC-1.1 target 'zz' not found in reqs.jsonl"]
+        );
+    }
+
+    #[test]
+    fn link_on_a_cycle_fails() {
+        let derived = derive_links(
+            "link_cycle",
+            &[
+                document("a", "link", &["b"]),
+                document("b", "link", &["a"]),
+                document("c", "link", &["c"]),
+            ],
+        );
+        for doc in ["a", "b", "c"] {
+            assert_eq!(requirement(&derived, doc), Some(Status::Fail), "{doc}");
+        }
+        assert_eq!(derived.1.len(), 3, "{:?}", derived.1);
+    }
+
+    #[test]
+    fn link_conditions_are_not_listed_for_review() {
+        let derived = derive_links(
+            "link_review",
+            &[document("a", "link", &["c"]), document("c", "review", &[])],
+        );
+        assert_eq!(requirement(&derived, "a"), Some(Status::Review));
+        let ids = |list: &[ReviewCondition]| {
+            list.iter().map(|r| r.id.clone()).collect::<Vec<_>>()
+        };
+        assert_eq!(ids(&derived.0.review), ["c#VC-1.1"]);
+    }
+
+    #[test]
+    fn link_to_a_requirement_or_condition_takes_its_status() {
+        let failing = Row {
+            id: "b#FR-2".to_string(),
+            ..doc_definition("b")
+        };
+        let failing_condition = Row {
+            id: "b#VC-2.1".to_string(),
+            parents: vec!["b#FR-2".to_string()],
+            ..doc_condition("b", "libtest", &["t::fail"])
+        };
+        for (target, expected) in [
+            ("b#FR-1", Status::Pass),
+            ("b#FR-2", Status::Fail),
+            ("b#VC-1.1", Status::Pass),
+            ("b#VC-2.1", Status::Fail),
+            ("b", Status::Fail),
+        ] {
+            let docs = [
+                document("a", "link", &[target]),
+                document("b", "libtest", &["t::pass"]),
+                [failing.clone(), failing_condition.clone()],
+            ];
+            let derived = derive_links("link_subset", &docs);
+            assert_eq!(requirement(&derived, "a"), Some(expected), "{target}");
+        }
+    }
+
+    #[test]
+    fn link_to_an_undefined_requirement_is_unrun() {
+        let derived = derive_links(
+            "link_undefined",
+            &[
+                document("a", "link", &["b#FR-9"]),
+                document("b", "libtest", &["t::pass"]),
+            ],
+        );
+        assert_eq!(requirement(&derived, "a"), Some(Status::Unrun));
+        assert_eq!(
+            derived
+                .1
+                .iter()
+                .map(|d| d.message.as_str())
+                .collect::<Vec<_>>(),
+            ["condition a#VC-1.1 target 'b#FR-9' not found in reqs.jsonl"]
+        );
     }
 }
