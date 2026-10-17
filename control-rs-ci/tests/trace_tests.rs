@@ -415,4 +415,57 @@ mod cli {
                  'widget::tests::size' failed in test.log"]
         );
     }
+
+    #[test]
+    fn a_failing_linked_document_fails_the_linking_document() {
+        const TOOLBOX: &str = "\
+# Toolbox (toolbox)
+
+- **FR-1 — Widget**: The toolbox shall expose the widget.
+
+| Condition | Requirement | Method | Target   | Criterion            |
+|:----------|:------------|:-------|:---------|:---------------------|
+| VC-1.1    | FR-1        | `link` | `widget` | The widget design holds |
+";
+        let linked = config()
+            .replace("\"review\"]", "\"review\", \"link\"]")
+            .replace("retired = []", "link_methods = [\"link\"]\nretired = []");
+        for (log, code, status) in [
+            ("test widget::tests::size ... ok\n", 0, "Pass"),
+            ("test widget::tests::size ... FAILED\n", 1, "Fail"),
+        ] {
+            let dir = workdir(
+                &format!("linked_{code}"),
+                &[
+                    ("trace.toml", linked.as_str()),
+                    ("docs/widget-design.md", CLEAN),
+                    ("docs/toolbox-design.md", TOOLBOX),
+                    ("out/test.log", log),
+                ],
+            );
+            let reqs = trace_reqs(&dir);
+            assert!(
+                reqs.status.success(),
+                "{}",
+                String::from_utf8_lossy(&reqs.stdout)
+            );
+            assert_eq!(trace_check(&dir).status.code(), Some(code));
+            let report: Value = serde_json::from_str(
+                &fs::read_to_string(dir.join("out/trace-report.json")).unwrap(),
+            )
+            .unwrap();
+            let toolbox = report
+                .pointer("/requirements")
+                .and_then(Value::as_array)
+                .unwrap()
+                .iter()
+                .find(|r| text(r, "/id") == Some("toolbox#FR-1"))
+                .unwrap();
+            assert_eq!(text(toolbox, "/status"), Some(status));
+            assert_eq!(
+                text(toolbox, "/conditions/0/items/0/target"),
+                Some("widget")
+            );
+        }
+    }
 }

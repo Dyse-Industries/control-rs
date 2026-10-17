@@ -14,7 +14,10 @@ use std::path::Path;
 use regex::Regex;
 use serde::Deserialize;
 
-use super::{CONDITION, DEFINITION, Defect, Row, SCHEMA, normalize, read_text};
+use super::{
+    CONDITION, DEFINITION, Defect, Row, SCHEMA, doc_of, links_on_cycles,
+    normalize, read_text,
+};
 use crate::error::{GateError, GateResult};
 
 /// A file and line.
@@ -74,6 +77,10 @@ pub struct TraceConfig {
     /// The subset of methods whose conditions name targets that a result
     /// artifact must record as passed.
     pub automated_methods: Vec<String>,
+    /// The subset of methods whose conditions name document IDs as targets
+    /// and take the status of those documents' requirements.
+    #[serde(default)]
+    pub link_methods: Vec<String>,
     /// Result artifact per method.
     #[serde(default)]
     pub method: BTreeMap<String, MethodConfig>,
@@ -129,6 +136,8 @@ pub struct Rules {
     verification: Regex,
     /// Verification methods a condition may name.
     methods: Vec<String>,
+    /// Methods whose conditions name document IDs as targets.
+    link_methods: BTreeSet<String>,
     /// Pattern matching the document ID declaration in Markdown.
     doc_id: Regex,
     /// IDs that must not appear.
@@ -218,6 +227,9 @@ impl TraceConfig {
                 )));
             }
         }
+        if let Some(message) = self.link_method_error() {
+            return Err(error(message));
+        }
         compile("doc", &self.doc)?;
         compile("id", &self.id)?;
         compile("condition", &self.condition)?;
@@ -238,9 +250,28 @@ impl TraceConfig {
             definition: compile("definition", &self.definition)?,
             verification: compile("verification", &self.verification)?,
             methods: self.methods.clone(),
+            link_methods: self.link_methods.iter().cloned().collect(),
             doc_id: compile("doc_id", &self.doc_id)?,
             retired: self.retired.iter().cloned().collect(),
             decisions,
+        })
+    }
+}
+
+impl TraceConfig {
+    /// Why `link_methods` is invalid: an entry outside `methods`, or one also
+    /// in `automated_methods`.
+    fn link_method_error(&self) -> Option<String> {
+        self.link_methods.iter().find_map(|m| {
+            if !self.methods.contains(m) {
+                Some(format!("link method `{m}` is not in `methods`"))
+            } else if self.automated_methods.contains(m) {
+                Some(format!(
+                    "link method `{m}` is also in `automated_methods`"
+                ))
+            } else {
+                None
+            }
         })
     }
 }
@@ -618,6 +649,54 @@ fn check_duplicate_document_ids(rows: &[Row], defects: &mut Vec<Defect>) {
     }
 }
 
+/// The `link` defects: a link condition with no target, a target that names
+/// no document among `rows`, and every link condition on a cycle.
+fn check_links(
+    rows: &[Row],
+    conditions: &[&Row],
+    rules: &Rules,
+    defects: &mut Vec<Defect>,
+) {
+    let docs: BTreeSet<&str> = rows.iter().map(|r| doc_of(&r.id)).collect();
+    let mut edges = Vec::new();
+    let mut owners = Vec::new();
+    for &link in conditions.iter().filter(|c| {
+        c.method
+            .as_ref()
+            .is_some_and(|m| rules.link_methods.contains(m))
+    }) {
+        if link.targets.is_empty() {
+            defects
+                .push(Defect::at(link, format!("{} names no target", link.id)));
+        }
+        for target in &link.targets {
+            if docs.contains(target.as_str()) {
+                edges.push((doc_of(&link.id), target.as_str()));
+                owners.push(link);
+            } else {
+                defects.push(Defect::at(
+                    link,
+                    format!(
+                        "condition {} document '{target}' is not a selected document",
+                        link.id
+                    ),
+                ));
+            }
+        }
+    }
+    let mut reported = BTreeSet::new();
+    for index in links_on_cycles(&edges) {
+        if let Some(link) = owners.get(index)
+            && reported.insert(link.id.as_str())
+        {
+            defects.push(Defect::at(
+                link,
+                format!("condition {} lies on a link cycle", link.id),
+            ));
+        }
+    }
+}
+
 /// The defects in `rows`, sorted by file, then line.
 #[must_use]
 pub fn check(rows: &[Row], rules: &Rules) -> Vec<Defect> {
@@ -638,6 +717,7 @@ pub fn check(rows: &[Row], rules: &Rules) -> Vec<Defect> {
     check_condition_parents(&conditions, &definitions, &mut defects);
     check_condition_methods(&conditions, rules, &mut defects);
     check_duplicate_document_ids(rows, &mut defects);
+    check_links(rows, &conditions, rules, &mut defects);
 
     for row in rows {
         for id in std::iter::once(&row.id).chain(&row.parents) {
@@ -1516,5 +1596,110 @@ automated_methods = []
             error.to_string().contains("has no `status` capture"),
             "{error}"
         );
+    }
+
+    /// The fixture keys with method `link`, `automated` as the automated
+    /// methods and `tail` appended.
+    fn link_config(automated: &str, tail: &str) -> GateResult<Rules> {
+        let text = format!("{KEYS}retired = []\n{tail}")
+            .replace("\"review\"]", "\"review\", \"link\"]")
+            .replace(
+                "automated_methods = []",
+                &format!("automated_methods = [{automated}]"),
+            );
+        let config: TraceConfig = toml::from_str(&text).unwrap();
+        config.rules(Path::new("trace.toml"))
+    }
+
+    fn link_rules() -> Rules {
+        link_config("", "link_methods = [\"link\"]").unwrap()
+    }
+
+    /// A document `doc` whose one condition links `targets`.
+    fn linking(doc: &str, targets: &str) -> String {
+        format!(
+            "# Doc ({doc})\n\n- **FR-1 — A**: Work.\n\n\
+             | VC-1.1 | FR-1 | `link` | {targets} | Crit |\n"
+        )
+    }
+
+    fn link_messages(sources: &[String]) -> Vec<String> {
+        let rules = link_rules();
+        let mut rows = Vec::new();
+        for (n, source) in sources.iter().enumerate() {
+            rows.extend(
+                scan_markdown(&format!("docs/d{n}.md"), source, &rules).0,
+            );
+        }
+        check(&rows, &rules)
+            .into_iter()
+            .map(|d| d.message)
+            .collect()
+    }
+
+    #[test]
+    fn link_condition_without_a_target_is_reported() {
+        assert_eq!(
+            link_messages(&[linking("a", "—")]),
+            ["a#VC-1.1 names no target"]
+        );
+    }
+
+    #[test]
+    fn link_target_naming_no_document_is_reported() {
+        assert_eq!(
+            link_messages(&[linking("a", "`zz`")]),
+            ["condition a#VC-1.1 document 'zz' is not a selected document"]
+        );
+        assert_eq!(
+            link_messages(&[
+                linking("a", "`b`"),
+                linking("b", "`c`"),
+                CLEAN.replace("(widget)", "(c)")
+            ]),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn every_condition_on_a_link_cycle_is_reported() {
+        assert_eq!(
+            link_messages(&[linking("a", "`a`")]),
+            ["condition a#VC-1.1 lies on a link cycle"]
+        );
+        assert_eq!(
+            link_messages(&[linking("a", "`b`"), linking("b", "`a`")]),
+            [
+                "condition a#VC-1.1 lies on a link cycle",
+                "condition b#VC-1.1 lies on a link cycle"
+            ]
+        );
+        assert_eq!(
+            link_messages(&[
+                linking("a", "`b`"),
+                linking("b", "`c`"),
+                linking("c", "`b`")
+            ]),
+            [
+                "condition b#VC-1.1 lies on a link cycle",
+                "condition c#VC-1.1 lies on a link cycle"
+            ]
+        );
+    }
+
+    #[test]
+    fn link_methods_must_be_methods_and_not_automated() {
+        let artifact = "\n[method.test]\nresult_artifact = \"t.log\"";
+        let rejected = |automated: &str, links: &str| {
+            let tail = format!("link_methods = [{links}]{artifact}");
+            matches!(
+                link_config(automated, &tail),
+                Err(GateError::Config { .. })
+            )
+        };
+        assert!(rejected("", "\"other\""));
+        assert!(rejected("\"test\"", "\"test\""));
+        assert!(!rejected("\"test\"", "\"link\""));
+        assert!(!rejected("", ""));
     }
 }
