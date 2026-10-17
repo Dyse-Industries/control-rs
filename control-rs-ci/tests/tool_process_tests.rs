@@ -177,6 +177,19 @@ mod tool_process {
         let _ = fs::remove_dir_all(&root);
     }
 
+    #[test]
+    fn regression_rejects_positional_path_arguments() {
+        let root = regression_workspace("reg_pos", "1.0 µs 2.0 µs 3.0 µs");
+        let out = run(
+            REGRESSION_BIN,
+            &root,
+            &["--all", "--budgets", "budgets.toml", "control-rs-ci/"],
+        );
+        assert_eq!(out.status.code(), Some(2), "{}", text(&out));
+        assert!(text(&out).contains("Unknown option"), "{}", text(&out));
+        let _ = fs::remove_dir_all(&root);
+    }
+
     // --- ets --------------------------------------------------------------------
 
     #[test]

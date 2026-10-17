@@ -973,4 +973,37 @@ mod runner {
             "mutants has no CI job; requiring its result would fail the report"
         );
     }
+
+    #[test]
+    fn test_workspace_gate_toml_regression_trigger_is_not_a_cli_arg() {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let workspace_gate_toml =
+            manifest_dir.parent().unwrap().join(".cargo/gate.toml");
+        let config = GateConfig::load_from_path(&workspace_gate_toml).unwrap();
+        let regression = config.gate_definitions.get("regression").unwrap();
+        assert!(
+            !regression.args.iter().any(|a| a == "control-rs-ci/"),
+            "regression binary rejects positional paths; keep control-rs-ci/ in diff-trigger only"
+        );
+        assert!(
+            regression
+                .diff_trigger
+                .iter()
+                .any(|p| p == "control-rs-ci/"),
+            "harness-only changes must re-run regression"
+        );
+        assert_eq!(
+            regression.args,
+            [
+                "--package",
+                "control-rs-ci",
+                "--bin",
+                "regression",
+                "--",
+                "--all",
+                "--budgets",
+                ".cargo/regression.toml",
+            ]
+        );
+    }
 }
