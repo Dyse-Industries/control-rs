@@ -6,6 +6,7 @@
 //! status from those targets and the result logs of the gates. Each definition
 //! and condition is one [`Row`].
 
+use std::collections::BTreeSet;
 use std::fmt;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
@@ -28,7 +29,7 @@ pub const CONDITION: &str = "condition";
 pub const DEFINITION: &str = "definition";
 
 /// Row and report format version, incremented on every incompatible change.
-pub const SCHEMA: u32 = 4;
+pub const SCHEMA: u32 = 5;
 
 /// Exit code of a usage, configuration or I/O error.
 pub const USAGE_ERROR: u8 = 2;
@@ -38,6 +39,9 @@ pub type Defects = Vec<Defect>;
 
 /// Values of the required flags, in declared order.
 pub type FlagValues<const N: usize> = [PathBuf; N];
+
+/// A link from one document to another, by document ID.
+pub type Link<'a> = (&'a str, &'a str);
 
 /// Rows of one artifact.
 pub type Rows = Vec<Row>;
@@ -154,6 +158,45 @@ pub fn code_spans(text: &str) -> Vec<CodeSpan<'_>> {
         pos = end.max(open.saturating_add(1));
     }
     spans
+}
+
+/// The document of a qualified ID `<doc>#<id>`.
+#[must_use]
+pub fn doc_of(id: &str) -> &str {
+    id.split('#').next().unwrap_or(id)
+}
+
+/// The indices of the document links in `edges` that lie on a cycle. A link
+/// from `a` to `b` lies on a cycle when `a` is reachable from `b`, so a link
+/// from a document to itself always does.
+#[must_use]
+pub fn links_on_cycles(edges: &[Link<'_>]) -> BTreeSet<usize> {
+    edges
+        .iter()
+        .enumerate()
+        .filter(|(_, (from, to))| reaches(edges, to, from))
+        .map(|(index, _)| index)
+        .collect()
+}
+
+/// Whether `goal` is reachable from `start` along `edges`.
+fn reaches(edges: &[Link<'_>], start: &str, goal: &str) -> bool {
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![start];
+    while let Some(doc) = stack.pop() {
+        if doc == goal {
+            return true;
+        }
+        if seen.insert(doc) {
+            stack.extend(
+                edges
+                    .iter()
+                    .filter(|(from, _)| *from == doc)
+                    .map(|(_, to)| *to),
+            );
+        }
+    }
+    false
 }
 
 /// Sorts rows by `file`, then `line`, keeping the order of rows that tie.

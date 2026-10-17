@@ -10,8 +10,9 @@ files = [
 doc_id = '^#\s+.*\((?P<doc>[a-z0-9-]+)\)'
 definition = '^- \*\*(?:FR|NFR|C)-'
 verification = '^\| *(?:[a-z0-9-]+#)?VC-'
-methods = ["libtest", "kani", "pytest", "gtest", "analysis", "inspection", "review", "deferred"]
+methods = ["libtest", "kani", "pytest", "gtest", "analysis", "inspection", "review", "link"]
 automated_methods = ["libtest", "kani", "pytest", "gtest"]
+link_methods = ["link"]
 retired = [
     "requirement-traceability#FR-5",
     "requirement-traceability#VC-5.1",
@@ -20,6 +21,7 @@ retired = [
     "requirement-traceability#VC-7.2",
     "requirement-traceability#NFR-2",
     "requirement-traceability#VC-12.1",
+    "requirement-traceability#VC-8.2",
 ]
 
 [method.libtest]
