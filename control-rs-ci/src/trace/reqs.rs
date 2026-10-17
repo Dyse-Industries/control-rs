@@ -682,25 +682,21 @@ fn check_duplicate_document_ids(rows: &[Row], defects: &mut Vec<Defect>) {
 /// requirement to its conditions and from each link condition to what its
 /// targets name.
 fn check_links(
-    rows: &[Row],
+    definitions: &Definitions<'_>,
     conditions: &[&Row],
     rules: &Rules,
     defects: &mut Vec<Defect>,
 ) {
-    let docs: BTreeSet<&str> = rows.iter().map(|r| doc_of(&r.id)).collect();
-    let mut by_doc = RequirementsByDoc::new();
-    for row in rows.iter().filter(|r| r.kind == DEFINITION) {
-        by_doc
-            .entry(doc_of(&row.id))
-            .or_default()
-            .push(row.id.as_str());
-    }
-    let defined: BTreeSet<&str> = rows
-        .iter()
-        .filter(|r| r.kind == DEFINITION)
-        .chain(conditions.iter().copied())
-        .map(|r| r.id.as_str())
+    let defined: BTreeSet<&str> = definitions
+        .keys()
+        .copied()
+        .chain(conditions.iter().map(|r| r.id.as_str()))
         .collect();
+    let docs: BTreeSet<&str> = defined.iter().map(|id| doc_of(id)).collect();
+    let mut by_doc = RequirementsByDoc::new();
+    for &id in definitions.keys() {
+        by_doc.entry(doc_of(id)).or_default().push(id);
+    }
     let (mut edges, mut owners) = condition_edges(conditions);
     for &link in conditions.iter().filter(|c| {
         c.method
@@ -780,7 +776,7 @@ pub fn check(rows: &[Row], rules: &Rules) -> Vec<Defect> {
     check_condition_parents(&conditions, &definitions, &mut defects);
     check_condition_methods(&conditions, rules, &mut defects);
     check_duplicate_document_ids(rows, &mut defects);
-    check_links(rows, &conditions, rules, &mut defects);
+    check_links(&definitions, &conditions, rules, &mut defects);
 
     defects.sort_by(|a, b| {
         (a.file.as_str(), a.line).cmp(&(b.file.as_str(), b.line))

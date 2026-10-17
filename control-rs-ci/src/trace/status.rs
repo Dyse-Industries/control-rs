@@ -1796,7 +1796,21 @@ mod tests {
                 [failing.clone(), failing_condition.clone()],
             ];
             let derived = derive_links("link_subset", &docs);
-            assert_eq!(requirement(&derived, "a"), Some(expected), "{target}");
+            let req = derived
+                .0
+                .requirements
+                .iter()
+                .find(|r| r.id == "a#FR-1")
+                .expect("a#FR-1");
+            assert_eq!(req.status, expected, "{target}");
+            assert_eq!(
+                req.conditions
+                    .first()
+                    .and_then(|c| c.items.first())
+                    .map(|i| i.passed),
+                Some(expected == Status::Pass),
+                "{target}"
+            );
         }
     }
 
