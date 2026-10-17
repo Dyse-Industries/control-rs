@@ -52,8 +52,8 @@ type Grouped<'a> = BTreeMap<&'a str, Vec<&'a str>>;
 /// Derived condition statuses by condition ID.
 type Statuses<'a> = BTreeMap<&'a str, ConditionStatus>;
 
-/// Derived statuses by document.
-type DocStatuses<'a> = BTreeMap<&'a str, Status>;
+/// Derived statuses by requirement ID.
+type RequirementStatuses<'a> = BTreeMap<&'a str, Status>;
 
 /// Evaluated conditions and pending reviews.
 type ConditionEvalResult = (Vec<ConditionStatus>, Vec<ReviewCondition>);
@@ -189,6 +189,10 @@ struct StatusCtx<'a> {
 struct Links<'a> {
     /// Requirement IDs by document, in order of first definition.
     requirements: Grouped<'a>,
+    /// Defined requirement IDs.
+    defined: BTreeSet<&'a str>,
+    /// Defined condition IDs.
+    condition_ids: BTreeSet<&'a str>,
     /// Condition IDs by parent requirement.
     children: Grouped<'a>,
     /// Documents that any row names.
@@ -197,8 +201,8 @@ struct Links<'a> {
     rows: ById<'a>,
     /// Link conditions with a target on a link cycle.
     cyclic: BTreeSet<&'a str>,
-    /// Derived document statuses.
-    doc_status: DocStatuses<'a>,
+    /// Derived requirement statuses.
+    requirement_status: RequirementStatuses<'a>,
     /// Defects found while deriving link conditions.
     defects: Defects,
 }
@@ -296,34 +300,58 @@ impl<'a> Links<'a> {
                 children.entry(parent.as_str()).or_default().push(id);
             }
         }
-        let docs: BTreeSet<&str> = reqs.iter().map(|r| doc_of(&r.id)).collect();
         let rows: ById<'a> = conditions
             .iter()
             .filter(|(_, row)| is_link(row, config))
             .map(|(&id, &row)| (id, row))
             .collect();
+        let mut links = Self {
+            requirements,
+            defined: order.iter().copied().collect(),
+            condition_ids: conditions.keys().copied().collect(),
+            children,
+            docs: reqs.iter().map(|r| doc_of(&r.id)).collect(),
+            rows,
+            cyclic: BTreeSet::new(),
+            requirement_status: RequirementStatuses::new(),
+            defects: Defects::new(),
+        };
         let mut edges = Vec::new();
         let mut owners = Vec::new();
-        for (&id, row) in &rows {
-            for target in row.targets.iter().map(String::as_str) {
-                if docs.contains(target) {
-                    edges.push((doc_of(id), target));
-                    owners.push(id);
+        for (&id, row) in conditions {
+            for parent in &row.parents {
+                edges.push((parent.as_str(), id));
+                owners.push(None);
+            }
+        }
+        for (&id, row) in &links.rows {
+            for target in &row.targets {
+                for named in links.named(target) {
+                    edges.push((id, named));
+                    owners.push(Some(id));
                 }
             }
         }
-        let cyclic = links_on_cycles(&edges)
+        links.cyclic = links_on_cycles(&edges)
             .into_iter()
-            .filter_map(|index| owners.get(index).copied())
+            .filter_map(|index| owners.get(index).copied().flatten())
             .collect();
-        Self {
-            requirements,
-            children,
-            docs,
-            rows,
-            cyclic,
-            doc_status: DocStatuses::new(),
-            defects: Defects::new(),
+        links
+    }
+
+    /// The requirements and conditions `target` names: itself when it is a
+    /// defined requirement or condition ID, else every requirement of the
+    /// document it names.
+    fn named(&self, target: &'a str) -> Vec<&'a str> {
+        if target.contains('#') {
+            self.defined
+                .get(target)
+                .or_else(|| self.condition_ids.get(target))
+                .copied()
+                .into_iter()
+                .collect()
+        } else {
+            self.requirements.get(target).cloned().unwrap_or_default()
         }
     }
 
@@ -362,12 +390,12 @@ impl<'a> Links<'a> {
         } else {
             let mut worst_status = Status::Pass;
             for target in &row.targets {
-                let doc = self.document(row, target, statuses);
-                worst_status = worst_status.max(doc);
+                let named = self.target(row, target, statuses);
+                worst_status = worst_status.max(named);
                 items.push(ItemOutcome {
                     target: target.clone(),
-                    passed: !fails_gate(doc),
-                    message: Some(format!("document status {doc:?}")),
+                    passed: !fails_gate(named),
+                    message: Some(format!("status {named:?}")),
                 });
             }
             worst_status
@@ -385,46 +413,75 @@ impl<'a> Links<'a> {
         status
     }
 
-    /// The worst status of the requirements of `doc`, which `row` names.
-    fn document(
+    /// The worst status of the requirements and conditions `target` names,
+    /// which `row` lists.
+    fn target(
         &mut self,
         row: &'a Row,
-        doc: &'a str,
+        target: &'a str,
         statuses: &mut Statuses<'a>,
     ) -> Status {
         let at = |message: &str| {
             Defect::at(
                 row,
-                format!("condition {} document '{doc}' {message}", row.id),
+                format!("condition {} target '{target}' {message}", row.id),
             )
         };
-        if !self.docs.contains(doc) {
+        let named = self.named(target);
+        if named.is_empty()
+            && (target.contains('#') || !self.docs.contains(target))
+        {
             self.defects.push(at("not found in reqs.jsonl"));
             return Status::Unrun;
         }
-        if let Some(&done) = self.doc_status.get(doc) {
-            return done;
-        }
-        let requirements =
-            self.requirements.get(doc).cloned().unwrap_or_default();
-        if requirements.is_empty() {
+        if named.is_empty() {
             self.defects.push(at("defines no requirement"));
             return Status::Uncovered;
         }
-        let mut status = Status::Pass;
-        for requirement in requirements {
-            let children =
-                self.children.get(requirement).cloned().unwrap_or_default();
-            let own = children
-                .into_iter()
-                .map(|child| self.condition(child, statuses))
-                .max()
-                .unwrap_or(Status::Uncovered);
-            status = status.max(own);
+        named
+            .into_iter()
+            .map(|node| {
+                if self.defined.contains(node) {
+                    self.requirement(node, statuses)
+                } else {
+                    self.condition(node, statuses)
+                }
+            })
+            .max()
+            .unwrap_or(Status::Uncovered)
+    }
+
+    /// The worst status of the conditions of `requirement`, derived once.
+    fn requirement(
+        &mut self,
+        requirement: &'a str,
+        statuses: &mut Statuses<'a>,
+    ) -> Status {
+        if let Some(&done) = self.requirement_status.get(requirement) {
+            return done;
         }
-        self.doc_status.insert(doc, status);
+        let children =
+            self.children.get(requirement).cloned().unwrap_or_default();
+        let status = children
+            .into_iter()
+            .map(|child| self.condition(child, statuses))
+            .max()
+            .unwrap_or(Status::Uncovered);
+        self.requirement_status.insert(requirement, status);
         status
     }
+}
+
+/// Whether a condition or requirement of `status` fails the gate.
+const fn fails_gate(status: Status) -> bool {
+    matches!(status, Status::Fail | Status::Unrun | Status::Uncovered)
+}
+
+/// Whether `row` names a method in `link_methods`.
+fn is_link(row: &Row, config: &TraceConfig) -> bool {
+    row.method
+        .as_ref()
+        .is_some_and(|m| config.link_methods.contains(m))
 }
 
 /// The test binary a libtest `Running` header names: the file stem of the
@@ -808,18 +865,6 @@ fn condition_status(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
         Status::Pass
     };
     status(derived, items)
-}
-
-/// Whether a condition or requirement of `status` fails the gate.
-const fn fails_gate(status: Status) -> bool {
-    matches!(status, Status::Fail | Status::Unrun | Status::Uncovered)
-}
-
-/// Whether `row` names a method in `link_methods`.
-fn is_link(row: &Row, config: &TraceConfig) -> bool {
-    row.method
-        .as_ref()
-        .is_some_and(|m| config.link_methods.contains(m))
 }
 
 /// The worst status of `conditions`; `Uncovered` when there are none.
@@ -1678,7 +1723,7 @@ mod tests {
                 .iter()
                 .map(|d| d.message.as_str())
                 .collect::<Vec<_>>(),
-            ["condition a#VC-1.1 document 'e' defines no requirement"]
+            ["condition a#VC-1.1 target 'e' defines no requirement"]
         );
     }
 
@@ -1694,7 +1739,7 @@ mod tests {
                 .iter()
                 .map(|d| d.message.as_str())
                 .collect::<Vec<_>>(),
-            ["condition a#VC-1.1 document 'zz' not found in reqs.jsonl"]
+            ["condition a#VC-1.1 target 'zz' not found in reqs.jsonl"]
         );
     }
 
@@ -1725,5 +1770,53 @@ mod tests {
             list.iter().map(|r| r.id.clone()).collect::<Vec<_>>()
         };
         assert_eq!(ids(&derived.0.review), ["c#VC-1.1"]);
+    }
+
+    #[test]
+    fn link_to_a_requirement_or_condition_takes_its_status() {
+        let failing = Row {
+            id: "b#FR-2".to_string(),
+            ..doc_definition("b")
+        };
+        let failing_condition = Row {
+            id: "b#VC-2.1".to_string(),
+            parents: vec!["b#FR-2".to_string()],
+            ..doc_condition("b", "libtest", &["t::fail"])
+        };
+        for (target, expected) in [
+            ("b#FR-1", Status::Pass),
+            ("b#FR-2", Status::Fail),
+            ("b#VC-1.1", Status::Pass),
+            ("b#VC-2.1", Status::Fail),
+            ("b", Status::Fail),
+        ] {
+            let docs = [
+                document("a", "link", &[target]),
+                document("b", "libtest", &["t::pass"]),
+                [failing.clone(), failing_condition.clone()],
+            ];
+            let derived = derive_links("link_subset", &docs);
+            assert_eq!(requirement(&derived, "a"), Some(expected), "{target}");
+        }
+    }
+
+    #[test]
+    fn link_to_an_undefined_requirement_is_unrun() {
+        let derived = derive_links(
+            "link_undefined",
+            &[
+                document("a", "link", &["b#FR-9"]),
+                document("b", "libtest", &["t::pass"]),
+            ],
+        );
+        assert_eq!(requirement(&derived, "a"), Some(Status::Unrun));
+        assert_eq!(
+            derived
+                .1
+                .iter()
+                .map(|d| d.message.as_str())
+                .collect::<Vec<_>>(),
+            ["condition a#VC-1.1 target 'b#FR-9' not found in reqs.jsonl"]
+        );
     }
 }
