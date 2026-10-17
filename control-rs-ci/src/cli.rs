@@ -41,6 +41,10 @@ pub struct CliOptions {
     pub passthrough: Passthrough,
     /// Bounded group concurrency limit (FR-13).
     pub max_jobs: Option<usize>,
+    /// Base ref of the path-gating diff (FR-23).
+    pub base: Option<String>,
+    /// Head ref of the path-gating diff (FR-23).
+    pub head: Option<String>,
 }
 
 struct SplitArgs<'a> {
@@ -83,6 +87,7 @@ pub fn render_usage(binary_name: &str) -> String {
            {f}-s{f:#}, {f}--skip{f:#} {a}<gate>{a:#}      Skip the specified gate(s)\n  \
            {f}-u{f:#}, {f}--up-to{f:#} {a}<gate>{a:#}     Run gates up to and including the specified gate\n  \
            {f}-c{f:#}, {f}--config{f:#} {a}<path>{a:#}    Path to gate.toml (default: .cargo/gate.toml)\n  \
+           {f}--base{f:#} {a}<ref>{a:#}, {f}--head{f:#} {a}<ref>{a:#}   Refs whose diff gates with `diff-trigger` compare (default: origin/main, HEAD)\n  \
            {f}-X{f:#}, {f}--clean{f:#}            Clean previous CI artifacts and reports\n  \
            {f}-a{f:#}, {f}--all{f:#}              Run every enabled gate, including default = false gates\n  \
            {f}-j{f:#}, {f}--max-jobs{f:#} {a}<n>{a:#}     Bound concurrent execution groups\n  \
@@ -136,25 +141,22 @@ pub fn parse_args(args: &[String], binary_name: &str) -> CliOptions {
                 options.max_jobs = Some(parse_usize_value(&mut parser));
             }
             Short('g') | Long("group") => {
-                push_list(
-                    &mut options.groups,
-                    &parse_string_value(&mut parser),
-                );
+                parse_list(&mut parser, &mut options.groups);
             }
             Short('o') | Long("only") => {
-                push_list(
-                    &mut options.only_gates,
-                    &parse_string_value(&mut parser),
-                );
+                parse_list(&mut parser, &mut options.only_gates);
             }
             Short('s') | Long("skip") => {
-                push_list(
-                    &mut options.skip_gates,
-                    &parse_string_value(&mut parser),
-                );
+                parse_list(&mut parser, &mut options.skip_gates);
             }
             Short('u') | Long("up-to") => {
                 options.up_to_gate = Some(parse_string_value(&mut parser));
+            }
+            Long("base") => {
+                options.base = Some(parse_string_value(&mut parser));
+            }
+            Long("head") => {
+                options.head = Some(parse_string_value(&mut parser));
             }
             Short('c') | Long("config") => {
                 options.config_path = Some(parse_path_value(&mut parser));
@@ -238,6 +240,11 @@ fn parse_usize_value(parser: &mut lexopt::Parser) -> usize {
         ui::error(format!("invalid integer value '{s}': {e}"));
         exit(USAGE_EXIT);
     })
+}
+
+/// Appends the entries of the next comma-separated value to `dest`.
+fn parse_list(parser: &mut lexopt::Parser, dest: &mut Vec<String>) {
+    push_list(dest, &parse_string_value(parser));
 }
 
 /// Appends the non-empty, trimmed comma-separated entries of `val`.
@@ -335,6 +342,8 @@ pub fn run_cli(binary_name: &str) {
         verbose: options.verbose,
         extra_args: options.passthrough.as_deref().unwrap_or_default(),
         max_jobs: options.max_jobs,
+        base: options.base.as_deref(),
+        head: options.head.as_deref(),
     };
     match run_pipeline(&workspace_root, &config_path, &pipeline) {
         Ok(true) => exit(0),

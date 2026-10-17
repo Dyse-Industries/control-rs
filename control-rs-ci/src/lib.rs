@@ -23,6 +23,8 @@ pub mod cli;
 
 pub mod config;
 
+pub mod diff_trigger;
+
 pub mod error;
 
 pub mod ets;
@@ -45,6 +47,12 @@ pub mod ui;
 /// contention. `--clean` deletes this directory, so every group rebuilds from
 /// an empty target directory.
 pub const GROUP_TARGET_ROOT: &str = "target/ci-groups";
+
+/// A gate the path check skipped, with the reason.
+type SkippedGate = (SharedGate, String);
+
+/// Gates skipped by the path check, and the gates that run.
+type PathSplit = (Vec<SkippedGate>, GateList);
 
 /// Concurrent groups in declaration order, each with its gates in pipeline order.
 type GroupedGates<'a> = Vec<(&'a str, GateList)>;
@@ -111,6 +119,10 @@ pub struct PipelineOptions<'a> {
     pub extra_args: &'a [String],
     /// Bounded group concurrency limit (FR-13); overrides `[execution] max_jobs`.
     pub max_jobs: Option<usize>,
+    /// Base ref of the path-gating diff; overrides `[runner] base` (FR-23).
+    pub base: Option<&'a str>,
+    /// Head ref of the path-gating diff; overrides `[runner] head` (FR-23).
+    pub head: Option<&'a str>,
 }
 
 /// Optional list of gate names used to filter a run.
@@ -301,6 +313,76 @@ fn record_disabled_gates(
     Ok(())
 }
 
+/// Applies the path check (FR-22 to FR-24) to each gate.
+///
+/// The diff is computed once, and only when a gate has a `diff-trigger` and is not
+/// forced by an override.
+///
+/// # Errors
+/// Returns `GateError::Config` when an override variable is invalid.
+fn split_by_diff_trigger(
+    gates: GateList,
+    config: &GateConfig,
+    options: &PipelineOptions<'_>,
+    root: &Path,
+) -> GateResult<PathSplit> {
+    let lookup = |var: &str| std::env::var(var).ok();
+    let base = options
+        .base
+        .or(config.runner.base.as_deref())
+        .unwrap_or(diff_trigger::DEFAULT_BASE);
+    let head = options
+        .head
+        .or(config.runner.head.as_deref())
+        .unwrap_or(diff_trigger::DEFAULT_HEAD);
+    // One diff and one match of the `[runner]` list serve every gate.
+    let changed = gates
+        .iter()
+        .any(|g| !g.diff_trigger.is_empty())
+        .then(|| diff_trigger::changed_files(root, base, head))
+        .flatten();
+    let global_hit = changed.as_deref().is_some_and(|files| {
+        diff_trigger::global_hit(&config.runner.diff_trigger, files)
+    });
+    let mut skipped = Vec::new();
+    let mut running = GateList::new();
+    for gate in gates {
+        let triggers = diff_trigger::Triggers {
+            own: &gate.diff_trigger,
+            global_hit,
+        };
+        let decision = diff_trigger::should_run(
+            gate.name(),
+            triggers,
+            changed.as_deref(),
+            &lookup,
+        )
+        .map_err(|message| GateError::Config {
+            path: root.join(".cargo/gate.toml"),
+            message,
+        })?;
+        match decision {
+            diff_trigger::Decision::Run => running.push(gate),
+            diff_trigger::Decision::Skip(reason) => {
+                skipped.push((gate, reason));
+            }
+        }
+    }
+    Ok((skipped, running))
+}
+
+fn record_skipped_gates(
+    skipped: &[SkippedGate],
+    ctx: &GateContext,
+) -> GateResult<()> {
+    for (gate, reason) in skipped {
+        let summary = format!("{} skipped: {reason}", gate.name());
+        let outcome = gate.record_skipped(ctx, &summary)?;
+        report_outcome(&outcome, "", gate.name());
+    }
+    Ok(())
+}
+
 fn display_pipeline_summary(report_path: &Path, passed: bool, duration: f64) {
     ui::status("Writing", format!("{}", report_path.display()));
     if passed {
@@ -365,6 +447,9 @@ pub fn run_pipeline(
         .into_iter()
         .partition(|g| g.mode() == GatePolicy::Skip);
     record_disabled_gates(&disabled, &ctx)?;
+    let (unchanged, active_gates) =
+        split_by_diff_trigger(active_gates, &config, options, workspace_root)?;
+    record_skipped_gates(&unchanged, &ctx)?;
 
     let schedule = partition_gates(active_gates, &config);
     let ui_lock = Mutex::new(());

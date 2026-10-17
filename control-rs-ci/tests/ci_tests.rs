@@ -89,6 +89,7 @@ mod runner {
                 cwd: None,
                 timeout_secs: None,
                 skip_exit_codes: Vec::new(),
+                diff_trigger: Vec::new(),
             })
         );
         assert_eq!(
@@ -104,6 +105,7 @@ mod runner {
                 cwd: None,
                 timeout_secs: None,
                 skip_exit_codes: Vec::new(),
+                diff_trigger: Vec::new(),
             })
         );
     }
@@ -631,6 +633,7 @@ mod runner {
                 cwd: None,
                 timeout_secs: None,
                 skip_exit_codes: Vec::new(),
+                diff_trigger: Vec::new(),
             })
         );
 
@@ -648,6 +651,7 @@ mod runner {
                 cwd: None,
                 timeout_secs: None,
                 skip_exit_codes: Vec::new(),
+                diff_trigger: Vec::new(),
             })
         );
 

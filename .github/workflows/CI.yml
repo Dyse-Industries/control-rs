@@ -59,6 +59,10 @@ concurrency:
 # every gate, and dtolnay/rust-toolchain keeps a value that is already set.
 env:
   CARGO_TERM_COLOR: never
+  # Gates with `diff-trigger` in gate.toml skip when a pull request leaves those
+  # paths unchanged. Pushes and tags run every gate: a push to main has no diff, and
+  # its baselines feed later pull requests.
+  CONTROL_RS_CI_GATES: ${{ github.event_name == 'pull_request' && ' ' || 'run' }}
 
 jobs:
   # ============================================================================
@@ -131,6 +135,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -194,6 +200,8 @@ jobs:
       actions: read
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Restore Cross-Compare Baseline
         uses: ./.github/actions/restore-baseline
@@ -464,6 +472,8 @@ jobs:
         gate: ${{ fromJSON(needs.mutants-plan.outputs.gates) }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
 
