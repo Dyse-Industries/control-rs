@@ -32,7 +32,8 @@ requirement ID is introduced. A **condition** is a row of a Verification table
 that introduces a condition ID, names its parent requirements, states how it is
 verified and, for an automated method, names the fully qualified **targets**
 (tests or proof harnesses) that discharge it. A condition of a link method
-names design documents instead and takes the status of their requirements.
+names design documents, requirements or conditions instead and takes their
+status.
 Two small binaries in `control-rs-ci` handle one step each:
 
 - `trace-reqs` finds definitions and conditions in Markdown, checks them and
@@ -70,8 +71,8 @@ state their definition and verification-row grammar there (see
 
 **Scope.** In scope: definitions, conditions, targets, the checks over them,
 the Requirement → Condition → Target hierarchy inside one design document,
-target status derivation, decision references (FR-12), document links
-(FR-13), and the generated artifacts. Out of scope:
+target status derivation, decision references (FR-12), links (FR-13), and
+the generated artifacts. Out of scope:
 test adequacy; condition, decision and MC/DC coverage of requirements (see
 [Extension Path](#extension-path)); code-level structural coverage;
 requirement-to-requirement hierarchies; citation, reference and general
@@ -125,12 +126,12 @@ editing tools; and any systems-engineering view.
   or defined more than once; and a decision ID cited in the text of a
   requirement definition that no decision record defines, or whose status is
   not in `accepted` (ADR-0001).
-- **FR-13 — Document Links**: For a condition whose method is in
-  `link_methods`, `trace-reqs` shall report as a defect a condition that names
-  no target, a target that is not the document ID of a selected document, and
-  a condition that lies on a cycle of links between documents; `trace-check`
-  shall derive the condition's status from the requirements of the documents
-  its targets name, per [Status Derivation](#status-derivation).
+- **FR-13 — Links**: For a condition whose method is in `link_methods`,
+  `trace-reqs` shall report as a defect a condition that names no target, a
+  target that names no selected document and no defined requirement or
+  condition, and a condition that lies on a link cycle; `trace-check` shall
+  derive the condition's status from the documents, requirements and
+  conditions its targets name, per [Status Derivation](#status-derivation).
 
 ### Non-Functional Requirements
 
@@ -205,13 +206,14 @@ editing tools; and any systems-engineering view.
    | `analysis`   | `—`                                   | none; signed off in review                       |
    | `inspection` | `—`                                   | none; signed off in review                       |
    | `review`     | `—`                                   | none; signed off in review                       |
-   | `link`       | `doc` (a document ID)                 | none; status of the named documents' requirements |
+   | `link`       | `doc`, `doc#FR-n` or `doc#VC-n.m`     | none; status of the named document, requirement or condition |
 
-   A `link` condition names the design documents a requirement rests on,
-   such as the component designs a toolbox requirement exposes:
+   A `link` condition names what a requirement rests on: a whole design
+   document, one of its requirements or one of its conditions, such as the
+   component designs a toolbox requirement exposes:
 
    ```markdown
-   | VC-4.1 | FR-4 | `link` | `riccati`, `pole-placement` | Every requirement of both designs holds; FR-4 holds iff both conditions hold |
+   | VC-4.1 | FR-4 | `link` | `riccati`, `pole-placement#FR-2` | The Riccati design and pole placement by state feedback hold; FR-4 holds iff both conditions hold |
    ```
 
 4. **Run `cargo trace-reqs` and `cargo trace-check`.** Each problem prints as
@@ -280,14 +282,15 @@ flowchart LR
     R["Requirement (decision)<br/>FR-n, NFR-n, C-n"] -->|" 1..n "| V["Verification condition<br/>VC-x.y, method"]
     V -->|" method in automated_methods: 1..n "| T["Test or proof harness<br/>target"]
     V -.->|" other methods: 0..n "| T
-    V -.->|" method in link_methods: 1..n "| D["Design document<br/>doc ID"]
+    V -.->|" method in link_methods: 1..n "| D["Design document, requirement<br/>or condition"]
 ```
 
 A condition may have more than one parent, such as one review condition covering
 every constraint. Verification outcomes are derived from per-target results: a
 target evaluates to a boolean pass or fail in its result log, and `trace-check`
 aggregates target outcomes into condition statuses (C-8). A link condition
-takes its outcome from the requirements of the documents it names (FR-13).
+takes its outcome from the documents, requirements or conditions it names
+(FR-13).
 
 **Where requirements live.** Requirements stay in the design documents.
 Measured on 2026-09-26, the corpus holds 268 requirements in 23
@@ -349,7 +352,7 @@ accepted = ["Accepted"]
 | `verification`         | Regex for a line that defines a condition                                                                                       |
 | `methods`              | Verification methods a condition may name                                                                                       |
 | `automated_methods`    | The subset of `methods` whose conditions name targets that a result log must record as passed                                   |
-| `link_methods`         | The subset of `methods` whose conditions name document IDs as targets; optional (defaults to none) and disjoint from `automated_methods` |
+| `link_methods`         | The subset of `methods` whose conditions name documents, requirements or conditions as targets; optional (defaults to none) and disjoint from `automated_methods` |
 | `method.<m>`           | Result artifact path for automated method `<m>`; required for every automated method                                            |
 | `method.libtest.interpreter_artifact` | Log of the same tests run under an interpreter; optional, and absent it disables W-2                                  |
 | `decisions.files`      | Roots of decision records, selected per [File Selection](#file-selection); the table is optional and its absence disables FR-12 |
@@ -381,7 +384,8 @@ The rules below are the whole parser:
 3. A line that matches `definition` defines the first requirement ID on it.
    Its text is the line plus the indented lines that follow it.
 4. A line that matches `verification` defines the condition ID on it. Every
-   requirement ID on the line is a parent, the one code span whose content
+   requirement ID on the line outside the targets of a link condition is a
+   parent, the one code span whose content
    is in `methods` is the method, and the code spans of the fourth cell of a row
    with five or more cells are the targets.
 5. The document name is the `<doc>` captured by the `doc_id` pattern on the
@@ -394,8 +398,10 @@ The rules below are the whole parser:
    selected file with no such line is not a decision record. Every
    occurrence of `decisions.id` in the text of a requirement definition (rule 3)
    is a citation; an occurrence anywhere else is not.
-7. A target of a condition whose method is in `link_methods` is a document ID
-   and names the document whose `doc_id` declaration captures it.
+7. A target of a condition whose method is in `link_methods` is a document
+   ID, which names every requirement of the document whose `doc_id`
+   declaration captures it, or a qualified requirement or condition ID, which
+   names that requirement or condition.
 
 ### Checks
 
@@ -410,12 +416,14 @@ The rules below are the whole parser:
 | `missing`         | A defined requirement has no condition                                                               |
 | `decision`        | A requirement cites a decision ID that has no decision record                                        |
 | `decision_status` | A decision record has no status, or a requirement cites a decision whose status is not in `accepted` |
-| `link`            | A link condition names no target, names a target that is no selected document's ID, or lies on a link cycle |
+| `link`            | A link condition names no target, names a target that is no selected document and no defined requirement or condition, or lies on a link cycle |
 
-Links form a graph with an edge from the document of each link condition to
-each document it names; a condition lies on a cycle when its edge does, and a
-link from a document to itself is a cycle. Each such condition is reported at
-its row. OpenFastTrace likewise detects items linked in a cycle (OpenFastTrace,
+Links form a graph with an edge from each requirement to each of its
+conditions and from each link condition to each requirement or condition its
+targets name. A link condition lies on a cycle when one of its edges does, so
+a link to the condition itself, to its parent requirement or to its own
+document is a cycle, while a link to another requirement of the same document
+is not. Each such condition is reported at its row. OpenFastTrace likewise detects items linked in a cycle (OpenFastTrace,
 2026b).
 
 ### Status Derivation
@@ -432,7 +440,7 @@ logs in `target/ci-artifacts/`:
 | Method in `link_methods`, no target named                      | `Uncovered` | yes        |
 | Method in `link_methods`, a target absent from `reqs.jsonl`    | `Unrun`     | yes        |
 | Method in `link_methods`, condition on a link cycle            | `Fail`      | yes        |
-| Method in `link_methods`, otherwise                            | Worst status of the named documents | iff that status does |
+| Method in `link_methods`, otherwise                            | Worst status of the named requirements and conditions | iff that status does |
 | Method outside `automated_methods` and `link_methods`          | `Review`    | no         |
 
 `trace-check` reads per-target results using deterministic framework-specific
@@ -473,19 +481,19 @@ A requirement takes the worst status of its conditions, in the order
 condition row, as `condition <id> target '<target>' not found in <log>` or
 `... failed in <log>`.
 
-**Document links.** A document's status is the worst status of its
-requirements, and a document that defines no requirement is `Uncovered`.
-`trace-check` derives a link condition after every condition of the documents
-it names, so a status passes along a chain of links. OpenFastTrace marks an
+**Links.** A requirement or condition target takes that item's status. A
+document target takes the worst status of the document's requirements, and a
+document that defines no requirement is `Uncovered`. `trace-check` derives a
+link condition after everything it names, so a status passes along a chain of
+links. OpenFastTrace marks an
 item covered deeply only if it and all items it needs coverage from are
 covered recursively (OpenFastTrace, 2026b), and in mantra the state of a
-requirement depends on the state of its children (Hatzl, 2026c). Each named
-document is one target outcome of the condition, passed unless its status
-fails the gate. Link conditions are not listed among the `Review`
-conditions, since the named documents list their own. Defects print
-at the condition row, as `condition <id> document '<doc>' not found in
-reqs.jsonl`, `... defines no requirement` or `condition <id> lies on a link
-cycle`.
+requirement depends on the state of its children (Hatzl, 2026c). Each target is
+one target outcome of the condition, passed unless its status fails the gate.
+Link conditions are not listed among the `Review` conditions, since the named
+documents list their own. Defects print at the condition row, as
+`condition <id> target '<target>' not found in reqs.jsonl`, `... defines no
+requirement` or `condition <id> lies on a link cycle`.
 
 `trace-report.json` holds `schema` (5), summary counts per status, one entry
 per requirement (ID, status, and child conditions with method, status and
@@ -501,7 +509,7 @@ warnings.
 | `kind`    | `definition` or `condition`                                      |
 | `parents` | Condition rows only: qualified parent requirement IDs            |
 | `method`  | Condition rows only: the verification method                     |
-| `targets` | Condition rows only: the code spans of the `Target` cell, if any; document IDs for a link condition |
+| `targets` | Condition rows only: the code spans of the `Target` cell, if any; document, requirement or condition IDs for a link condition |
 | `file`    | Path relative to the working directory                           |
 | `line`    | 1-based line number                                              |
 | `text`    | The matched line; for a definition, its full text                |
@@ -585,7 +593,7 @@ Four choices keep the stronger levels additive:
 | **Decision rows in `reqs.jsonl`**                                     | No consumer reads them; a row kind is a schema increment (NFR-4) that waits for one.                                                                                                                                                                                                                              | n/a                            |
 | **Immutability of accepted decision records**                         | Needs the base branch as input, outside C-4; review of the diff is the control, as for withdrawn IDs.                                                                                                                                                                                                               | n/a                            |
 | **Requirement lists in decision records**                             | A second, hand-kept link in the other direction; citations in the documents already give it, and a search recovers it.                                                                                                                                                                                            | n/a                            |
-| **Requirement-level link targets (`doc#FR-n`)**                       | A partial link leaves the rest of a component unverified by the linking requirement and invites splitting a component across documents; the document is the unit a design owns. | n/a |
+| **Document-only link targets**                                        | A requirement that rests on part of a component would need the component split per consumer, or would fail when an unrelated requirement of the component fails. The gate checks every condition of every traced document anyway, so a link to part of a document hides nothing from it. | n/a |
 | **Revision-pinned or fingerprinted links**                            | Each link would carry state that authors update on every edit of the named document. Status is re-derived from the named document on every run, and review of its diff covers changed meaning. OpenFastTrace voids links on a revision increment; Doorstop reports suspect links by fingerprint. | OpenFastTrace (2026a), Doorstop (2026) |
 | **Retired-ID list**                                                   | A hand-kept list catches reuse only of the IDs someone remembered to list, and costs a configuration key, a check and an edit per withdrawal; authors deprecate IDs and review of the diff checks it. | n/a |
 
@@ -617,8 +625,8 @@ Four choices keep the stronger levels additive:
 | VC-18.2   | FR-12                                  | `libtest` | `control_rs_ci::trace::reqs::tests::requirement_citing_unaccepted_decision_is_reported`, `control_rs_ci::trace::reqs::tests::citations_outside_requirement_text_are_ignored`, `control_rs_ci::trace::reqs::tests::decision_record_without_status_is_reported`                                                                                                                                                                                                                                                                                                                                                                                                                       | A requirement citing a Proposed and a Superseded decision gives two defects; decision IDs outside requirement text give none; a record with no status gives one                     |
 | VC-18.3   | FR-12                                  | `libtest` | `control_rs_ci::trace::reqs::tests::absent_decisions_table_disables_decision_checks`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | With no `[decisions]` table, a corpus citing undefined decision IDs gives no decision defect                                                                                        |
 | VC-18.4   | FR-12                                  | `libtest` | `trace_negative_gates::test_negative_trace_reqs_gate_fails_on_unaccepted_and_missing_decisions`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | Negative example: the `trace-reqs` gate fails on a fixture workspace whose requirement cites a Proposed decision and an unrecorded one, and its log reports both at the requirement |
-| VC-19.1   | FR-13 | `libtest` | `control_rs_ci::trace::reqs::tests::link_condition_without_a_target_is_reported`, `control_rs_ci::trace::reqs::tests::link_target_naming_no_document_is_reported`, `control_rs_ci::trace::reqs::tests::every_condition_on_a_link_cycle_is_reported` | A link with no target, a link to an undeclared document, a self-link and a two-document cycle each give a link defect at every condition concerned; FR-13 holds iff all three conditions hold |
-| VC-19.2   | FR-13 | `libtest` | `control_rs_ci::trace::status::tests::link_takes_the_worst_status_of_the_named_documents`, `control_rs_ci::trace::status::tests::link_status_follows_a_chain_of_documents`, `control_rs_ci::trace::status::tests::link_to_a_document_without_requirements_is_uncovered`, `control_rs_ci::trace::status::tests::link_to_an_unknown_document_is_unrun`, `control_rs_ci::trace::status::tests::link_on_a_cycle_fails`, `control_rs_ci::trace::status::tests::link_conditions_are_not_listed_for_review` | Status Derivation link rows hold, a status passes along a chain of two links, and no link condition is listed for sign-off |
+| VC-19.1   | FR-13 | `libtest` | `control_rs_ci::trace::reqs::tests::link_condition_without_a_target_is_reported`, `control_rs_ci::trace::reqs::tests::link_target_naming_no_document_is_reported`, `control_rs_ci::trace::reqs::tests::link_target_naming_an_undefined_requirement_is_reported`, `control_rs_ci::trace::reqs::tests::link_targets_are_not_parents`, `control_rs_ci::trace::reqs::tests::every_condition_on_a_link_cycle_is_reported`, `control_rs_ci::trace::reqs::tests::a_link_between_requirements_of_one_document_is_no_cycle`, `control_rs_ci::trace::reqs::tests::link_to_a_condition_resolves_and_a_self_link_is_a_cycle` | A link with no target and a link to an undeclared document, requirement or condition each give a link defect; targets are not parents; a self-link, a link to the parent requirement and a two-document cycle are cycles, a link to another requirement of the same document is not; FR-13 holds iff all three conditions hold |
+| VC-19.2   | FR-13 | `libtest` | `control_rs_ci::trace::status::tests::link_takes_the_worst_status_of_the_named_documents`, `control_rs_ci::trace::status::tests::link_to_a_requirement_or_condition_takes_its_status`, `control_rs_ci::trace::status::tests::link_status_follows_a_chain_of_documents`, `control_rs_ci::trace::status::tests::link_to_a_document_without_requirements_is_uncovered`, `control_rs_ci::trace::status::tests::link_to_an_unknown_document_is_unrun`, `control_rs_ci::trace::status::tests::link_to_an_undefined_requirement_is_unrun`, `control_rs_ci::trace::status::tests::link_on_a_cycle_fails`, `control_rs_ci::trace::status::tests::link_conditions_are_not_listed_for_review` | Status Derivation link rows hold for document, requirement and condition targets, a status passes along a chain of two links, and no link condition is listed for sign-off |
 | VC-19.3   | FR-13 | `libtest` | `control_rs_ci::trace::reqs::tests::link_methods_must_be_methods_and_not_automated`, `trace_tests::cli::a_failing_linked_document_fails_the_linking_document` | A `link_methods` entry outside `methods` or inside `automated_methods` is a configuration error; end to end, a failed target in a linked document fails the linking condition and the run |
 
 ### Limits
@@ -632,18 +640,18 @@ Four choices keep the stronger levels additive:
   `Unrun`.
 - A condition has no link to the code that implements it, so a surviving
   mutant cannot be attributed to a requirement.
-- Every requirement ID on a verification row is a parent, including one
-  mentioned in the Criterion, and a second condition ID or a second method
-  code span is a defect. Criteria therefore name neither.
+- Every requirement ID on a verification row outside the targets of a link
+  condition is a parent, including one mentioned in the Criterion, and a
+  second condition ID outside those targets or a second method code span is a
+  defect. Criteria therefore name neither.
 - A withdrawn ID that is reused is not detected; review of the diff is the
   control.
 - W-3 compares file modification times with the traced documents only. A
   code or test edit after the run leaves the log stale without a warning.
-- A link asserts that the named documents suffice for its requirement; the
+- A link asserts that the items it names suffice for its requirement; the
   tracer checks their status, not that sufficiency, which the Criterion states
-  and review checks. A link records no revision of the named document, so a
-  change there changes the link's status without an edit to the linking
-  document.
+  and review checks. A link records no revision of what it names, so a change
+  there changes the link's status without an edit to the linking document.
 - Decision checks read status badges and the decision IDs in requirement
   text. A mention elsewhere, or in a document outside `files`, is not
   checked, and whether a design follows the decisions it cites is left to
@@ -657,7 +665,7 @@ Four choices keep the stronger levels additive:
   against a handful of compiled patterns. Cost is dominated by file I/O.
   Measured on 2026-09-27 against rev 1.11 of this document: `trace-reqs` 16 ms.
 - Artifacts are small: one row per definition and condition.
-- Link derivation visits each document once; its cost is linear in conditions
+- Link derivation visits each requirement and condition once; its cost is linear in conditions
   and links.
 - `regex` brings `aho-corasick`, `memchr`, `regex-automata` and
   `regex-syntax`, with no proc-macro crate. `control-rs-compare` already
@@ -695,7 +703,7 @@ Four choices keep the stronger levels additive:
 | **Phase 5: Corpus migration**          | Add condition IDs and methods to each document's Verification table and add the document to `files`. One pull request per area.                                                                                                          | 3                |
 | **Phase 6: Framework Methods (PR3-6)** | Framework-qualified methods `libtest`, `kani`, `pytest` and `gtest`; per-target result evaluation in `trace-check` from `test.log`, `kani.log`, `pytest.log` and `gtest.log`; Miri warning W-2; schema 4; `trace` moved to `post` stage. | 2                |
 | **Phase 7: Decision references**       | `[decisions]` table, decision records and citations per Matching Rules, the `decision` and `decision_status` checks and decision IDs in `duplicate`; `.cargo/trace/trace.toml` gains the table.                                          | 1                |
-| **Phase 8: Document links**            | `link_methods` key and validation, Matching Rule 7, the `link` check, link status derivation in document order; `.cargo/trace/trace.toml` gains `link`. | 1 |
+| **Phase 8: Links**                     | `link_methods` key and validation, Matching Rule 7, the `link` check, link status derivation in document order; `.cargo/trace/trace.toml` gains `link`. | 1 |
 
 ---
 

@@ -15,7 +15,7 @@ use regex::Regex;
 use serde::Deserialize;
 
 use super::{
-    CONDITION, DEFINITION, Defect, Row, SCHEMA, doc_of, links_on_cycles,
+    CONDITION, DEFINITION, Defect, Link, Row, SCHEMA, doc_of, links_on_cycles,
     normalize, read_text,
 };
 use crate::error::{GateError, GateResult};
@@ -28,6 +28,12 @@ type DocFirstFile<'a> = BTreeMap<&'a str, &'a Row>;
 
 /// A document ID and file path pair for reporting collisions.
 type DocFilePair<'a> = (&'a str, &'a str);
+
+/// Link-graph edges and the link condition that owns each, if any.
+type LinkGraph<'a> = (Vec<Link<'a>>, Vec<Option<&'a Row>>);
+
+/// Requirement IDs by document.
+type RequirementsByDoc<'a> = BTreeMap<&'a str, Vec<&'a str>>;
 
 /// Definition rows by ID.
 type Definitions<'a> = BTreeMap<&'a str, Vec<&'a Row>>;
@@ -434,10 +440,23 @@ fn scan_condition_line(
         })
         .map(|s| s.content.to_string());
 
+    // A link condition's targets name what it links, not its parents.
+    let targets = targets(line);
+    if method
+        .as_ref()
+        .is_some_and(|m| ctx.rules.link_methods.contains(m))
+    {
+        let named: BTreeSet<String> = targets
+            .iter()
+            .flat_map(|t| ctx.rules.ids(t, ctx.doc).collect::<Vec<_>>())
+            .collect();
+        parents.retain(|p| !named.contains(p));
+    }
+
     let mut condition = row(cond_qualified, CONDITION, at, line);
     condition.parents = parents;
     condition.method = method;
-    condition.targets = targets(line);
+    condition.targets = targets;
     Some(condition)
 }
 
@@ -590,7 +609,20 @@ fn check_condition_methods(
             .condition_occurrence
             .find_iter(&condition.text)
             .count();
-        if ids > 1 {
+        let linked: usize = if condition
+            .method
+            .as_ref()
+            .is_some_and(|m| rules.link_methods.contains(m))
+        {
+            condition
+                .targets
+                .iter()
+                .map(|t| rules.condition_occurrence.find_iter(t).count())
+                .sum()
+        } else {
+            0
+        };
+        if ids.saturating_sub(linked) > 1 {
             defects.push(Defect::at(
                 condition,
                 format!(
@@ -645,7 +677,10 @@ fn check_duplicate_document_ids(rows: &[Row], defects: &mut Vec<Defect>) {
 }
 
 /// The `link` defects: a link condition with no target, a target that names
-/// no document among `rows`, and every link condition on a cycle.
+/// no document among `rows` and no defined requirement or condition, and
+/// every link condition on a cycle. The cycle graph has an edge from each
+/// requirement to its conditions and from each link condition to what its
+/// targets name.
 fn check_links(
     rows: &[Row],
     conditions: &[&Row],
@@ -653,8 +688,20 @@ fn check_links(
     defects: &mut Vec<Defect>,
 ) {
     let docs: BTreeSet<&str> = rows.iter().map(|r| doc_of(&r.id)).collect();
-    let mut edges = Vec::new();
-    let mut owners = Vec::new();
+    let mut by_doc = RequirementsByDoc::new();
+    for row in rows.iter().filter(|r| r.kind == DEFINITION) {
+        by_doc
+            .entry(doc_of(&row.id))
+            .or_default()
+            .push(row.id.as_str());
+    }
+    let defined: BTreeSet<&str> = rows
+        .iter()
+        .filter(|r| r.kind == DEFINITION)
+        .chain(conditions.iter().copied())
+        .map(|r| r.id.as_str())
+        .collect();
+    let (mut edges, mut owners) = condition_edges(conditions);
     for &link in conditions.iter().filter(|c| {
         c.method
             .as_ref()
@@ -664,24 +711,32 @@ fn check_links(
             defects
                 .push(Defect::at(link, format!("{} names no target", link.id)));
         }
-        for target in &link.targets {
-            if docs.contains(target.as_str()) {
-                edges.push((doc_of(&link.id), target.as_str()));
-                owners.push(link);
+        for target in link.targets.iter().map(String::as_str) {
+            let named: Vec<&str> = if target.contains('#') {
+                defined.get(target).copied().into_iter().collect()
             } else {
+                by_doc.get(target).cloned().unwrap_or_default()
+            };
+            if named.is_empty()
+                && (target.contains('#') || !docs.contains(target))
+            {
                 defects.push(Defect::at(
                     link,
                     format!(
-                        "condition {} document '{target}' is not a selected document",
+                        "condition {} target '{target}' names no selected document, requirement or condition",
                         link.id
                     ),
                 ));
+            }
+            for node in named {
+                edges.push((link.id.as_str(), node));
+                owners.push(Some(link));
             }
         }
     }
     let mut reported = BTreeSet::new();
     for index in links_on_cycles(&edges) {
-        if let Some(link) = owners.get(index)
+        if let Some(Some(link)) = owners.get(index)
             && reported.insert(link.id.as_str())
         {
             defects.push(Defect::at(
@@ -690,6 +745,19 @@ fn check_links(
             ));
         }
     }
+}
+
+/// The edges from each requirement to its conditions, each with no owning
+/// link condition.
+fn condition_edges<'a>(conditions: &[&'a Row]) -> LinkGraph<'a> {
+    conditions
+        .iter()
+        .flat_map(|c| {
+            c.parents
+                .iter()
+                .map(|p| ((p.as_str(), c.id.as_str()), None))
+        })
+        .unzip()
 }
 
 /// The defects in `rows`, sorted by file, then line.
@@ -1623,7 +1691,9 @@ automated_methods = []
     fn link_target_naming_no_document_is_reported() {
         assert_eq!(
             link_messages(&[linking("a", "`zz`")]),
-            ["condition a#VC-1.1 document 'zz' is not a selected document"]
+            [
+                "condition a#VC-1.1 target 'zz' names no selected document, requirement or condition"
+            ]
         );
         assert_eq!(
             link_messages(&[
@@ -1675,5 +1745,70 @@ automated_methods = []
         assert!(rejected("\"test\"", "\"test\""));
         assert!(!rejected("\"test\"", "\"link\""));
         assert!(!rejected("", ""));
+    }
+
+    #[test]
+    fn link_target_naming_an_undefined_requirement_is_reported() {
+        let b = CLEAN.replace("(widget)", "(b)");
+        assert_eq!(
+            link_messages(&[linking("a", "`b#FR-9`"), b.clone()]),
+            [
+                "condition a#VC-1.1 target 'b#FR-9' names no selected document, requirement or condition"
+            ]
+        );
+        assert_eq!(
+            link_messages(&[linking("a", "`b#FR-1`"), b]),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn link_targets_are_not_parents() {
+        let (rows, _) = scan_markdown(
+            FILE,
+            &linking("a", "`b#FR-1`, `a#FR-2`"),
+            &link_rules(),
+        );
+        let condition = rows.iter().find(|r| r.kind == CONDITION).unwrap();
+        assert_eq!(condition.parents, ["a#FR-1"]);
+        assert_eq!(condition.targets, ["b#FR-1", "a#FR-2"]);
+    }
+
+    #[test]
+    fn a_link_between_requirements_of_one_document_is_no_cycle() {
+        let doc = "# Doc (a)\n\n- **FR-1 — A**: Work.\n- **FR-2 — B**: Work.\n\n\
+                   | VC-1.1 | FR-1 | `link` | `a#FR-2` | Crit |\n\
+                   | VC-2.1 | FR-2 | `test` | — | Crit |\n";
+        assert_eq!(link_messages(&[doc.to_string()]), Vec::<String>::new());
+        let back = doc.replace(
+            "| VC-2.1 | FR-2 | `test` | — | Crit |",
+            "| VC-2.1 | FR-2 | `link` | `a#FR-1` | Crit |",
+        );
+        assert_eq!(
+            link_messages(&[back]),
+            [
+                "condition a#VC-1.1 lies on a link cycle",
+                "condition a#VC-2.1 lies on a link cycle"
+            ]
+        );
+    }
+
+    #[test]
+    fn link_to_a_condition_resolves_and_a_self_link_is_a_cycle() {
+        let b = CLEAN.replace("(widget)", "(b)");
+        assert_eq!(
+            link_messages(&[linking("a", "`b#VC-1.1`"), b.clone()]),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            link_messages(&[linking("a", "`b#VC-9.1`"), b]),
+            [
+                "condition a#VC-1.1 target 'b#VC-9.1' names no selected document, requirement or condition"
+            ]
+        );
+        assert_eq!(
+            link_messages(&[linking("a", "`a#VC-1.1`")]),
+            ["condition a#VC-1.1 lies on a link cycle"]
+        );
     }
 }

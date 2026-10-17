@@ -40,7 +40,7 @@ pub type Defects = Vec<Defect>;
 /// Values of the required flags, in declared order.
 pub type FlagValues<const N: usize> = [PathBuf; N];
 
-/// A link from one document to another, by document ID.
+/// A link from one node of the link graph to another, by ID.
 pub type Link<'a> = (&'a str, &'a str);
 
 /// Rows of one artifact.
@@ -166,9 +166,9 @@ pub fn doc_of(id: &str) -> &str {
     id.split('#').next().unwrap_or(id)
 }
 
-/// The indices of the document links in `edges` that lie on a cycle. A link
-/// from `a` to `b` lies on a cycle when `a` is reachable from `b`, so a link
-/// from a document to itself always does.
+/// The indices of the links in `edges` that lie on a cycle. A link from `a`
+/// to `b` lies on a cycle when `a` is reachable from `b`, so a link from a
+/// node to itself always does.
 #[must_use]
 pub fn links_on_cycles(edges: &[Link<'_>]) -> BTreeSet<usize> {
     edges
@@ -183,15 +183,15 @@ pub fn links_on_cycles(edges: &[Link<'_>]) -> BTreeSet<usize> {
 fn reaches(edges: &[Link<'_>], start: &str, goal: &str) -> bool {
     let mut seen = BTreeSet::new();
     let mut stack = vec![start];
-    while let Some(doc) = stack.pop() {
-        if doc == goal {
+    while let Some(node) = stack.pop() {
+        if node == goal {
             return true;
         }
-        if seen.insert(doc) {
+        if seen.insert(node) {
             stack.extend(
                 edges
                     .iter()
-                    .filter(|(from, _)| *from == doc)
+                    .filter(|(from, _)| *from == node)
                     .map(|(_, to)| *to),
             );
         }
