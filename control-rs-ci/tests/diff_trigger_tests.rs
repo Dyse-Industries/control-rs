@@ -251,6 +251,20 @@ mod path_gate {
     }
 
     #[test]
+    fn changed_files_keeps_non_ascii_paths_unquoted() {
+        // Default `core.quotepath` would emit `"src/na\303\257ve.rs"`, which
+        // does not match the `src/` prefix and would false-skip path-gated gates.
+        let root = repo("quotepath", &[("src/naïve.rs", "x")]);
+        let files = changed_files(&root, "main", "topic").unwrap();
+        assert_eq!(files, strings(&["src/naïve.rs"]));
+        assert!(
+            matches("src/", "src/naïve.rs"),
+            "unquoted path must match the src/ diff-trigger prefix"
+        );
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn the_binary_skips_gates_whose_diff_trigger_did_not_change() {
         let root = repo("skip", &[("documentation/a.md", "x")]);
         let out = run(&root, &["--base", "main", "--head", "topic"], &[]);

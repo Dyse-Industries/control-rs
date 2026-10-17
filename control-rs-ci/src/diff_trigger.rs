@@ -130,7 +130,18 @@ pub fn changed_files(root: &Path, base: &str, head: &str) -> ChangedFiles {
             .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
     };
     let merge_base = git(&["merge-base", base, head])?;
-    let diff = git(&["diff", "--name-status", "-M", merge_base.trim(), head])?;
+    // `core.quotepath=false`: default git quoting wraps non-ASCII paths in
+    // `"…"` with octal escapes, so prefix match against `diff-trigger` fails
+    // and path-gated gates skip incorrectly (false CI green).
+    let diff = git(&[
+        "-c",
+        "core.quotepath=false",
+        "diff",
+        "--name-status",
+        "-M",
+        merge_base.trim(),
+        head,
+    ])?;
     Some(parse_name_status(&diff))
 }
 
