@@ -59,8 +59,8 @@ concurrency:
 # every gate, and dtolnay/rust-toolchain keeps a value that is already set.
 env:
   CARGO_TERM_COLOR: never
-  # Gates with `diff-trigger` in gate.toml skip when a pull request leaves those
-  # paths unchanged. Pushes and tags run every gate: a push to main has no diff, and
+  # Jobs that run gates with a `diff-trigger` in gate.toml pass `--diff`, so a
+  # pull request skips them when it leaves those paths unchanged. Pushes and tags run every gate: a push to main has no diff, and
   # its baselines feed later pull requests.
   CONTROL_RS_CI_GATES: ${{ github.event_name == 'pull_request' && ' ' || 'run' }}
 
@@ -89,7 +89,7 @@ jobs:
 
       # `pre` runs the `fetch` gate first; the full report requires its result.
       - name: Run Lint Group
-        run: cargo --locked ci --verbose --group pre,lint
+        run: cargo --locked ci --verbose --diff --group pre,lint
 
       - name: Upload Lint Artifacts
         if: always()
@@ -146,7 +146,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y qemu-system-arm qemu-system-misc
 
       - name: Run Target Group
-        run: cargo ci --verbose --group target
+        run: cargo ci --verbose --diff --group target
 
       - name: Upload Target Artifacts
         if: always()
@@ -179,7 +179,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y valgrind
 
       - name: Run Audit and Valgrind Groups
-        run: cargo ci --verbose --group audit,valgrind
+        run: cargo ci --verbose --diff --group audit,valgrind
 
       - name: Upload Audit Artifacts
         if: always()
@@ -222,7 +222,7 @@ jobs:
           pip install -r control-rs-verification/python3/requirements.txt
 
       - name: Run Verify Group
-        run: cargo ci --verbose --group verify
+        run: cargo ci --verbose --diff --group verify
 
       - name: Upload Verify Artifacts
         if: always()
@@ -428,7 +428,7 @@ jobs:
           fi
 
       - name: Run Regression Gate
-        run: cargo ci --verbose --only regression
+        run: cargo ci --verbose --diff --only regression
 
       - name: Upload Regression Artifacts
         if: always()
@@ -484,7 +484,7 @@ jobs:
         run: cargo binstall -y cargo-mutants
 
       - name: Run Mutants Gate
-        run: cargo ci --verbose --only ${{ matrix.gate }}
+        run: cargo ci --verbose --diff --only ${{ matrix.gate }}
 
       - name: Upload Mutants Artifacts
         if: always()
