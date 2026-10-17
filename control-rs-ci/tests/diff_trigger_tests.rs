@@ -125,7 +125,7 @@ mod path_gate {
 
     #[test]
     fn a_rename_counts_by_both_paths_and_a_delete_by_its_path() {
-        let out = "R100\tsrc/matrix/old.rs\tdocumentation/new.rs\nD\tsrc/tensor/x.rs\nM\tCargo.toml\n";
+        let out = "R100\0src/matrix/old.rs\0documentation/new.rs\0D\0src/tensor/x.rs\0M\0Cargo.toml\0";
         assert_eq!(
             parse_name_status(out),
             strings(&[
@@ -381,5 +381,14 @@ mod path_gate {
         };
         let skip = should_run("matrix", bare, Some(&changed), &no_env).unwrap();
         assert_eq!(skip, Decision::Run, "no own list: always runs");
+    }
+
+    #[test]
+    fn non_ascii_paths_reach_the_match_unquoted() {
+        let root = repo("utf8", &[("src/matrix/na\u{ef}ve.rs", "x")]);
+        let files = changed_files(&root, "main", "topic").unwrap();
+        assert_eq!(files, strings(&["src/matrix/na\u{ef}ve.rs"]));
+        assert!(files.iter().all(|f| matches("src/matrix/", f)));
+        let _ = fs::remove_dir_all(&root);
     }
 }

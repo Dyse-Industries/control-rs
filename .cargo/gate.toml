@@ -226,7 +226,7 @@ description = "Lints documentation and doc comments for prose style conformity"
 mode = "fail"
 command = "cargo run"
 args = ["--package", "control-rs-ci", "--bin", "ets", "--", "--timeout", "120", "qemu", "all", "--release"]
-diff-trigger = ["src/", "examples/qemu/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-ci/src/ets.rs", "control-rs-ci/src/bin/ets.rs"]
+diff-trigger = ["src/", "examples/qemu/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-ci/src/"]
 timeout_secs = 2400
 description = "Builds QEMU ETS firmware and runs every suite headless on each target"
 
@@ -257,7 +257,7 @@ description = "Executes multi-language reference oracles and verifies HDF5 toler
 mode = "fail"
 command = "cargo run"
 args = ["--package", "control-rs-ci", "--bin", "valgrind", "--", "--example", "dc_motor", "--example", "buck_converter", "--example", "fixed_point_math", "--example", "dsp_spectral_analysis"]
-diff-trigger = ["src/", "examples/dc_motor.rs", "examples/buck_converter.rs", "examples/fixed_point_math.rs", "examples/dsp_spectral_analysis.rs"]
+diff-trigger = ["src/", "examples/dc_motor.rs", "examples/buck_converter.rs", "examples/fixed_point_math.rs", "examples/dsp_spectral_analysis.rs", "control-rs-ci/src/"]
 timeout_secs = 3600
 description = "Executes Valgrind Memcheck against the listed workspace examples to verify zero memory leaks"
 
@@ -553,6 +553,6 @@ mode = "fail"
 default = false
 command = "cargo run"
 args = ["--package", "control-rs-ci", "--bin", "regression", "--", "--all", "--budgets", ".cargo/regression.toml"]
-diff-trigger = ["src/", "benches/", ".cargo/regression.toml"]
+diff-trigger = ["src/", "benches/", ".cargo/regression.toml", "control-rs-ci/src/"]
 timeout_secs = 7200
 description = "Evaluates Criterion benchmark outputs against performance budgets and regression baselines"

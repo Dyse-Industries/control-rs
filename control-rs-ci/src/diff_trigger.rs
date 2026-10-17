@@ -103,15 +103,17 @@ pub fn matches(entry: &str, file: &str) -> bool {
             .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
-/// Paths in `git diff --name-status` output; a rename lists both (FR-22).
+/// Paths in `git diff -z --name-status` output; a rename or copy lists both
+/// (FR-22). `-z` leaves every path unquoted, whatever characters it holds.
 #[must_use]
 pub fn parse_name_status(output: &str) -> Vec<String> {
-    output
-        .lines()
-        .flat_map(|line| line.split('\t').skip(1))
-        .filter(|path| !path.is_empty())
-        .map(str::to_string)
-        .collect()
+    let mut fields = output.split('\0').filter(|f| !f.is_empty());
+    let mut paths = Vec::new();
+    while let Some(status) = fields.next() {
+        let count = if status.starts_with(['R', 'C']) { 2 } else { 1 };
+        paths.extend(fields.by_ref().take(count).map(str::to_string));
+    }
+    paths
 }
 
 /// Files changed between the merge-base of `base` and `head`, and `head`.
@@ -130,7 +132,8 @@ pub fn changed_files(root: &Path, base: &str, head: &str) -> ChangedFiles {
             .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
     };
     let merge_base = git(&["merge-base", base, head])?;
-    let diff = git(&["diff", "--name-status", "-M", merge_base.trim(), head])?;
+    let diff =
+        git(&["diff", "-z", "--name-status", "-M", merge_base.trim(), head])?;
     Some(parse_name_status(&diff))
 }
 
