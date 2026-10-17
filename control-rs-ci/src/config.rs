@@ -48,6 +48,17 @@ pub struct RunnerConfig {
     /// Default execution timeout in seconds.
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
+    /// Base ref of the path-gating diff; `origin/main` when omitted (FR-23).
+    #[serde(default)]
+    pub base: Option<String>,
+    /// Head ref of the path-gating diff; `HEAD` when omitted (FR-23).
+    #[serde(default)]
+    pub head: Option<String>,
+    /// Entries added to the `diff-trigger` of every gate that declares one.
+    /// A gate without its own list always runs, so this list alone selects
+    /// nothing (FR-22).
+    #[serde(default, rename = "diff-trigger")]
+    pub diff_trigger: Vec<String>,
 }
 
 /// Gates that run alone, one at a time, on the calling thread.
@@ -129,6 +140,10 @@ pub struct GateDefinition {
     /// Exit codes reported as `Verdict::Skipped`.
     #[serde(default)]
     pub skip_exit_codes: Vec<i32>,
+    /// Path prefixes or files whose change runs this gate (FR-22). A gate
+    /// without `diff-trigger` always runs.
+    #[serde(default, rename = "diff-trigger")]
+    pub diff_trigger: Vec<String>,
 }
 
 /// Top-level workspace quality gate configuration.
@@ -162,6 +177,9 @@ impl Default for RunnerConfig {
             title: default_title(),
             out_dir: default_out_dir(),
             timeout_secs: default_timeout_secs(),
+            base: None,
+            head: None,
+            diff_trigger: Vec::new(),
         }
     }
 }
@@ -267,6 +285,7 @@ impl GateDefinition {
             cwd: None,
             timeout_secs: None,
             skip_exit_codes: Vec::new(),
+            diff_trigger: Vec::new(),
         }
     }
 

@@ -177,6 +177,8 @@ MSRV (`1.89.0`) to beta. Some gates need extra tools or are Linux-only;
 see the Development Guide.
 
 A pre-commit hook is tracked at [`.github/pre-commit`](.github/pre-commit).
+It formats, then runs the `lint` and `audit` gates that the staged changes
+touch (their `diff-trigger` in `.cargo/gate.toml`).
 Install it once after cloning:
 
 ```sh

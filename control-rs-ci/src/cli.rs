@@ -6,7 +6,7 @@ use std::process::exit;
 use crate::config::GateConfig;
 use crate::gate::build_all_gates;
 use crate::ui;
-use crate::{PipelineOptions, run_pipeline};
+use crate::{DiffRefs, PipelineOptions, run_pipeline};
 
 /// The only binary that accepts `-- <args>` passthrough (FR-14).
 pub const PASSTHROUGH_BINARY: &str = "cargo gate";
@@ -41,6 +41,18 @@ pub struct CliOptions {
     pub passthrough: Passthrough,
     /// Bounded group concurrency limit (FR-13).
     pub max_jobs: Option<usize>,
+    /// Set when `--diff`, `--base` or `--head` is given: skip gates whose
+    /// `diff-trigger` the diff leaves untouched (FR-22, FR-23).
+    pub diff: Option<DiffArgs>,
+}
+
+/// Refs given with `--base` and `--head`; a missing one takes its default.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct DiffArgs {
+    /// Base ref of the path-gating diff.
+    pub base: Option<String>,
+    /// Head ref of the path-gating diff.
+    pub head: Option<String>,
 }
 
 struct SplitArgs<'a> {
@@ -83,6 +95,8 @@ pub fn render_usage(binary_name: &str) -> String {
            {f}-s{f:#}, {f}--skip{f:#} {a}<gate>{a:#}      Skip the specified gate(s)\n  \
            {f}-u{f:#}, {f}--up-to{f:#} {a}<gate>{a:#}     Run gates up to and including the specified gate\n  \
            {f}-c{f:#}, {f}--config{f:#} {a}<path>{a:#}    Path to gate.toml (default: .cargo/gate.toml)\n  \
+           {f}--diff{f:#}               Skip gates whose diff-trigger the diff leaves untouched\n  \
+           {f}--base{f:#} {a}<ref>{a:#}, {f}--head{f:#} {a}<ref>{a:#}   Refs the diff compares (default: origin/main, HEAD); each implies --diff\n  \
            {f}-X{f:#}, {f}--clean{f:#}            Clean previous CI artifacts and reports\n  \
            {f}-a{f:#}, {f}--all{f:#}              Run every enabled gate, including default = false gates\n  \
            {f}-j{f:#}, {f}--max-jobs{f:#} {a}<n>{a:#}     Bound concurrent execution groups\n  \
@@ -136,25 +150,23 @@ pub fn parse_args(args: &[String], binary_name: &str) -> CliOptions {
                 options.max_jobs = Some(parse_usize_value(&mut parser));
             }
             Short('g') | Long("group") => {
-                push_list(
-                    &mut options.groups,
-                    &parse_string_value(&mut parser),
-                );
+                parse_list(&mut parser, &mut options.groups);
             }
             Short('o') | Long("only") => {
-                push_list(
-                    &mut options.only_gates,
-                    &parse_string_value(&mut parser),
-                );
+                parse_list(&mut parser, &mut options.only_gates);
             }
             Short('s') | Long("skip") => {
-                push_list(
-                    &mut options.skip_gates,
-                    &parse_string_value(&mut parser),
-                );
+                parse_list(&mut parser, &mut options.skip_gates);
             }
             Short('u') | Long("up-to") => {
                 options.up_to_gate = Some(parse_string_value(&mut parser));
+            }
+            Long("diff") => {
+                options.diff.get_or_insert_with(DiffArgs::default);
+            }
+            Long(name @ ("base" | "head")) => {
+                let base = name == "base";
+                parse_diff_ref(&mut parser, &mut options, base);
             }
             Short('c') | Long("config") => {
                 options.config_path = Some(parse_path_value(&mut parser));
@@ -238,6 +250,27 @@ fn parse_usize_value(parser: &mut lexopt::Parser) -> usize {
         ui::error(format!("invalid integer value '{s}': {e}"));
         exit(USAGE_EXIT);
     })
+}
+
+/// Reads the next value as the `--base` or `--head` ref; the option turns
+/// diff skipping on.
+fn parse_diff_ref(
+    parser: &mut lexopt::Parser,
+    options: &mut CliOptions,
+    is_base: bool,
+) {
+    let value = Some(parse_string_value(parser));
+    let diff = options.diff.get_or_insert_with(DiffArgs::default);
+    if is_base {
+        diff.base = value;
+    } else {
+        diff.head = value;
+    }
+}
+
+/// Appends the entries of the next comma-separated value to `dest`.
+fn parse_list(parser: &mut lexopt::Parser, dest: &mut Vec<String>) {
+    push_list(dest, &parse_string_value(parser));
 }
 
 /// Appends the non-empty, trimmed comma-separated entries of `val`.
@@ -335,6 +368,10 @@ pub fn run_cli(binary_name: &str) {
         verbose: options.verbose,
         extra_args: options.passthrough.as_deref().unwrap_or_default(),
         max_jobs: options.max_jobs,
+        diff: options.diff.as_ref().map(|d| DiffRefs {
+            base: d.base.as_deref(),
+            head: d.head.as_deref(),
+        }),
     };
     match run_pipeline(&workspace_root, &config_path, &pipeline) {
         Ok(true) => exit(0),
