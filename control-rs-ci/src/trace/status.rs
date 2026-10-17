@@ -1183,7 +1183,6 @@ mod tests {
                 .to_vec(),
             link_methods: Vec::new(),
             method,
-            retired: vec![],
             decisions: None,
         }
     }

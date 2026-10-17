@@ -101,8 +101,8 @@ editing tools; and any systems-engineering view.
   declaration matching `doc_id`; a document, requirement or condition defined
   more than once; a condition with no parent or with an undefined parent; a
   verification row with no condition ID or with more than one; a condition row
-  with no method, with more than one, or with one outside `methods`; a defined
-  requirement with no condition; and a retired ID that is defined or referenced.
+  with no method, with more than one, or with one outside `methods`; and a
+  defined requirement with no condition.
 - **FR-6 — Requirement Rows**: `trace-reqs` shall write `reqs.jsonl` with one
   row per definition and per condition, in the row schema of
   [Artifacts](#artifacts).
@@ -221,8 +221,7 @@ editing tools; and any systems-engineering view.
    documentation/math/storage-design.md:212: condition storage#VC-3.2 target 'control_rs::math::storage::tests::column_out_of_bounds' not found in test.log
    ```
 
-To withdraw a requirement or condition, delete it and add its qualified ID to
-`retired` in the configuration. The ID is never reused.
+To withdraw a requirement or condition, delete it. Its ID is not reused.
 
 ### Reading the Output
 
@@ -317,16 +316,6 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
 methods = ["libtest", "kani", "pytest", "gtest", "analysis", "inspection", "review", "link"]
 automated_methods = ["libtest", "kani", "pytest", "gtest"]
 link_methods = ["link"]
-retired = [
-    "requirement-traceability#FR-5",
-    "requirement-traceability#VC-5.1",
-    "requirement-traceability#FR-7",
-    "requirement-traceability#VC-7.1",
-    "requirement-traceability#VC-7.2",
-    "requirement-traceability#NFR-2",
-    "requirement-traceability#VC-12.1",
-    "requirement-traceability#VC-8.2",
-]
 
 [method.libtest]
 result_artifact = "target/ci-artifacts/test.log"
@@ -363,7 +352,6 @@ accepted = ["Accepted"]
 | `link_methods`         | The subset of `methods` whose conditions name document IDs as targets; optional (defaults to none) and disjoint from `automated_methods` |
 | `method.<m>`           | Result artifact path for automated method `<m>`; required for every automated method                                            |
 | `method.libtest.interpreter_artifact` | Log of the same tests run under an interpreter; optional, and absent it disables W-2                                  |
-| `retired`              | Qualified IDs that must not be defined or referenced again                                                                      |
 | `decisions.files`      | Roots of decision records, selected per [File Selection](#file-selection); the table is optional and its absence disables FR-12 |
 | `decisions.id`         | Regex for one decision ID                                                                                                       |
 | `decisions.definition` | Regex for the line that defines a decision record's ID                                                                          |
@@ -420,7 +408,6 @@ The rules below are the whole parser:
 | `row`             | A verification row names no condition ID, or more than one                                           |
 | `method`          | A condition names no method, more than one, or one outside `methods`                                 |
 | `missing`         | A defined requirement has no condition                                                               |
-| `retired`         | A retired ID is defined or referenced                                                                |
 | `decision`        | A requirement cites a decision ID that has no decision record                                        |
 | `decision_status` | A decision record has no status, or a requirement cites a decision whose status is not in `accepted` |
 | `link`            | A link condition names no target, names a target that is no selected document's ID, or lies on a link cycle |
@@ -565,8 +552,7 @@ Four choices keep the stronger levels additive:
 
 1. A later per-target outcome tag is a schema increment (NFR-4) that leaves the
    `Target` cell grammar intact.
-2. Condition IDs are never reused (`retired`), so later tags attach to stable
-   IDs.
+2. Condition IDs are not reused, so later tags attach to stable IDs.
 3. The `.jsonl` files stay the interface for external tools (C-5).
 4. The Criterion states how the conditions combine into the requirement, so a
    reviewer can check independence pairs now.
@@ -585,7 +571,7 @@ Four choices keep the stronger levels additive:
 | **Test-level verdicts from libtest JSON**                             | The format is unstable and requires `-Z unstable-options`; test outcomes belong to the gates (C-8).                                                                                                                                                                                                               | Rust Project Developers (2026) |
 | **Named captures, requirement blocks and link attachment**            | Meaning hid in capture-group names and position-dependent parsing state; the generated rows mirrored parser internals and could not be read without the configuration.                                                                                                                                            | n/a                            |
 | **Fixed grammar with configured section, table and column names**     | Many keys with distinct semantics, still bound to headings and pipe tables.                                                                                                                                                                                                                                       | n/a                            |
-| **Adoption baseline file and previous-artifact ID check**             | Two baselines with different formats and a workflow restore step; listing migrated documents in `files` ratchets adoption with no new concept, and `retired` covers ID reuse.                                                                                                                                     | n/a                            |
+| **Adoption baseline file and previous-artifact ID check**             | Two baselines with different formats and a workflow restore step; listing migrated documents in `files` ratchets adoption with no new concept.                                                                                                                                     | n/a                            |
 | **Structured JSON or TOML requirement files**                         | Each step toward better editing (per-area schemas, snippets, IDE-specific workarounds) added machinery an author must understand before writing a requirement; TOML adds worse multi-line text.                                                                                                                   | n/a                            |
 | **Source markers (attribute or comment) linking tests to conditions** | A second copy of the link in source text, found by scanning, that the table does not show; it needs a scanner, an item-rule check and, for attributes, a proc-macro crate, and drifts from the Verification table. A qualified path in the table is read beside the condition and checked against the result log. | Hatzl (2026b)                  |
 | **Globs with `!` exclusions and `depth`**                             | A glob engine and a symbolic-link rule table to select a handful of directories; roots plus a suffix select the same files.                                                                                                                                                                                       | n/a                            |
@@ -597,10 +583,11 @@ Four choices keep the stronger levels additive:
 | **mantra (Rust)**                                                     | Relies on a database and line-coverage pairing rather than conditions.                                                                                                                                                                                                                                            | Hatzl (2026a)                  |
 | **Doorstop**                                                          | One YAML file per requirement; loses requirements-beside-rationale.                                                                                                                                                                                                                                               | Doorstop (2026)                |
 | **Decision rows in `reqs.jsonl`**                                     | No consumer reads them; a row kind is a schema increment (NFR-4) that waits for one.                                                                                                                                                                                                                              | n/a                            |
-| **Immutability of accepted decision records**                         | Needs the base branch as input, outside C-4; review of the diff is the control, as for retired IDs.                                                                                                                                                                                                               | n/a                            |
+| **Immutability of accepted decision records**                         | Needs the base branch as input, outside C-4; review of the diff is the control, as for withdrawn IDs.                                                                                                                                                                                                               | n/a                            |
 | **Requirement lists in decision records**                             | A second, hand-kept link in the other direction; citations in the documents already give it, and a search recovers it.                                                                                                                                                                                            | n/a                            |
 | **Requirement-level link targets (`doc#FR-n`)**                       | A partial link leaves the rest of a component unverified by the linking requirement and invites splitting a component across documents; the document is the unit a design owns. | n/a |
 | **Revision-pinned or fingerprinted links**                            | Each link would carry state that authors update on every edit of the named document. Status is re-derived from the named document on every run, and review of its diff covers changed meaning. OpenFastTrace voids links on a revision increment; Doorstop reports suspect links by fingerprint. | OpenFastTrace (2026a), Doorstop (2026) |
+| **Retired-ID list**                                                   | A hand-kept list catches reuse only of the IDs someone remembered to list, and costs a configuration key, a check and an edit per withdrawal; authors deprecate IDs and review of the diff checks it. | n/a |
 
 ---
 
@@ -613,7 +600,7 @@ Four choices keep the stronger levels additive:
 | VC-1.1    | FR-1                                   | `libtest` | `control_rs_ci::trace::reqs::tests::definitions_take_the_first_id_and_indented_lines`, `control_rs_ci::trace::reqs::tests::rows_carry_normalized_text`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              | Definition fixtures yield exactly the expected rows, with normalized text and indented continuation lines; FR-1 holds iff both hold                                                 |
 | VC-2.1    | FR-2                                   | `libtest` | `control_rs_ci::trace::reqs::tests::reference_lines_record_every_local_and_qualified_id`, `control_rs_ci::trace::reqs::tests::a_parent_named_twice_is_recorded_once`, `control_rs_ci::trace::reqs::tests::scan_condition_finds_parents`                                                                                                                                                                                                                                                                                                                                                                                                                                             | A condition row yields one row with every parent and its method; a row with more than one parent yields one row                                                                     |
 | VC-3.1    | FR-3                                   | `libtest` | `control_rs_ci::trace::reqs::tests::doc_id_is_extracted_from_the_title_declaration`, `control_rs_ci::trace::reqs::tests::ids_inside_longer_tokens_or_condition_ids_are_not_parents`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Local and qualified IDs resolve to `<doc>#<id>`; an ID inside a longer token or inside a condition ID is not recorded                                                               |
-| VC-4.1    | FR-4                                   | `libtest` | `control_rs_ci::trace::reqs::tests::row_and_method_defects_are_reported`, `control_rs_ci::trace::reqs::tests::duplicate_definition_is_reported_once_at_the_second`, `control_rs_ci::trace::reqs::tests::reference_to_an_undefined_id_is_unresolved`, `control_rs_ci::trace::reqs::tests::definition_without_a_kind_of_reference_is_missing_it`, `control_rs_ci::trace::reqs::tests::retired_ids_are_reported_where_they_appear`, `control_rs_ci::trace::reqs::tests::missing_doc_id_declaration_is_reported_as_defect`, `control_rs_ci::trace::reqs::tests::duplicate_doc_id_across_files_is_reported`, `control_rs_ci::trace::reqs::tests::condition_without_parents_is_an_orphan` | One fixture per defect kind of the Checks table yields exactly that defect                                                                                                          |
+| VC-4.1    | FR-4                                   | `libtest` | `control_rs_ci::trace::reqs::tests::row_and_method_defects_are_reported`, `control_rs_ci::trace::reqs::tests::duplicate_definition_is_reported_once_at_the_second`, `control_rs_ci::trace::reqs::tests::reference_to_an_undefined_id_is_unresolved`, `control_rs_ci::trace::reqs::tests::definition_without_a_kind_of_reference_is_missing_it`, `control_rs_ci::trace::reqs::tests::missing_doc_id_declaration_is_reported_as_defect`, `control_rs_ci::trace::reqs::tests::duplicate_doc_id_across_files_is_reported`, `control_rs_ci::trace::reqs::tests::condition_without_parents_is_an_orphan` | One fixture per defect kind of the Checks table yields exactly that defect                                                                                                          |
 | VC-6.1    | FR-6                                   | `libtest` | `trace_tests::cli::rows_have_the_schema_fields_and_reruns_are_identical`, `trace_tests::cli::a_clean_document_passes_and_writes_its_rows`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           | Rows carry the schema fields and two runs on an unchanged corpus produce byte-identical `reqs.jsonl`                                                                                |
 | VC-8.1    | FR-8                                   | `libtest` | `trace_tests::cli::passed_unrun_and_review_conditions_take_their_status`, `trace_tests::cli::every_automated_target_passed_passes_and_review_does_not_fail`, `control_rs_ci::trace::status::tests::automated_condition_without_targets_is_uncovered`, `control_rs_ci::trace::status::tests::review_condition_takes_review_status`, `control_rs_ci::trace::status::tests::missing_log_is_unrun`                                                                                                                                                                                                                                                                                      | A fixture of passed, unexecuted, uncovered and review conditions gives the specified statuses and exit code                                                                         |
 | VC-9.1    | FR-9                                   | `libtest` | `trace_tests::cli::defects_print_as_path_line_message_and_fail_the_run`, `trace_tests::cli::usage_and_configuration_errors_exit_with_code_two`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | Every diagnostic line matches `^[^:]+:[0-9]+: .+$`; any defect gives a non-zero exit                                                                                                |
@@ -648,8 +635,8 @@ Four choices keep the stronger levels additive:
 - Every requirement ID on a verification row is a parent, including one
   mentioned in the Criterion, and a second condition ID or a second method
   code span is a defect. Criteria therefore name neither.
-- A requirement deleted without being added to `retired` is not detected;
-  review of the diff is the control.
+- A withdrawn ID that is reused is not detected; review of the diff is the
+  control.
 - W-3 compares file modification times with the traced documents only. A
   code or test edit after the run leaves the log stale without a warning.
 - A link asserts that the named documents suffice for its requirement; the
@@ -689,7 +676,7 @@ Four choices keep the stronger levels additive:
   migrate, or when an adopter needs condition coverage evidence (see
   [Extension Path](#extension-path)).
 - **Document renames.** Renaming a design document changes every qualified ID
-  in it, which breaks `retired` entries that name the old document. They are
+  in it and breaks the links and qualified parents that name it. They are
   updated in the same pull request.
 - **Open: DO-178C wording.** The research record quotes the DO-178B MC/DC
   definition through Hayhurst et al. (2001); the DO-178C text of the
