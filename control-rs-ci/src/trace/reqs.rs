@@ -400,6 +400,21 @@ fn targets(line: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// `line` without the fourth cell, so requirement IDs in the targets are not
+/// scanned as parents.
+fn without_target_cell(line: &str) -> String {
+    let trimmed = line.trim();
+    let inner = trimmed.strip_prefix('|').unwrap_or(trimmed);
+    let inner = inner.strip_suffix('|').unwrap_or(inner);
+    inner
+        .split('|')
+        .enumerate()
+        .filter(|&(i, _)| i != 3)
+        .map(|(_, cell)| cell)
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
 fn scan_condition_line(
     line: &str,
     cell: &str,
@@ -410,20 +425,6 @@ fn scan_condition_line(
     let c_id = cond_caps.name("trace_id")?.as_str();
     let c_doc = cond_caps.name("trace_doc").map_or(ctx.doc, |m| m.as_str());
     let cond_qualified = format!("{c_doc}#{c_id}");
-
-    let mut parents: Vec<String> = ctx
-        .rules
-        .occurrence
-        .captures_iter(line)
-        .filter_map(|caps| {
-            let id = caps.name("trace_id")?.as_str();
-            let owner = caps.name("trace_doc").map_or(ctx.doc, |d| d.as_str());
-            Some(format!("{owner}#{id}"))
-        })
-        .collect();
-
-    let mut seen = BTreeSet::new();
-    parents.retain(|p| seen.insert(p.clone()));
 
     // The method is the code span whose content is in `methods`; failing
     // that, the first code span that holds no ID, so that `check` reports it
@@ -440,18 +441,22 @@ fn scan_condition_line(
         })
         .map(|s| s.content.to_string());
 
-    // A link condition's targets name what it links, not its parents.
+    // Link targets name what the condition links, not its parents: scan
+    // parents on the line with the target cell omitted so a link to the
+    // parent requirement keeps the parent edge and forms a cycle.
     let targets = targets(line);
-    if method
+    let parent_line = if method
         .as_ref()
         .is_some_and(|m| ctx.rules.link_methods.contains(m))
     {
-        let named: BTreeSet<String> = targets
-            .iter()
-            .flat_map(|t| ctx.rules.ids(t, ctx.doc).collect::<Vec<_>>())
-            .collect();
-        parents.retain(|p| !named.contains(p));
-    }
+        without_target_cell(line)
+    } else {
+        line.to_string()
+    };
+    let mut parents: Vec<String> =
+        ctx.rules.ids(&parent_line, ctx.doc).collect();
+    let mut seen = BTreeSet::new();
+    parents.retain(|p| seen.insert(p.clone()));
 
     let mut condition = row(cond_qualified, CONDITION, at, line);
     condition.parents = parents;
@@ -1725,6 +1730,10 @@ automated_methods = []
                 "condition c#VC-1.1 lies on a link cycle"
             ]
         );
+        assert_eq!(
+            link_messages(&[linking("a", "`a#FR-1`")]),
+            ["condition a#VC-1.1 lies on a link cycle"]
+        );
     }
 
     #[test]
@@ -1768,6 +1777,11 @@ automated_methods = []
         let condition = rows.iter().find(|r| r.kind == CONDITION).unwrap();
         assert_eq!(condition.parents, ["a#FR-1"]);
         assert_eq!(condition.targets, ["b#FR-1", "a#FR-2"]);
+        let (rows, _) =
+            scan_markdown(FILE, &linking("a", "`a#FR-1`"), &link_rules());
+        let self_parent = rows.iter().find(|r| r.kind == CONDITION).unwrap();
+        assert_eq!(self_parent.parents, ["a#FR-1"]);
+        assert_eq!(self_parent.targets, ["a#FR-1"]);
     }
 
     #[test]

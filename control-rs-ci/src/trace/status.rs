@@ -1751,12 +1751,13 @@ mod tests {
                 document("a", "link", &["b"]),
                 document("b", "link", &["a"]),
                 document("c", "link", &["c"]),
+                document("d", "link", &["d#FR-1"]),
             ],
         );
-        for doc in ["a", "b", "c"] {
+        for doc in ["a", "b", "c", "d"] {
             assert_eq!(requirement(&derived, doc), Some(Status::Fail), "{doc}");
         }
-        assert_eq!(derived.1.len(), 3, "{:?}", derived.1);
+        assert_eq!(derived.1.len(), 4, "{:?}", derived.1);
     }
 
     #[test]
