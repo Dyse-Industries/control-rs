@@ -148,7 +148,7 @@ use control_rs::transfer_function::ArrayTransferFunction;
 
 fn main() {
     // Open loop L(s) = 4 / (s + 1)^3 over a linear frequency sweep.
-    let l = ArrayTransferFunction::<f64, 1, 4>::continuous(
+    let l = ArrayTransferFunction::continuous(
         [4.0],
         [1.0, 3.0, 3.0, 1.0],
     );
