@@ -23,11 +23,15 @@ pub type LocusResult<T, const D: usize, const K: usize> =
 /// Each row holds the `D - 1` roots in its first entries and a zero in the
 /// last, the layout of
 /// [`TransferFunction::poles`](crate::transfer_function::TransferFunction::poles).
-/// The open loop must be proper (`N <= D`). The cost is `K` root solves.
+/// The open loop must be proper: a numerator of higher degree than the
+/// denominator cannot fit in the length-`D` characteristic polynomial, and
+/// truncating it would drop closed-loop poles. The cost is `K` root solves.
 ///
 /// # Errors
-/// [`ClassicalError::Root`] when a characteristic polynomial has a zero
-/// leading coefficient or root finding fails.
+/// - [`ClassicalError::Improper`]: `deg(num) > deg(den)`, or the
+///   denominator is identically zero.
+/// - [`ClassicalError::Root`]: a characteristic polynomial has a zero
+///   leading coefficient or root finding fails.
 ///
 /// # Example
 /// ```
@@ -53,6 +57,16 @@ where
     Const<N>: Dim,
     Const<D>: Dim,
 {
+    // The stack characteristic polynomial has length `D`. A higher-degree
+    // numerator would be truncated by the coefficient zip and invent the
+    // wrong closed-loop roots.
+    let num_deg = sys.num_slice().iter().rposition(|v| *v != T::ZERO);
+    let den_deg = sys.den_slice().iter().rposition(|v| *v != T::ZERO);
+    match (num_deg, den_deg) {
+        (_, None) => return Err(ClassicalError::Improper),
+        (Some(n), Some(d)) if n > d => return Err(ClassicalError::Improper),
+        _ => {}
+    }
     let mut out = [[Complex::new(T::ZERO, T::ZERO); D]; K];
     for (row, &k) in out.iter_mut().zip(gains) {
         let mut c = [T::ZERO; D];
@@ -111,5 +125,32 @@ mod tests {
                 .fold(f64::INFINITY, f64::min);
             assert!(nearest <= 10.0 * 3.0 * U);
         }
+    }
+
+    #[test]
+    fn improper_open_loop_is_rejected() {
+        // L(s) = (1 + s^2) / (1 + s). Without the degree gate the length-2
+        // characteristic zip would drop the s^2 term and report the root of
+        // 3 + s at k = 2 instead of the quadratic 2 s^2 + s + 3.
+        let improper = ArrayTransferFunction::<f64, 3, 2>::continuous(
+            [1.0, 0.0, 1.0],
+            [1.0, 1.0],
+        );
+        assert_eq!(
+            root_locus(&improper, &[2.0]),
+            Err(ClassicalError::Improper)
+        );
+        let zero_den =
+            ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [0.0, 0.0]);
+        assert_eq!(
+            root_locus(&zero_den, &[1.0]),
+            Err(ClassicalError::Improper)
+        );
+        // Trailing zero padding that keeps deg(N) <= deg(D) stays accepted.
+        let padded = ArrayTransferFunction::<f64, 3, 2>::continuous(
+            [1.0, 0.0, 0.0],
+            [1.0, 1.0],
+        );
+        assert!(root_locus(&padded, &[1.0]).is_ok());
     }
 }

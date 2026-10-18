@@ -301,7 +301,10 @@ passes the sum to `ArrayPolynomial::roots`; the routine defines no
 polynomial type of its own. The roots of $D (s) + k_i N (s)$ are the locus
 points [1]. Rows are independent unordered sets, so branches are not
 matched across gains (continuation [3] and adaptive gain selection [1] are
-rejected, §5). A failed solve ends the sweep with `ClassicalError::Root`.
+rejected, §5). An open loop with $\deg N > \deg D$, or a zero denominator,
+returns `ClassicalError::Improper` before any solve, because the length-$D$
+characteristic buffer cannot hold the higher-degree terms. A failed solve
+ends the sweep with `ClassicalError::Root`.
 
 #### 4.3 Routh-Hurwitz Count
 
