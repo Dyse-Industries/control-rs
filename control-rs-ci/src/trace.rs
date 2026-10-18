@@ -6,7 +6,7 @@
 //! status from those targets and the result logs of the gates. Each definition
 //! and condition is one [`Row`].
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
@@ -34,11 +34,17 @@ pub const SCHEMA: u32 = 5;
 /// Exit code of a usage, configuration or I/O error.
 pub const USAGE_ERROR: u8 = 2;
 
+/// Outgoing neighbor vertex indices per vertex.
+type Adjacency = Vec<Vec<usize>>;
+
 /// Defects in report order.
 pub type Defects = Vec<Defect>;
 
 /// Values of the required flags, in declared order.
 pub type FlagValues<const N: usize> = [PathBuf; N];
+
+/// A directed edge between interned vertex indices.
+type IndexedEdge = (usize, usize);
 
 /// A link from one node of the link graph to another, by ID.
 pub type Link<'a> = (&'a str, &'a str);
@@ -51,6 +57,9 @@ type Run = (usize, usize);
 
 /// A flag value while parsing, `None` until the flag is seen.
 type Slot = Option<PathBuf>;
+
+/// Interned vertex index by node identifier.
+type VertexIds<'a> = BTreeMap<&'a str, usize>;
 
 /// A GFM code span: its byte range, delimiters included, and its content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -101,6 +110,26 @@ pub struct Row {
     pub text: String,
 }
 
+/// Depth-first search state for Tarjan's strongly connected components pass.
+struct Tarjan {
+    /// Outgoing neighbor indices per vertex.
+    adj: Adjacency,
+    /// Discovery number per vertex (`0` until visited).
+    index: Vec<usize>,
+    /// Lowest discovery number reachable from each vertex.
+    lowlink: Vec<usize>,
+    /// Whether each vertex is on the active recursion stack.
+    on_stack: Vec<bool>,
+    /// Active recursion stack of vertices.
+    stack: Vec<usize>,
+    /// Strongly connected component index per vertex.
+    comp: Vec<usize>,
+    /// Number of strongly connected components assigned so far.
+    comp_count: usize,
+    /// Next `1`-based discovery number.
+    clock: usize,
+}
+
 impl Defect {
     /// A defect at the file and line of `row`.
     #[must_use]
@@ -116,6 +145,68 @@ impl Defect {
 impl fmt::Display for Defect {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}: {}", self.file, self.line, self.message)
+    }
+}
+
+impl Tarjan {
+    /// Initializes Tarjan's state over `adj`.
+    fn new(adj: Adjacency) -> Self {
+        let n = adj.len();
+        Self {
+            adj,
+            index: vec![0; n],
+            lowlink: vec![0; n],
+            on_stack: vec![false; n],
+            stack: Vec::with_capacity(n),
+            comp: vec![0; n],
+            comp_count: 0,
+            clock: 1,
+        }
+    }
+
+    /// Visits `v` and assigns component IDs in reverse topological order.
+    fn visit(&mut self, v: usize) {
+        if let Some(slot) = self.index.get_mut(v) {
+            *slot = self.clock;
+        }
+        if let Some(slot) = self.lowlink.get_mut(v) {
+            *slot = self.clock;
+        }
+        self.clock = self.clock.saturating_add(1);
+        self.stack.push(v);
+        if let Some(slot) = self.on_stack.get_mut(v) {
+            *slot = true;
+        }
+        let neighbors = self.adj.get(v).cloned().unwrap_or_default();
+        for w in neighbors {
+            let w_idx = self.index.get(w).copied().unwrap_or(0);
+            if w_idx == 0 {
+                self.visit(w);
+                let w_low = self.lowlink.get(w).copied().unwrap_or(0);
+                if let Some(v_low) = self.lowlink.get_mut(v) {
+                    *v_low = (*v_low).min(w_low);
+                }
+            } else if self.on_stack.get(w).copied().unwrap_or(false)
+                && let Some(v_low) = self.lowlink.get_mut(v)
+            {
+                *v_low = (*v_low).min(w_idx);
+            }
+        }
+        if self.lowlink.get(v) == self.index.get(v) {
+            let cid = self.comp_count;
+            self.comp_count = self.comp_count.saturating_add(1);
+            while let Some(w) = self.stack.pop() {
+                if let Some(slot) = self.on_stack.get_mut(w) {
+                    *slot = false;
+                }
+                if let Some(slot) = self.comp.get_mut(w) {
+                    *slot = cid;
+                }
+                if w == v {
+                    break;
+                }
+            }
+        }
     }
 }
 
@@ -166,37 +257,52 @@ pub fn doc_of(id: &str) -> &str {
     id.split('#').next().unwrap_or(id)
 }
 
-/// The indices of the links in `edges` that lie on a cycle. A link from `a`
-/// to `b` lies on a cycle when `a` is reachable from `b`, so a link from a
-/// node to itself always does.
+/// The indices of the links in `edges` that lie on a cycle.
+///
+/// Computed in a single Tarjan strongly connected components pass: an edge
+/// `(u, v)` lies on a cycle when `u` and `v` belong to the same component.
 #[must_use]
 pub fn links_on_cycles(edges: &[Link<'_>]) -> BTreeSet<usize> {
-    edges
-        .iter()
+    let mut ids = VertexIds::new();
+    let mut adj = Adjacency::new();
+    let mut indexed: Vec<IndexedEdge> = Vec::with_capacity(edges.len());
+    for &(from, to) in edges {
+        let u = intern_vertex(from, &mut ids, &mut adj);
+        let v = intern_vertex(to, &mut ids, &mut adj);
+        if let Some(neighbors) = adj.get_mut(u) {
+            neighbors.push(v);
+        }
+        indexed.push((u, v));
+    }
+    let n = adj.len();
+    let mut tarjan = Tarjan::new(adj);
+    for v in 0..n {
+        if tarjan.index.get(v).copied().unwrap_or(0) == 0 {
+            tarjan.visit(v);
+        }
+    }
+    indexed
+        .into_iter()
         .enumerate()
-        .filter(|(_, (from, to))| reaches(edges, to, from))
+        .filter(|(_, (u, v))| tarjan.comp.get(*u) == tarjan.comp.get(*v))
         .map(|(index, _)| index)
         .collect()
 }
 
-/// Whether `goal` is reachable from `start` along `edges`.
-fn reaches(edges: &[Link<'_>], start: &str, goal: &str) -> bool {
-    let mut seen = BTreeSet::new();
-    let mut stack = vec![start];
-    while let Some(node) = stack.pop() {
-        if node == goal {
-            return true;
-        }
-        if seen.insert(node) {
-            stack.extend(
-                edges
-                    .iter()
-                    .filter(|(from, _)| *from == node)
-                    .map(|(_, to)| *to),
-            );
-        }
+/// Interns `node` into `ids` and `adj`, returning its vertex index.
+fn intern_vertex<'a>(
+    node: &'a str,
+    ids: &mut VertexIds<'a>,
+    adj: &mut Adjacency,
+) -> usize {
+    if let Some(&id) = ids.get(node) {
+        id
+    } else {
+        let id = adj.len();
+        ids.insert(node, id);
+        adj.push(Vec::new());
+        id
     }
-    false
 }
 
 /// Sorts rows by `file`, then `line`, keeping the order of rows that tie.

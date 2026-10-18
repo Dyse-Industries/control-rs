@@ -58,6 +58,9 @@ type RequirementStatuses<'a> = BTreeMap<&'a str, Status>;
 /// Evaluated conditions and pending reviews.
 type ConditionEvalResult = (Vec<ConditionStatus>, Vec<ReviewCondition>);
 
+/// Evaluated conditions grouped by parent requirement ID.
+type ConditionsByParent<'a> = BTreeMap<&'a str, Vec<ConditionStatus>>;
+
 /// What a result log says about one target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Lookup {
@@ -201,6 +204,8 @@ struct Links<'a> {
     rows: ById<'a>,
     /// Link conditions with a target on a link cycle.
     cyclic: BTreeSet<&'a str>,
+    /// Derived document statuses.
+    document_status: RequirementStatuses<'a>,
     /// Derived requirement statuses.
     requirement_status: RequirementStatuses<'a>,
     /// Defects found while deriving link conditions.
@@ -313,45 +318,53 @@ impl<'a> Links<'a> {
             docs: reqs.iter().map(|r| doc_of(&r.id)).collect(),
             rows,
             cyclic: BTreeSet::new(),
+            document_status: RequirementStatuses::new(),
             requirement_status: RequirementStatuses::new(),
             defects: Defects::new(),
         };
+        links.cyclic = links.find_cyclic(order, conditions);
+        links
+    }
+
+    /// Link condition IDs that lie on a cycle in the tripartite link graph.
+    fn find_cyclic(
+        &self,
+        order: &[&'a str],
+        conditions: &ById<'a>,
+    ) -> BTreeSet<&'a str> {
         let mut edges = Vec::new();
         let mut owners = Vec::new();
+        for &id in order {
+            edges.push((doc_of(id), id));
+            owners.push(None);
+        }
         for (&id, row) in conditions {
             for parent in &row.parents {
                 edges.push((parent.as_str(), id));
                 owners.push(None);
             }
         }
-        for (&id, row) in &links.rows {
+        for (&id, row) in &self.rows {
             for target in &row.targets {
-                for named in links.named(target) {
-                    edges.push((id, named));
+                if self.resolves(target) {
+                    edges.push((id, target.as_str()));
                     owners.push(Some(id));
                 }
             }
         }
-        links.cyclic = links_on_cycles(&edges)
+        links_on_cycles(&edges)
             .into_iter()
             .filter_map(|index| owners.get(index).copied().flatten())
-            .collect();
-        links
+            .collect()
     }
 
-    /// The requirements and conditions `target` names: itself when it is a
-    /// defined requirement or condition ID, else every requirement of the
-    /// document it names.
-    fn named(&self, target: &'a str) -> Vec<&'a str> {
+    /// Whether `target` names a defined requirement, condition, or document
+    /// with at least one defined requirement.
+    fn resolves(&self, target: &str) -> bool {
         if target.contains('#') {
-            self.defined
-                .get(target)
-                .or_else(|| self.condition_ids.get(target))
-                .copied()
-                .into_iter()
-                .collect()
+            self.defined.contains(target) || self.condition_ids.contains(target)
         } else {
-            self.requirements.get(target).cloned().unwrap_or_default()
+            self.requirements.contains_key(target)
         }
     }
 
@@ -427,28 +440,43 @@ impl<'a> Links<'a> {
                 format!("condition {} target '{target}' {message}", row.id),
             )
         };
-        let named = self.named(target);
-        if named.is_empty()
-            && (target.contains('#') || !self.docs.contains(target))
-        {
+        if target.contains('#') {
+            if self.defined.contains(target) {
+                self.requirement(target, statuses)
+            } else if self.condition_ids.contains(target) {
+                self.condition(target, statuses)
+            } else {
+                self.defects.push(at("not found in reqs.jsonl"));
+                Status::Unrun
+            }
+        } else if self.requirements.contains_key(target) {
+            self.document(target, statuses)
+        } else if !self.docs.contains(target) {
             self.defects.push(at("not found in reqs.jsonl"));
-            return Status::Unrun;
-        }
-        if named.is_empty() {
+            Status::Unrun
+        } else {
             self.defects.push(at("defines no requirement"));
-            return Status::Uncovered;
+            Status::Uncovered
         }
-        named
+    }
+
+    /// The worst status of the requirements of `doc`, derived once.
+    fn document(
+        &mut self,
+        doc: &'a str,
+        statuses: &mut Statuses<'a>,
+    ) -> Status {
+        if let Some(&done) = self.document_status.get(doc) {
+            return done;
+        }
+        let reqs = self.requirements.get(doc).cloned().unwrap_or_default();
+        let status = reqs
             .into_iter()
-            .map(|node| {
-                if self.defined.contains(node) {
-                    self.requirement(node, statuses)
-                } else {
-                    self.condition(node, statuses)
-                }
-            })
+            .map(|req| self.requirement(req, statuses))
             .max()
-            .unwrap_or(Status::Uncovered)
+            .unwrap_or(Status::Uncovered);
+        self.document_status.insert(doc, status);
+        status
     }
 
     /// The worst status of the conditions of `requirement`, derived once.
@@ -878,18 +906,23 @@ fn worst(conditions: &[ConditionStatus]) -> Status {
 
 /// One entry per requirement in `order`, each with its conditions sorted by
 /// ID and the worst of their statuses.
-fn requirement_statuses(
-    order: &[&str],
-    evaluated: &[ConditionStatus],
+fn requirement_statuses<'a>(
+    order: &[&'a str],
+    evaluated: &'a [ConditionStatus],
 ) -> Vec<RequirementStatus> {
+    let mut by_parent = ConditionsByParent::new();
+    for condition in evaluated {
+        for parent in &condition.parents {
+            by_parent
+                .entry(parent.as_str())
+                .or_default()
+                .push(condition.clone());
+        }
+    }
     order
         .iter()
         .map(|&id| {
-            let mut children: Vec<ConditionStatus> = evaluated
-                .iter()
-                .filter(|c| c.parents.iter().any(|p| p == id))
-                .cloned()
-                .collect();
+            let mut children = by_parent.remove(id).unwrap_or_default();
             children.sort_by(|a, b| a.id.cmp(&b.id));
             RequirementStatus {
                 id: id.to_string(),

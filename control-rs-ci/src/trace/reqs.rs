@@ -32,9 +32,6 @@ type DocFilePair<'a> = (&'a str, &'a str);
 /// Link-graph edges and the link condition that owns each, if any.
 type LinkGraph<'a> = (Vec<Link<'a>>, Vec<Option<&'a Row>>);
 
-/// Requirement IDs by document.
-type RequirementsByDoc<'a> = BTreeMap<&'a str, Vec<&'a str>>;
-
 /// Definition rows by ID.
 type Definitions<'a> = BTreeMap<&'a str, Vec<&'a Row>>;
 
@@ -527,6 +524,10 @@ fn check_duplicate_definitions(
     conditions: &[&Row],
     defects: &mut Vec<Defect>,
 ) {
+    let covered: BTreeSet<&str> = conditions
+        .iter()
+        .flat_map(|c| c.parents.iter().map(String::as_str))
+        .collect();
     for (&id, found) in definitions {
         if let [first, second, ..] = found.as_slice() {
             defects.push(Defect::at(
@@ -537,15 +538,13 @@ fn check_duplicate_definitions(
                 ),
             ));
         }
-        if let Some(first) = found.first() {
-            let has_cond =
-                conditions.iter().any(|c| c.parents.iter().any(|p| p == id));
-            if !has_cond {
-                defects.push(Defect::at(
-                    first,
-                    format!("{id} has no verification condition"),
-                ));
-            }
+        if let Some(first) = found.first()
+            && !covered.contains(id)
+        {
+            defects.push(Defect::at(
+                first,
+                format!("{id} has no verification condition"),
+            ));
         }
     }
 }
@@ -683,9 +682,10 @@ fn check_duplicate_document_ids(rows: &[Row], defects: &mut Vec<Defect>) {
 
 /// The `link` defects: a link condition with no target, a target that names
 /// no document among `rows` and no defined requirement or condition, and
-/// every link condition on a cycle. The cycle graph has an edge from each
-/// requirement to its conditions and from each link condition to what its
-/// targets name.
+/// every link condition on a cycle. The tripartite cycle graph has an edge
+/// from each document to its requirements, from each requirement to its
+/// conditions, and from each link condition to the document, requirement, or
+/// condition its targets name.
 fn check_links(
     definitions: &Definitions<'_>,
     conditions: &[&Row],
@@ -698,11 +698,9 @@ fn check_links(
         .chain(conditions.iter().map(|r| r.id.as_str()))
         .collect();
     let docs: BTreeSet<&str> = defined.iter().map(|id| doc_of(id)).collect();
-    let mut by_doc = RequirementsByDoc::new();
-    for &id in definitions.keys() {
-        by_doc.entry(doc_of(id)).or_default().push(id);
-    }
-    let (mut edges, mut owners) = condition_edges(conditions);
+    let doc_reqs: BTreeSet<&str> =
+        definitions.keys().map(|id| doc_of(id)).collect();
+    let (mut edges, mut owners) = condition_edges(definitions, conditions);
     for &link in conditions.iter().filter(|c| {
         c.method
             .as_ref()
@@ -713,14 +711,15 @@ fn check_links(
                 .push(Defect::at(link, format!("{} names no target", link.id)));
         }
         for target in link.targets.iter().map(String::as_str) {
-            let named: Vec<&str> = if target.contains('#') {
-                defined.get(target).copied().into_iter().collect()
+            let resolves = if target.contains('#') {
+                defined.contains(target)
             } else {
-                by_doc.get(target).cloned().unwrap_or_default()
+                doc_reqs.contains(target)
             };
-            if named.is_empty()
-                && (target.contains('#') || !docs.contains(target))
-            {
+            if resolves {
+                edges.push((link.id.as_str(), target));
+                owners.push(Some(link));
+            } else if target.contains('#') || !docs.contains(target) {
                 defects.push(Defect::at(
                     link,
                     format!(
@@ -728,10 +727,6 @@ fn check_links(
                         link.id
                     ),
                 ));
-            }
-            for node in named {
-                edges.push((link.id.as_str(), node));
-                owners.push(Some(link));
             }
         }
     }
@@ -748,16 +743,20 @@ fn check_links(
     }
 }
 
-/// The edges from each requirement to its conditions, each with no owning
-/// link condition.
-fn condition_edges<'a>(conditions: &[&'a Row]) -> LinkGraph<'a> {
-    conditions
-        .iter()
-        .flat_map(|c| {
+/// The structural edges from each document to its requirements and from each
+/// requirement to its conditions, each with no owning link condition.
+fn condition_edges<'a>(
+    definitions: &Definitions<'a>,
+    conditions: &[&'a Row],
+) -> LinkGraph<'a> {
+    definitions
+        .keys()
+        .map(|&id| ((doc_of(id), id), None))
+        .chain(conditions.iter().flat_map(|c| {
             c.parents
                 .iter()
                 .map(|p| ((p.as_str(), c.id.as_str()), None))
-        })
+        }))
         .unzip()
 }
 
