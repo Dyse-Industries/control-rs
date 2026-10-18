@@ -397,10 +397,14 @@ where
     Some(lo.saturating_add(&hi).saturating_div(&two))
 }
 
-/// Whether both parts of `z` are finite (not NaN; infinities compare equal
-/// to themselves and are caught by the magnitude tests).
+/// Whether both parts of `z` are finite (not NaN and not infinite).
+///
+/// `x - x` is zero only for a finite `x`; NaN and infinity give NaN, so the
+/// equality fails. `partial_cmp` alone is not enough: infinity compares equal
+/// to itself.
 fn is_finite<T: Float + Copy>(z: Complex<T>) -> bool {
-    z.re.partial_cmp(&z.re).is_some() && z.im.partial_cmp(&z.im).is_some()
+    let finite = |x: T| x.saturating_sub(&x) == T::ZERO;
+    finite(z.re) && finite(z.im)
 }
 
 #[cfg(test)]
@@ -412,10 +416,28 @@ mod tests {
     #[test]
     fn is_finite_requires_both_parts() {
         let nan = f64::NAN;
+        let inf = f64::INFINITY;
         assert!(is_finite(Complex::new(1.0, 2.0)));
         assert!(!is_finite(Complex::new(nan, 2.0)));
         assert!(!is_finite(Complex::new(1.0, nan)));
         assert!(!is_finite(Complex::new(nan, nan)));
+        assert!(!is_finite(Complex::new(inf, 0.0)));
+        assert!(!is_finite(Complex::new(0.0, -inf)));
+        assert!(!is_finite(Complex::new(inf, inf)));
+    }
+
+    #[test]
+    fn overflowed_samples_do_not_seed_stability_margin() {
+        // FR-5: IEEE overflow of L must be skipped like NaN. A constant
+        // `1e300 / 1e-150` evaluates to Inf; a prior `is_finite` that only
+        // rejected NaN reported `Some(+Inf)`.
+        let sys =
+            ArrayTransferFunction::<f64, 1, 1>::continuous([1e300], [1e-150]);
+        assert!(!is_finite(sys.eval_frequency(1.0)));
+        let m = margin(&sys, &[1.0, 2.0]);
+        assert_eq!(m.stability_margin, None);
+        assert_eq!(m.phase_crossing, None);
+        assert_eq!(m.gain_crossing, None);
     }
 
     fn plant() -> ArrayTransferFunction<f64, 1, 4> {
