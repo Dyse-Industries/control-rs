@@ -299,7 +299,9 @@ it copies the denominator into a stack array of
 length $D$, adds $k_i$ times the numerator coefficient by coefficient, and
 passes the sum to `ArrayPolynomial::roots`; the routine defines no
 polynomial type of its own. The roots of $D (s) + k_i N (s)$ are the locus
-points [1]. Rows are independent unordered sets, so branches are not
+points [1]. The bound `TypeNum<N>: DimMax<TypeNum<D>, Output = TypeNum<D>>`
+requires $N \le D$, so an improper open loop does not compile and every
+coefficient of $D + k_i N$ fits the length-$D$ buffer. Rows are independent unordered sets, so branches are not
 matched across gains (continuation [3] and adaptive gain selection [1] are
 rejected, §5). A failed solve ends the sweep with `ClassicalError::Root`.
 
@@ -642,8 +644,9 @@ operations are the constructor, `step(r, y) -> u`, `reset`, `set_gains`
 and `to_transfer_function`.
 
 `new` returns `InvalidParameter` unless $u_{min} \le u_{max}$, $h > 0$,
-$T_f \ge 0$, the gains are finite and, for `BackCalculation`, $T_t > 0$; a NaN
-parameter fails its comparison, and an infinite limit means no limit. It
+$T_f \ge 0$, the gains and time parameters are finite and, for
+`BackCalculation`, $T_t > 0$; a NaN parameter fails its comparison, and an
+infinite limit means no limit. It
 computes `ad`, `bd`, `kih` and `hbt` ($h/T_t$ or 0) once, so `step` is a fixed
 sequence of saturating operations with no branch except the limit
 selection and the anti-windup test (NFR-4). The controller is `Copy` and

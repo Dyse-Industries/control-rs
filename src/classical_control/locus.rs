@@ -5,10 +5,10 @@
 //! `Polynomial::roots`. Each output row is an unordered root set; root order
 //! across consecutive gains is not matched.
 
-use super::ClassicalError;
+use super::{ClassicalError, TypeNum};
 use crate::math::complex_num::Complex;
 use crate::math::num_traits::Float;
-use crate::math::num_types::{Const, Dim};
+use crate::math::num_types::{Const, Dim, DimMax};
 use crate::polynomial::ArrayPolynomial;
 use crate::transfer_function::ArrayTransferFunction;
 
@@ -40,6 +40,16 @@ pub type LocusResult<T, const D: usize, const K: usize> =
 /// assert!(rows[0][..2].iter().all(|r| (r.re + 1.0).abs() < 1e-6));
 /// # Ok::<(), control_rs::classical_control::ClassicalError>(())
 /// ```
+///
+/// An improper open loop (`N > D`) is rejected at compile time:
+///
+/// ```compile_fail,E0271
+/// use control_rs::classical_control::root_locus;
+/// use control_rs::transfer_function::ArrayTransferFunction;
+///
+/// let l = ArrayTransferFunction::<f64, 3, 2>::continuous([1.0, 0.0, 1.0], [1.0, 1.0]);
+/// let _ = root_locus(&l, &[2.0]);
+/// ```
 pub fn root_locus<
     T: Float + Copy,
     const N: usize,
@@ -52,6 +62,7 @@ pub fn root_locus<
 where
     Const<N>: Dim,
     Const<D>: Dim,
+    TypeNum<N>: DimMax<TypeNum<D>, Output = TypeNum<D>>,
 {
     let mut out = [[Complex::new(T::ZERO, T::ZERO); D]; K];
     for (row, &k) in out.iter_mut().zip(gains) {
