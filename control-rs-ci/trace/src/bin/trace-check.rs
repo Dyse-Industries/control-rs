@@ -7,11 +7,11 @@
 use std::process::ExitCode;
 
 use control_rs_ci::GateResult;
-use control_rs_ci::trace::status::{self, Derived, TraceReport};
-use control_rs_ci::trace::{
+use control_rs_ci::ui;
+use control_rs_trace::status::{self, Derived, TraceReport};
+use control_rs_trace::{
     Defect, FlagValues, USAGE_ERROR, cli_args, print_defects, read_rows,
 };
-use control_rs_ci::ui;
 
 /// Command-line synopsis.
 const USAGE: &str = "trace-check --config <trace.toml> --reqs <reqs.jsonl> --out <trace-report.json>";
@@ -37,7 +37,7 @@ fn run([config, reqs, out]: &FlagValues<3>) -> GateResult<Derived> {
         let _ = std::fs::remove_file(out);
     }
     let reqs = read_rows(reqs)?;
-    let trace_cfg = control_rs_ci::trace::reqs::TraceConfig::load(config)?;
+    let trace_cfg = control_rs_trace::reqs::TraceConfig::load(config)?;
     let (report, defects) = status::derive(&reqs, &trace_cfg);
     report.write(out)?;
     ui::status("Writing", out.display());

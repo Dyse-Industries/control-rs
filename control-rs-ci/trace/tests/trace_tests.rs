@@ -7,7 +7,7 @@ mod cli {
     use std::path::{Path, PathBuf};
     use std::process::{Command, Output};
 
-    use control_rs_ci::trace::SCHEMA;
+    use control_rs_trace::SCHEMA;
     use regex::Regex;
     use serde_json::Value;
 
@@ -71,8 +71,10 @@ mod cli {
 
     /// A fresh working directory holding the configuration and `files`.
     fn workdir(name: &str, files: &[Fixture<'_>]) -> PathBuf {
-        let dir = std::env::temp_dir()
-            .join(format!("control_rs_ci_trace_{name}_{}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "control_rs_trace_trace_{name}_{}",
+            std::process::id()
+        ));
         let _ = fs::remove_dir_all(&dir);
         let cfg_str = config();
         for (path, text) in std::iter::once(("trace.toml", cfg_str.as_str()))

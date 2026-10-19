@@ -28,6 +28,7 @@ members = [
     "control-rs-ets-host",
     "control-rs-tui",
     "control-rs-ci",
+    "control-rs-ci/trace",
     "control-rs-compare",
     "control-rs-verification",
 ]

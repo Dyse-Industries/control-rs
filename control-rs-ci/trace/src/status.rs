@@ -20,11 +20,10 @@ use serde::{Deserialize, Serialize};
 
 use super::reqs::TraceConfig;
 use super::{
-    CONDITION, DEFINITION, Defect, Defects, LinkGraph, Row, SCHEMA,
-    cycle_message, doc_of, empty_document_message, no_target_message,
-    read_text, unresolved_target_message, write_file,
+    CONDITION, DEFINITION, Defect, Defects, LinkGraph, Row, SCHEMA, read_text,
+    write_file,
 };
-use crate::error::GateResult;
+use control_rs_ci::error::GateResult;
 
 /// A report and its defects.
 pub type Derived = (TraceReport, Defects);
@@ -46,15 +45,6 @@ type TestResultMap = HashMap<String, bool>;
 
 /// Map from method name to its parsed result log.
 type MethodResultMap = HashMap<String, ResultLog>;
-
-/// IDs grouped under a key, in insertion order.
-type Grouped<'a> = BTreeMap<&'a str, Vec<&'a str>>;
-
-/// Derived condition statuses by condition ID.
-type Statuses<'a> = BTreeMap<&'a str, ConditionStatus>;
-
-/// Derived statuses by requirement ID.
-type RequirementStatuses<'a> = BTreeMap<&'a str, Status>;
 
 /// Evaluated conditions and pending reviews.
 type ConditionEvalResult = (Vec<ConditionStatus>, Vec<ReviewCondition>);
@@ -188,31 +178,6 @@ struct StatusCtx<'a> {
     warnings: &'a mut Vec<InterpreterWarning>,
 }
 
-/// The link conditions of a trace run and the requirement structure their
-/// status depends on.
-struct Links<'a> {
-    /// Requirement IDs by document, in order of first definition.
-    requirements: Grouped<'a>,
-    /// Defined requirement IDs.
-    defined: BTreeSet<&'a str>,
-    /// Defined condition IDs.
-    condition_ids: BTreeSet<&'a str>,
-    /// Condition IDs by parent requirement.
-    children: Grouped<'a>,
-    /// Documents that any row names.
-    docs: BTreeSet<&'a str>,
-    /// Link conditions by ID.
-    rows: ById<'a>,
-    /// Link conditions with a target on a link cycle.
-    cyclic: BTreeSet<&'a str>,
-    /// Derived document statuses.
-    document_status: RequirementStatuses<'a>,
-    /// Derived requirement statuses.
-    requirement_status: RequirementStatuses<'a>,
-    /// Defects found while deriving link conditions.
-    defects: Defects,
-}
-
 /// `trace-report.json`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraceReport {
@@ -289,206 +254,8 @@ impl TraceReport {
     }
 }
 
-impl<'a> Links<'a> {
-    fn new(
-        reqs: &'a [Row],
-        order: &[&'a str],
-        conditions: &ById<'a>,
-        config: &TraceConfig,
-    ) -> Self {
-        let mut requirements = Grouped::new();
-        for &id in order {
-            requirements.entry(doc_of(id)).or_default().push(id);
-        }
-        let mut children = Grouped::new();
-        for (&id, row) in conditions {
-            for parent in &row.parents {
-                children.entry(parent.as_str()).or_default().push(id);
-            }
-        }
-        let rows: ById<'a> = conditions
-            .iter()
-            .filter(|(_, row)| is_link(row, config))
-            .map(|(&id, &row)| (id, row))
-            .collect();
-        let mut links = Self {
-            requirements,
-            defined: order.iter().copied().collect(),
-            condition_ids: conditions.keys().copied().collect(),
-            children,
-            docs: reqs.iter().map(|r| doc_of(&r.id)).collect(),
-            rows,
-            cyclic: BTreeSet::new(),
-            document_status: RequirementStatuses::new(),
-            requirement_status: RequirementStatuses::new(),
-            defects: Defects::new(),
-        };
-        links.cyclic = links.find_cyclic(order, conditions);
-        links
-    }
-
-    /// Link condition IDs that lie on a cycle in the tripartite link graph.
-    fn find_cyclic(
-        &self,
-        order: &[&'a str],
-        conditions: &ById<'a>,
-    ) -> BTreeSet<&'a str> {
-        let mut graph = LinkGraph::new(
-            order.iter().copied(),
-            conditions
-                .iter()
-                .map(|(&id, row)| (id, row.parents.as_slice())),
-        );
-        for (&id, row) in &self.rows {
-            for target in row.targets.iter().filter(|t| self.resolves(t)) {
-                graph.add_link(id, target.as_str());
-            }
-        }
-        graph.cyclic_links()
-    }
-
-    /// Whether `target` names a defined requirement, condition, or document
-    /// with at least one defined requirement.
-    fn resolves(&self, target: &str) -> bool {
-        if target.contains('#') {
-            self.defined.contains(target) || self.condition_ids.contains(target)
-        } else {
-            self.requirements.contains_key(target)
-        }
-    }
-
-    /// Derives every link condition into `statuses`.
-    fn derive_all(&mut self, statuses: &mut Statuses<'a>) {
-        let ids: Vec<&'a str> = self.rows.keys().copied().collect();
-        for id in ids {
-            self.condition(id, statuses);
-        }
-    }
-
-    /// The status of condition `id`: the one in `statuses`, else the link
-    /// condition derived and recorded there.
-    fn condition(
-        &mut self,
-        id: &'a str,
-        statuses: &mut Statuses<'a>,
-    ) -> Status {
-        if let Some(done) = statuses.get(id) {
-            return done.status;
-        }
-        let Some(&row) = self.rows.get(id) else {
-            return Status::Uncovered;
-        };
-        let mut items = Vec::new();
-        let status = if row.targets.is_empty() {
-            self.defects
-                .push(Defect::at(row, no_target_message(&row.id)));
-            Status::Uncovered
-        } else if self.cyclic.contains(id) {
-            self.defects.push(Defect::at(row, cycle_message(&row.id)));
-            Status::Fail
-        } else {
-            let mut worst_status = Status::Pass;
-            for target in &row.targets {
-                let named = self.target(row, target, statuses);
-                worst_status = worst_status.max(named);
-                items.push(ItemOutcome {
-                    target: target.clone(),
-                    passed: !fails_gate(named),
-                    message: Some(format!("status {named:?}")),
-                });
-            }
-            worst_status
-        };
-        statuses.insert(
-            id,
-            ConditionStatus {
-                id: row.id.clone(),
-                parents: row.parents.clone(),
-                method: row.method.clone().unwrap_or_default(),
-                status,
-                items,
-            },
-        );
-        status
-    }
-
-    /// The worst status of the requirements and conditions `target` names,
-    /// which `row` lists.
-    fn target(
-        &mut self,
-        row: &'a Row,
-        target: &'a str,
-        statuses: &mut Statuses<'a>,
-    ) -> Status {
-        if target.contains('#') {
-            if self.defined.contains(target) {
-                self.requirement(target, statuses)
-            } else if self.condition_ids.contains(target) {
-                self.condition(target, statuses)
-            } else {
-                self.defects.push(Defect::at(
-                    row,
-                    unresolved_target_message(&row.id, target),
-                ));
-                Status::Unrun
-            }
-        } else if self.requirements.contains_key(target) {
-            self.document(target, statuses)
-        } else if !self.docs.contains(target) {
-            self.defects.push(Defect::at(
-                row,
-                unresolved_target_message(&row.id, target),
-            ));
-            Status::Unrun
-        } else {
-            self.defects
-                .push(Defect::at(row, empty_document_message(&row.id, target)));
-            Status::Uncovered
-        }
-    }
-
-    /// The worst status of the requirements of `doc`, derived once.
-    fn document(
-        &mut self,
-        doc: &'a str,
-        statuses: &mut Statuses<'a>,
-    ) -> Status {
-        if let Some(&done) = self.document_status.get(doc) {
-            return done;
-        }
-        let reqs = self.requirements.get(doc).cloned().unwrap_or_default();
-        let status = reqs
-            .into_iter()
-            .map(|req| self.requirement(req, statuses))
-            .max()
-            .unwrap_or(Status::Uncovered);
-        self.document_status.insert(doc, status);
-        status
-    }
-
-    /// The worst status of the conditions of `requirement`, derived once.
-    fn requirement(
-        &mut self,
-        requirement: &'a str,
-        statuses: &mut Statuses<'a>,
-    ) -> Status {
-        if let Some(&done) = self.requirement_status.get(requirement) {
-            return done;
-        }
-        let children =
-            self.children.get(requirement).cloned().unwrap_or_default();
-        let status = children
-            .into_iter()
-            .map(|child| self.condition(child, statuses))
-            .max()
-            .unwrap_or(Status::Uncovered);
-        self.requirement_status.insert(requirement, status);
-        status
-    }
-}
-
 /// Whether a condition or requirement of `status` fails the gate.
-const fn fails_gate(status: Status) -> bool {
+pub(super) const fn fails_gate(status: Status) -> bool {
     matches!(status, Status::Fail | Status::Unrun | Status::Uncovered)
 }
 
@@ -1023,7 +790,7 @@ fn initial_status_counts() -> StatusCounts {
 
 fn evaluate_all_conditions<'a>(
     cond_idx: &Indexed<'a>,
-    links: &mut Links<'a>,
+    acyclic: &LinkGraph<'a, super::link::Acyclic>,
     ctx: &mut StatusCtx<'_>,
     counts: &mut StatusCounts,
 ) -> ConditionEvalResult {
@@ -1031,14 +798,7 @@ fn evaluate_all_conditions<'a>(
     let mut evaluated = Vec::new();
     let mut review = Vec::new();
 
-    let mut statuses = Statuses::new();
-    for (&id, row) in conditions {
-        if !is_link(row, ctx.config) {
-            statuses.insert(id, condition_status(row, ctx));
-        }
-    }
-    links.derive_all(&mut statuses);
-    ctx.defects.append(&mut links.defects);
+    let mut statuses = acyclic.derive(|row| condition_status(row, ctx));
 
     for row in condition_order.iter().filter_map(|id| conditions.get(id)) {
         let Some(status) = statuses.remove(row.id.as_str()) else {
@@ -1079,9 +839,16 @@ pub fn derive_with_base(
 ) -> Derived {
     let (_, order) = first_by_id(reqs, DEFINITION);
     let cond_idx = first_by_id(reqs, CONDITION);
-    let mut links = Links::new(reqs, &order, &cond_idx.0, config);
+
+    let link_methods: BTreeSet<String> =
+        config.link_methods.iter().cloned().collect();
+    let (graph, resolve_defects) = LinkGraph::resolve(reqs, &link_methods);
+    let (acyclic, cycle_defects) = graph.condense();
 
     let mut defects = Vec::new();
+    defects.extend(resolve_defects);
+    defects.extend(cycle_defects);
+
     let mut warnings = Vec::new();
     let result_cache = load_method_artifacts(config, base);
     let interpreter_results = load_interpreter_log(config, base);
@@ -1096,7 +863,7 @@ pub fn derive_with_base(
     };
 
     let (evaluated, review) =
-        evaluate_all_conditions(&cond_idx, &mut links, &mut ctx, &mut counts);
+        evaluate_all_conditions(&cond_idx, &acyclic, &mut ctx, &mut counts);
 
     let requirements = requirement_statuses(&order, &evaluated);
     check_staleness(reqs, config, base, &mut warnings);
@@ -1125,7 +892,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use crate::trace::reqs::MethodConfig;
+    use crate::reqs::MethodConfig;
 
     /// A condition status and how many conditions have it.
     type Count = (Status, usize);
@@ -1135,7 +902,7 @@ mod tests {
 
     fn test_dir(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "control_rs_ci_status_{name}_{}_{}",
+            "control_rs_trace_status_{name}_{}_{}",
             std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)

@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::error::{GateError, GateResult};
+use control_rs_ci::error::{GateError, GateResult};
 
 /// Selected files, relative to the working directory.
 pub type Selection = Vec<String>;

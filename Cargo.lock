@@ -371,7 +371,6 @@ dependencies = [
  "control-rs-ets",
  "control-rs-ets-host",
  "lexopt",
- "regex",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -422,6 +421,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "control-rs-trace"
+version = "0.1.0"
+dependencies = [
+ "anstream",
+ "control-rs-ci",
+ "lexopt",
+ "regex",
+ "serde",
+ "serde_json",
+ "toml",
 ]
 
 [[package]]

@@ -7,15 +7,15 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use control_rs_ci::GateResult;
-use control_rs_ci::trace::reqs::{
+use control_rs_ci::ui;
+use control_rs_trace::reqs::{
     Rules, Source, TraceConfig, check, check_decisions, scan_markdown,
 };
-use control_rs_ci::trace::select::select;
-use control_rs_ci::trace::{
+use control_rs_trace::select::select;
+use control_rs_trace::{
     Defects, Row, USAGE_ERROR, cli_args, finish, read_text, sort_rows,
     write_rows,
 };
-use control_rs_ci::ui;
 
 /// Command-line synopsis.
 const USAGE: &str = "trace-reqs --config <trace.toml> --out <reqs.jsonl>";

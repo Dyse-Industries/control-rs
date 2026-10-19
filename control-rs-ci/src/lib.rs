@@ -35,8 +35,6 @@ pub mod metrics;
 
 pub mod report;
 
-pub mod trace;
-
 pub mod ui;
 
 /// Workspace-relative directory that holds one Cargo target directory per

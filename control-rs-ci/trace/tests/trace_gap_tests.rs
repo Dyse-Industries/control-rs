@@ -29,7 +29,7 @@ mod trace_gap {
 
     fn workdir(name: &str, files: &[Fixture<'_>]) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
-            "control_rs_ci_trace_gap_{name}_{}",
+            "control_rs_trace_trace_gap_{name}_{}",
             std::process::id()
         ));
         let _ = fs::remove_dir_all(&dir);

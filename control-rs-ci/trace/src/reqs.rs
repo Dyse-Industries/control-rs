@@ -15,11 +15,9 @@ use regex::Regex;
 use serde::Deserialize;
 
 use super::{
-    CONDITION, DEFINITION, Defect, LinkGraph, Row, SCHEMA, cycle_message,
-    doc_of, empty_document_message, no_target_message, normalize, read_text,
-    unresolved_target_message,
+    CONDITION, DEFINITION, Defect, LinkGraph, Row, SCHEMA, normalize, read_text,
 };
-use crate::error::{GateError, GateResult};
+use control_rs_ci::error::{GateError, GateResult};
 
 /// A file and line.
 pub(super) type At<'a> = (&'a str, usize);
@@ -50,9 +48,6 @@ pub type MarkdownScan = (Vec<Row>, Vec<Defect>);
 
 /// A file path and its text.
 pub type Source<'a> = (&'a str, &'a str);
-
-/// Link conditions by ID.
-type Owners<'a> = BTreeMap<&'a str, &'a Row>;
 
 /// Decision records by ID.
 type Decisions<'a> = BTreeMap<&'a str, &'a Decision>;
@@ -684,62 +679,12 @@ fn check_duplicate_document_ids(rows: &[Row], defects: &mut Vec<Defect>) {
 /// The `link` defects: a link condition with no target, a target that names
 /// no document among `rows` and no defined requirement or condition, a target
 /// document that defines no requirement, and every link condition on a cycle.
-fn check_links(
-    definitions: &Definitions<'_>,
-    conditions: &[&Row],
-    rules: &Rules,
-    defects: &mut Vec<Defect>,
-) {
-    let defined: BTreeSet<&str> = definitions
-        .keys()
-        .copied()
-        .chain(conditions.iter().map(|r| r.id.as_str()))
-        .collect();
-    let docs: BTreeSet<&str> = defined.iter().map(|id| doc_of(id)).collect();
-    let doc_reqs: BTreeSet<&str> =
-        definitions.keys().map(|id| doc_of(id)).collect();
-    let mut graph = LinkGraph::new(
-        definitions.keys().copied(),
-        conditions
-            .iter()
-            .map(|c| (c.id.as_str(), c.parents.as_slice())),
-    );
-    let mut owners = Owners::new();
-    for &link in conditions.iter().filter(|c| {
-        c.method
-            .as_ref()
-            .is_some_and(|m| rules.link_methods.contains(m))
-    }) {
-        owners.entry(link.id.as_str()).or_insert(link);
-        if link.targets.is_empty() {
-            defects.push(Defect::at(link, no_target_message(&link.id)));
-        }
-        for target in link.targets.iter().map(String::as_str) {
-            let resolves = if target.contains('#') {
-                defined.contains(target)
-            } else {
-                doc_reqs.contains(target)
-            };
-            if resolves {
-                graph.add_link(link.id.as_str(), target);
-            } else if target.contains('#') || !docs.contains(target) {
-                defects.push(Defect::at(
-                    link,
-                    unresolved_target_message(&link.id, target),
-                ));
-            } else {
-                defects.push(Defect::at(
-                    link,
-                    empty_document_message(&link.id, target),
-                ));
-            }
-        }
-    }
-    for id in graph.cyclic_links() {
-        if let Some(link) = owners.get(id) {
-            defects.push(Defect::at(link, cycle_message(id)));
-        }
-    }
+fn check_links(rows: &[Row], rules: &Rules, defects: &mut Vec<Defect>) {
+    let (graph, resolve_defects) =
+        LinkGraph::resolve(rows, &rules.link_methods);
+    let (_acyclic, cycle_defects) = graph.condense();
+    defects.extend(resolve_defects);
+    defects.extend(cycle_defects);
 }
 
 /// The defects in `rows`, sorted by file, then line.
@@ -762,7 +707,7 @@ pub fn check(rows: &[Row], rules: &Rules) -> Vec<Defect> {
     check_condition_parents(&conditions, &definitions, &mut defects);
     check_condition_methods(&conditions, rules, &mut defects);
     check_duplicate_document_ids(rows, &mut defects);
-    check_links(&definitions, &conditions, rules, &mut defects);
+    check_links(rows, rules, &mut defects);
 
     defects.sort_by(|a, b| {
         (a.file.as_str(), a.line).cmp(&(b.file.as_str(), b.line))

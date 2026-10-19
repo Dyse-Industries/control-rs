@@ -92,7 +92,7 @@ fn setup_scenario_decisions(
 
 fn create_temp_context(scenario: NegativeScenario) -> io::Result<TempContext> {
     let out_dir = std::env::temp_dir().join(format!(
-        "control_rs_ci_trace_neg_{:?}_{}",
+        "control_rs_trace_trace_neg_{:?}_{}",
         scenario,
         std::process::id()
     ));

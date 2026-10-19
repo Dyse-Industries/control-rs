@@ -6,7 +6,6 @@
 //! status from those targets and the result logs of the gates. Each definition
 //! and condition is one [`Row`].
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::io::{self, BufRead, BufReader, Write};
@@ -15,9 +14,12 @@ use std::process::ExitCode;
 
 use serde::{Deserialize, Serialize};
 
-use crate::error::{GateError, GateResult};
-use crate::ui;
+use control_rs_ci::error::{GateError, GateResult};
+use control_rs_ci::ui;
 
+pub use link::LinkGraph;
+
+pub mod link;
 pub mod reqs;
 pub mod select;
 pub mod status;
@@ -34,17 +36,11 @@ pub const SCHEMA: u32 = 5;
 /// Exit code of a usage, configuration or I/O error.
 pub const USAGE_ERROR: u8 = 2;
 
-/// Outgoing neighbor vertex indices per vertex.
-type Adjacency = Vec<Vec<usize>>;
-
 /// Defects in report order.
 pub type Defects = Vec<Defect>;
 
 /// Values of the required flags, in declared order.
 pub type FlagValues<const N: usize> = [PathBuf; N];
-
-/// A directed edge between interned vertex indices.
-type IndexedEdge = (usize, usize);
 
 /// Rows of one artifact.
 pub type Rows = Vec<Row>;
@@ -54,9 +50,6 @@ type Run = (usize, usize);
 
 /// A flag value while parsing, `None` until the flag is seen.
 type Slot = Option<PathBuf>;
-
-/// Interned vertex index by node identifier.
-type VertexIds<'a> = BTreeMap<&'a str, usize>;
 
 /// A GFM code span: its byte range, delimiters included, and its content.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -78,26 +71,6 @@ pub struct Defect {
     pub line: usize,
     /// What is wrong.
     pub message: String,
-}
-
-/// A directed edge of the link graph, by node ID.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Edge<'a> {
-    /// Source node: a document, requirement or condition.
-    pub from: &'a str,
-    /// Target node.
-    pub to: &'a str,
-    /// The link condition that owns the edge; `None` for a structural edge.
-    pub link: Option<&'a str>,
-}
-
-/// The tripartite link graph: an edge from each document to its
-/// requirements, from each requirement to its conditions, and from each link
-/// condition to each node its targets name.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct LinkGraph<'a> {
-    /// Structural edges first, then link edges in insertion order.
-    edges: Vec<Edge<'a>>,
 }
 
 /// One occurrence of one requirement or condition ID: a line of `reqs.jsonl`.
@@ -127,26 +100,6 @@ pub struct Row {
     pub text: String,
 }
 
-/// Depth-first search state for Tarjan's strongly connected components pass.
-struct Tarjan {
-    /// Outgoing neighbor indices per vertex.
-    adj: Adjacency,
-    /// Discovery number per vertex (`0` until visited).
-    index: Vec<usize>,
-    /// Lowest discovery number reachable from each vertex.
-    lowlink: Vec<usize>,
-    /// Whether each vertex is on the active recursion stack.
-    on_stack: Vec<bool>,
-    /// Active recursion stack of vertices.
-    stack: Vec<usize>,
-    /// Strongly connected component index per vertex.
-    comp: Vec<usize>,
-    /// Number of strongly connected components assigned so far.
-    comp_count: usize,
-    /// Next `1`-based discovery number.
-    clock: usize,
-}
-
 impl Defect {
     /// A defect at the file and line of `row`.
     #[must_use]
@@ -162,136 +115,6 @@ impl Defect {
 impl fmt::Display for Defect {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}: {}", self.file, self.line, self.message)
-    }
-}
-
-impl<'a> LinkGraph<'a> {
-    /// The structural edges over `requirements` and the `(condition, parents)`
-    /// pairs of `conditions`.
-    pub fn new(
-        requirements: impl IntoIterator<Item = &'a str>,
-        conditions: impl IntoIterator<Item = (&'a str, &'a [String])>,
-    ) -> Self {
-        let mut edges: Vec<Edge<'a>> = requirements
-            .into_iter()
-            .map(|id| Edge {
-                from: doc_of(id),
-                to: id,
-                link: None,
-            })
-            .collect();
-        for (id, parents) in conditions {
-            edges.extend(parents.iter().map(|p| Edge {
-                from: p.as_str(),
-                to: id,
-                link: None,
-            }));
-        }
-        Self { edges }
-    }
-
-    /// Adds the edge from link condition `link` to the node `target`.
-    pub fn add_link(&mut self, link: &'a str, target: &'a str) {
-        self.edges.push(Edge {
-            from: link,
-            to: target,
-            link: Some(link),
-        });
-    }
-
-    /// The link conditions that own an edge on a cycle.
-    ///
-    /// One Tarjan strongly connected components pass: an edge `(u, v)` lies
-    /// on a cycle when `u` and `v` belong to the same component.
-    #[must_use]
-    pub fn cyclic_links(&self) -> BTreeSet<&'a str> {
-        let mut ids = VertexIds::new();
-        let mut adj = Adjacency::new();
-        let mut indexed: Vec<IndexedEdge> =
-            Vec::with_capacity(self.edges.len());
-        for edge in &self.edges {
-            let u = intern_vertex(edge.from, &mut ids, &mut adj);
-            let v = intern_vertex(edge.to, &mut ids, &mut adj);
-            if let Some(neighbors) = adj.get_mut(u) {
-                neighbors.push(v);
-            }
-            indexed.push((u, v));
-        }
-        let n = adj.len();
-        let mut tarjan = Tarjan::new(adj);
-        for v in 0..n {
-            if tarjan.index.get(v).copied().unwrap_or(0) == 0 {
-                tarjan.visit(v);
-            }
-        }
-        self.edges
-            .iter()
-            .zip(indexed)
-            .filter(|(_, (u, v))| tarjan.comp.get(*u) == tarjan.comp.get(*v))
-            .filter_map(|(edge, _)| edge.link)
-            .collect()
-    }
-}
-
-impl Tarjan {
-    /// Initializes Tarjan's state over `adj`.
-    fn new(adj: Adjacency) -> Self {
-        let n = adj.len();
-        Self {
-            adj,
-            index: vec![0; n],
-            lowlink: vec![0; n],
-            on_stack: vec![false; n],
-            stack: Vec::with_capacity(n),
-            comp: vec![0; n],
-            comp_count: 0,
-            clock: 1,
-        }
-    }
-
-    /// Visits `v` and assigns component IDs in reverse topological order.
-    fn visit(&mut self, v: usize) {
-        if let Some(slot) = self.index.get_mut(v) {
-            *slot = self.clock;
-        }
-        if let Some(slot) = self.lowlink.get_mut(v) {
-            *slot = self.clock;
-        }
-        self.clock = self.clock.saturating_add(1);
-        self.stack.push(v);
-        if let Some(slot) = self.on_stack.get_mut(v) {
-            *slot = true;
-        }
-        let neighbors = self.adj.get(v).cloned().unwrap_or_default();
-        for w in neighbors {
-            let w_idx = self.index.get(w).copied().unwrap_or(0);
-            if w_idx == 0 {
-                self.visit(w);
-                let w_low = self.lowlink.get(w).copied().unwrap_or(0);
-                if let Some(v_low) = self.lowlink.get_mut(v) {
-                    *v_low = (*v_low).min(w_low);
-                }
-            } else if self.on_stack.get(w).copied().unwrap_or(false)
-                && let Some(v_low) = self.lowlink.get_mut(v)
-            {
-                *v_low = (*v_low).min(w_idx);
-            }
-        }
-        if self.lowlink.get(v) == self.index.get(v) {
-            let cid = self.comp_count;
-            self.comp_count = self.comp_count.saturating_add(1);
-            while let Some(w) = self.stack.pop() {
-                if let Some(slot) = self.on_stack.get_mut(w) {
-                    *slot = false;
-                }
-                if let Some(slot) = self.comp.get_mut(w) {
-                    *slot = cid;
-                }
-                if w == v {
-                    break;
-                }
-            }
-        }
     }
 }
 
@@ -367,22 +190,6 @@ pub fn empty_document_message(id: &str, target: &str) -> String {
 #[must_use]
 pub fn cycle_message(id: &str) -> String {
     format!("condition {id} lies on a link cycle")
-}
-
-/// Interns `node` into `ids` and `adj`, returning its vertex index.
-fn intern_vertex<'a>(
-    node: &'a str,
-    ids: &mut VertexIds<'a>,
-    adj: &mut Adjacency,
-) -> usize {
-    if let Some(&id) = ids.get(node) {
-        id
-    } else {
-        let id = adj.len();
-        ids.insert(node, id);
-        adj.push(Vec::new());
-        id
-    }
 }
 
 /// Sorts rows by `file`, then `line`, keeping the order of rows that tie.
@@ -639,7 +446,7 @@ mod tests {
     #[test]
     fn rows_round_trip_through_json_lines() {
         let dir = std::env::temp_dir().join(format!(
-            "control_rs_ci_trace_unit_rows_{}",
+            "control_rs_trace_trace_unit_rows_{}",
             std::process::id()
         ));
         let path = dir.join("rows.jsonl");
@@ -651,7 +458,7 @@ mod tests {
     #[test]
     fn rows_of_another_schema_are_rejected() {
         let dir = std::env::temp_dir().join(format!(
-            "control_rs_ci_trace_unit_schema_{}",
+            "control_rs_trace_trace_unit_schema_{}",
             std::process::id()
         ));
         let path = dir.join("rows.jsonl");
