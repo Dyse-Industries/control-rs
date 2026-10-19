@@ -19,6 +19,7 @@ directly via the root workspace.
 |:-------------------------------------------------------|:------------------|:---------------------------------------------------------------------|:--------------------------------------------|
 | [`dc_motor.rs`](dc_motor.rs)                           | Example binary    | DC motor state-space modeling, Tustin discretization & simulation    | `cargo run --example dc_motor`              |
 | [`buck_converter.rs`](buck_converter.rs)               | Example binary    | Buck converter small-signal TF, frequency analysis & step response   | `cargo run --example buck_converter`        |
+| [`classical_loop.rs`](classical_loop.rs)               | Example binary    | PID loop margins, discrete PID with anti-windup & section factoring  | `cargo run --example classical_loop`        |
 | [`fixed_point_math.rs`](fixed_point_math.rs)           | Example binary    | Q16.16 fixed-point scalar arithmetic, saturation & IIR filter        | `cargo run --example fixed_point_math`      |
 | [`dsp_spectral_analysis.rs`](dsp_spectral_analysis.rs) | Example binary    | Radix-2 FFT spectral analysis, tone detection & IFFT reconstruction  | `cargo run --example dsp_spectral_analysis` |
 | [`subprograms/`](subprograms/)                         | Standalone crates | Architecture backends that implement `control_rs::math::subprograms` | Inside each crate                           |
@@ -37,6 +38,7 @@ Run directly with Cargo:
 ```bash
 cargo run --example dc_motor
 cargo run --example buck_converter
+cargo run --example classical_loop
 cargo run --example fixed_point_math
 cargo run --example dsp_spectral_analysis
 ```
@@ -45,6 +47,7 @@ cargo run --example dsp_spectral_analysis
 |:--------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `cargo run --example dc_motor`              | Permanent magnet DC motor continuous state-space modeling, controllability matrix $M_c$, Tustin discretization ($T_s = 10\text{ ms}$), Bode frequency evaluation, and $12\text{ V}$ step transient simulation |
 | `cargo run --example buck_converter`        | Synchronous buck converter small-signal modeling, control-to-output transfer function $G_{vd}(s)$, $LC$ resonance evaluation ($f_0 = 1073\text{ Hz}$), and $100\text{ kHz}$ digital controller step response  |
+| `cargo run --example classical_loop`        | PID compensator as a transfer function, one-call gain and phase margin of the open loop, discrete `Pid` with output limits and clamping anti-windup, and a Tustin-discretized low-pass factored into second-order sections |
 | `cargo run --example fixed_point_math`      | Q16.16 fixed-point scalar arithmetic, representation bounds, saturation protection against overflow, and integer-only discrete IIR low-pass filtering                                                         |
 | `cargo run --example dsp_spectral_analysis` | Forward Radix-2 FFT spectral analysis, complex magnitude spectrum extraction, harmonic tone peak detection, and lossless inverse FFT time-domain signal reconstruction                                        |
 

@@ -5,23 +5,25 @@
 //! `Polynomial::roots`. Each output row is an unordered root set; root order
 //! across consecutive gains is not matched.
 
-use super::{ClassicalError, Succ, TypeNum};
+use super::{ClassicalError, TypeNum};
 use crate::math::complex_num::Complex;
 use crate::math::num_traits::Float;
-use crate::math::num_types::{Const, Dim, DimAdd, DimMax};
+use crate::math::num_types::{Const, Dim, DimMax};
 use crate::polynomial::ArrayPolynomial;
 use crate::transfer_function::ArrayTransferFunction;
 
-/// Closed-loop roots per gain, `ORDER` roots in each of `K` rows, or the
-/// reason root finding failed.
-pub type LocusResult<T, const ORDER: usize, const K: usize> =
-    Result<[[Complex<T>; ORDER]; K], ClassicalError>;
+/// Closed-loop roots per gain: one row of `D` roots for each of `K` gains, or
+/// the reason root finding failed.
+pub type LocusResult<T, const D: usize, const K: usize> =
+    Result<[[Complex<T>; D]; K], ClassicalError>;
 
 /// Computes the closed-loop roots of `D(s) + k_i N(s)` for each gain
 /// (FR-1).
 ///
-/// `ORDER` is the denominator degree `D - 1` and `N <= D` (proper
-/// open loop). The cost is `K` root solves.
+/// Each row holds the `D - 1` roots in its first entries and a zero in the
+/// last, the layout of
+/// [`TransferFunction::poles`](crate::transfer_function::TransferFunction::poles).
+/// The open loop must be proper (`N <= D`). The cost is `K` root solves.
 ///
 /// # Errors
 /// [`ClassicalError::Root`] when a characteristic polynomial has a zero
@@ -33,37 +35,43 @@ pub type LocusResult<T, const ORDER: usize, const K: usize> =
 /// use control_rs::transfer_function::ArrayTransferFunction;
 ///
 /// let l = ArrayTransferFunction::<f64, 1, 3>::continuous([1.0], [0.0, 2.0, 1.0]);
-/// let rows = root_locus::<_, 1, 3, 2, 1>(&l, &[1.0])?;
+/// let rows = root_locus(&l, &[1.0])?;
 /// // s^2 + 2s + 1: double root at -1.
-/// assert!(rows[0].iter().all(|r| (r.re + 1.0).abs() < 1e-6));
+/// assert!(rows[0][..2].iter().all(|r| (r.re + 1.0).abs() < 1e-6));
 /// # Ok::<(), control_rs::classical_control::ClassicalError>(())
+/// ```
+///
+/// An improper open loop (`N > D`) is rejected at compile time:
+///
+/// ```compile_fail,E0271
+/// use control_rs::classical_control::root_locus;
+/// use control_rs::transfer_function::ArrayTransferFunction;
+///
+/// let l = ArrayTransferFunction::<f64, 3, 2>::continuous([1.0, 0.0, 1.0], [1.0, 1.0]);
+/// let _ = root_locus(&l, &[2.0]);
 /// ```
 pub fn root_locus<
     T: Float + Copy,
     const N: usize,
     const D: usize,
-    const ORDER: usize,
     const K: usize,
 >(
     sys: &ArrayTransferFunction<T, N, D>,
     gains: &[T; K],
-) -> LocusResult<T, ORDER, K>
+) -> LocusResult<T, D, K>
 where
     Const<N>: Dim,
-    Const<ORDER>: Dim,
-    TypeNum<ORDER>: DimAdd<Const<1>>,
-    Const<D>: Dim<TypeNum = Succ<ORDER>>,
+    Const<D>: Dim,
     TypeNum<N>: DimMax<TypeNum<D>, Output = TypeNum<D>>,
 {
-    let mut out = [[Complex::new(T::ZERO, T::ZERO); ORDER]; K];
+    let mut out = [[Complex::new(T::ZERO, T::ZERO); D]; K];
     for (row, &k) in out.iter_mut().zip(gains) {
         let mut c = [T::ZERO; D];
         c.iter_mut().zip(sys.den_slice()).for_each(|(o, &d)| *o = d);
         c.iter_mut()
             .zip(sys.num_slice())
             .for_each(|(o, &n)| *o = o.saturating_add(&k.saturating_mul(&n)));
-        let roots = ArrayPolynomial::<T, D>::from_coefficients(c).roots()?;
-        row.iter_mut().zip(roots).for_each(|(o, r)| *o = r);
+        *row = ArrayPolynomial::<T, D>::from_coefficients(c).roots()?;
     }
     Ok(out)
 }
@@ -83,11 +91,11 @@ mod tests {
     fn locus_roots_satisfy_characteristic() {
         let gains: [f64; 20] =
             core::array::from_fn(|k| 2.5 * f64::from(u8::try_from(k).unwrap()));
-        let rows = root_locus::<_, 2, 4, 3, 20>(&plant(), &gains).unwrap();
+        let rows = root_locus(&plant(), &gains).unwrap();
         for (row, &k) in rows.iter().zip(&gains) {
             let c = [15.0 + 2.0 * k, 23.0 + k, 9.0, 1.0];
             let poly = ArrayPolynomial::<f64, 4>::from_coefficients(c);
-            for &p in row {
+            for &p in &row[..3] {
                 let residual = poly.evaluate_complex(p).magnitude();
                 let scale: f64 = c
                     .iter()
@@ -104,15 +112,15 @@ mod tests {
 
     #[test]
     fn locus_zero_gain() {
-        let rows = root_locus::<_, 2, 4, 3, 1>(&plant(), &[0.0]).unwrap();
+        let rows = root_locus(&plant(), &[0.0]).unwrap();
         let poles = plant().poles().unwrap();
-        for p in &rows[0] {
-            let nearest = poles
+        // Every open-loop pole is a locus point at k = 0.
+        for q in &poles[..3] {
+            let nearest = rows[0][..3]
                 .iter()
-                .take(3)
-                .map(|q| (*p - *q).magnitude())
+                .map(|p| (*p - *q).magnitude())
                 .fold(f64::INFINITY, f64::min);
-            assert!(nearest <= 10.0 * 3.0 * U * 15.0);
+            assert!(nearest <= 10.0 * 3.0 * U);
         }
     }
 }

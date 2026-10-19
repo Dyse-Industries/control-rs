@@ -38,8 +38,11 @@ mod proofs {
         s.u2 = u2;
         s.y1 = y1;
         s.y2 = y2;
-        let y = s.update(u);
-        assert!(y.to_bits() >= i16::MIN);
+        // The property is totality (VC-28.3): Kani checks every arithmetic
+        // operation for overflow and every index for bounds, so reaching the
+        // end of the harness for all inputs proves `update` cannot panic.
+        // The output value is checked exactly by `df1_fixed_single_rounding`.
+        let _ = s.update(u);
     }
 }
 
@@ -358,7 +361,7 @@ pub mod tests {
                 .iter()
                 .all(|s| [s.u1, s.u2, s.y1, s.y2].iter().all(zero))
         );
-        assert!(df2t.sections().iter().all(|s| zero(&s.d1) && zero(&s.d2)));
+        assert!(df2t.sections().iter().all(|s| s.0.state.iter().all(zero)));
     }
 
     /// Frequency response of sections at `q = e^-jw`.
@@ -658,10 +661,7 @@ pub mod tests {
             [a.u1, a.u2, a.y1, a.y2].map(f64::to_bits),
             [sa.u1, sa.u2, sa.y1, sa.y2].map(f64::to_bits)
         );
-        assert_eq!(
-            [b.d1, b.d2].map(f64::to_bits),
-            [sb.d1, sb.d2].map(f64::to_bits)
-        );
+        assert_eq!(b.0.state.map(f64::to_bits), sb.0.state.map(f64::to_bits));
         let mut ra = Df1 {
             u1: sa.u1,
             u2: sa.u2,
@@ -670,8 +670,7 @@ pub mod tests {
             ..Df1::from(new)
         };
         let mut rb = Df2t::from(new);
-        rb.d1 = sb.d1;
-        rb.d2 = sb.d2;
+        rb.0.state = sb.0.state;
         assert_eq!(a.update(0.7).to_bits(), ra.update(0.7).to_bits());
         assert_eq!(b.update(0.7).to_bits(), rb.update(0.7).to_bits());
         let mut f = DirectForm2T::<f64, 2>::new(1.0, [0.5, 0.25], [-0.5, 0.1]);
@@ -690,6 +689,56 @@ pub mod tests {
                 [y.u1, y.y1].map(f64::to_bits)
             );
         }
+    }
+
+    #[cfg_attr(test, test)]
+    /// Realizations compare equal exactly when every coefficient and state
+    /// matches.
+    fn realizations_compare_by_value() {
+        let base = DirectForm2T::<f64, 2>::new(1.0, [0.5, 0.25], [-0.5, 0.1]);
+        assert_eq!(base, base);
+        let mut moved = base;
+        moved.update(1.0);
+        assert_ne!(base, moved);
+        let others = [
+            DirectForm2T::<f64, 2>::new(2.0, [0.5, 0.25], [-0.5, 0.1]),
+            DirectForm2T::<f64, 2>::new(1.0, [0.6, 0.25], [-0.5, 0.1]),
+            DirectForm2T::<f64, 2>::new(1.0, [0.5, 0.25], [-0.4, 0.1]),
+        ];
+        for other in others {
+            assert_ne!(base, other);
+        }
+        let c = cascade_case(0.3)[0];
+        assert_eq!(Df2t::from(c), Df2t::from(c));
+        let mut running = Df2t::from(c);
+        running.update(1.0);
+        assert_ne!(Df2t::from(c), running);
+    }
+
+    #[cfg_attr(test, test)]
+    /// `section_count` is `max(1, ceil((D - 1) / 2))` (FR-10).
+    fn section_count_values() {
+        assert_eq!(
+            [0, 1, 2, 3, 4, 5, 6, 9].map(section_count),
+            [1, 1, 1, 1, 2, 2, 3, 4]
+        );
+    }
+
+    #[cfg_attr(test, test)]
+    /// A running section reports the coefficients it was built or updated
+    /// with, so a gain schedule can check it with `is_stable` (FR-18,
+    /// FR-20).
+    fn coefficients_round_trip() {
+        let [old, new, _] = cascade_case(0.3);
+        let mut a = Df1::from(old);
+        let mut b = Df2t::from(old);
+        assert_eq!(a.coefficients(), old);
+        assert_eq!(b.coefficients(), old);
+        a.set_coefficients(&new);
+        b.set_coefficients(&new);
+        assert_eq!(a.coefficients(), new);
+        assert_eq!(b.coefficients(), new);
+        assert!(is_stable(&a.coefficients()));
     }
 
     #[cfg_attr(test, test)]
@@ -997,6 +1046,13 @@ pub type SectionsResult<T, const L: usize> =
 /// Accumulator states of a realization.
 type AccState<T, const N: usize> = [<T as MulAcc>::Acc; N];
 
+/// Coefficients of one section of type `S`.
+type CoefficientsOf<S> = SectionCoefficients<<S as Section>::Sample>;
+
+/// Coefficients of `L` sections of type `S`.
+type CascadeCoefficients<S, const L: usize> =
+    SectionArray<<S as Section>::Sample, L>;
+
 /// Numerator and denominator arrays.
 type ArrayPair<T, const D: usize> = ([T; D], [T; D]);
 
@@ -1078,18 +1134,12 @@ pub struct Df1<T> {
 
 /// Transposed Direct Form II second-order section.
 ///
-/// Holds `(b_0, b_1, b_2, -a_1, -a_2)` and two states in `T::Acc`, the
-/// wide dynamic range TDF-II states need; half the state of [`Df1`].
+/// The order-2 case of [`DirectForm2T`]: it holds
+/// `(b_0, b_1, b_2, -a_1, -a_2)` and two states in `T::Acc`, the wide
+/// dynamic range TDF-II states need; half the state of [`Df1`]. It adds the
+/// [`Section`] interface that a [`BiquadCascade`] runs.
 #[derive(Clone, Copy)]
-pub struct Df2t<T: MulAcc> {
-    b0: T,
-    b1: T,
-    b2: T,
-    na1: T,
-    na2: T,
-    d1: T::Acc,
-    d2: T::Acc,
-}
+pub struct Df2t<T: MulAcc>(DirectForm2T<T, 2>);
 
 /// Transposed Direct Form II realization of order `ORDER` (FR-8).
 #[derive(Clone, Copy)]
@@ -1110,18 +1160,69 @@ pub struct BiquadCascade<S, const L: usize> {
 /// coefficient replacement that keeps the state (FR-18).
 ///
 /// Sealed: implemented by [`Df1`] and [`Df2t`].
-pub trait Section<T>: sealed::Sealed {
+pub trait Section: sealed::Sealed {
+    /// The sample and coefficient type.
+    type Sample: Copy;
     /// Processes one input sample and returns the output.
-    fn update(&mut self, u: T) -> T;
+    fn update(&mut self, u: Self::Sample) -> Self::Sample;
     /// Sets every state to zero.
     fn reset(&mut self);
     /// Replaces the coefficients without clearing the state.
-    fn set_coefficients(&mut self, c: &SectionCoefficients<T>);
+    fn set_coefficients(&mut self, c: &CoefficientsOf<Self>);
+    /// The coefficients in the `1 + a_1 z^-1 + a_2 z^-2` convention, so a
+    /// running section can be checked with [`is_stable`] or copied.
+    fn coefficients(&self) -> CoefficientsOf<Self>;
 }
 
 impl<T> sealed::Sealed for Df1<T> {}
 
 impl<T: MulAcc> sealed::Sealed for Df2t<T> {}
+
+impl<T: MulAcc + core::fmt::Debug, const ORDER: usize> core::fmt::Debug
+    for DirectForm2T<T, ORDER>
+where
+    T::Acc: core::fmt::Debug,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("DirectForm2T")
+            .field("b0", &self.b0)
+            .field("b", &self.b)
+            .field("na", &self.na)
+            .field("state", &self.state)
+            .finish()
+    }
+}
+
+impl<T: MulAcc + PartialEq, const ORDER: usize> PartialEq
+    for DirectForm2T<T, ORDER>
+where
+    T::Acc: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.b0 == other.b0
+            && self.b == other.b
+            && self.na == other.na
+            && self.state == other.state
+    }
+}
+
+impl<T: MulAcc + core::fmt::Debug> core::fmt::Debug for Df2t<T>
+where
+    T::Acc: core::fmt::Debug,
+{
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("Df2t").field(&self.0).finish()
+    }
+}
+
+impl<T: MulAcc + PartialEq> PartialEq for Df2t<T>
+where
+    T::Acc: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        self.0 == other.0
+    }
+}
 
 impl<T: Scalar + Signed + MulAcc> From<SectionCoefficients<T>> for Df1<T> {
     fn from(c: SectionCoefficients<T>) -> Self {
@@ -1141,20 +1242,13 @@ impl<T: Scalar + Signed + MulAcc> From<SectionCoefficients<T>> for Df1<T> {
 
 impl<T: Scalar + Signed + MulAcc> From<SectionCoefficients<T>> for Df2t<T> {
     fn from(c: SectionCoefficients<T>) -> Self {
-        let zero = T::ZERO.to_acc();
-        Self {
-            b0: c.b0,
-            b1: c.b1,
-            b2: c.b2,
-            na1: c.a1.saturating_neg(),
-            na2: c.a2.saturating_neg(),
-            d1: zero,
-            d2: zero,
-        }
+        Self(DirectForm2T::new(c.b0, [c.b1, c.b2], [c.a1, c.a2]))
     }
 }
 
-impl<T: Scalar + Signed + MulAcc> Section<T> for Df1<T> {
+impl<T: Scalar + Signed + MulAcc> Section for Df1<T> {
+    type Sample = T;
+
     #[inline]
     fn update(&mut self, u: T) -> T {
         let acc = T::mac(T::ZERO.to_acc(), self.b0, u);
@@ -1183,28 +1277,44 @@ impl<T: Scalar + Signed + MulAcc> Section<T> for Df1<T> {
         self.na1 = c.a1.saturating_neg();
         self.na2 = c.a2.saturating_neg();
     }
+
+    fn coefficients(&self) -> SectionCoefficients<T> {
+        SectionCoefficients {
+            b0: self.b0,
+            b1: self.b1,
+            b2: self.b2,
+            a1: self.na1.saturating_neg(),
+            a2: self.na2.saturating_neg(),
+        }
+    }
 }
 
-impl<T: Scalar + Signed + MulAcc> Section<T> for Df2t<T> {
+impl<T: Scalar + Signed + MulAcc> Section for Df2t<T> {
+    type Sample = T;
+
     #[inline]
     fn update(&mut self, u: T) -> T {
-        let y = T::from_acc(T::mac(self.d1, self.b0, u));
-        self.d1 = T::mac(T::mac(self.d2, self.b1, u), self.na1, y);
-        self.d2 = T::mac(T::mac(T::ZERO.to_acc(), self.b2, u), self.na2, y);
-        y
+        self.0.update(u)
     }
 
     fn reset(&mut self) {
-        self.d1 = T::ZERO.to_acc();
-        self.d2 = T::ZERO.to_acc();
+        self.0.reset();
     }
 
     fn set_coefficients(&mut self, c: &SectionCoefficients<T>) {
-        self.b0 = c.b0;
-        self.b1 = c.b1;
-        self.b2 = c.b2;
-        self.na1 = c.a1.saturating_neg();
-        self.na2 = c.a2.saturating_neg();
+        self.0.set_coefficients(c.b0, [c.b1, c.b2], [c.a1, c.a2]);
+    }
+
+    fn coefficients(&self) -> SectionCoefficients<T> {
+        let [a1, a2] = self.0.na.map(|v| v.saturating_neg());
+        let [b1, b2] = self.0.b;
+        SectionCoefficients {
+            b0: self.0.b0,
+            b1,
+            b2,
+            a1,
+            a2,
+        }
     }
 }
 
@@ -1259,7 +1369,10 @@ impl<T: Float + Copy + MulAcc, const ORDER: usize> DirectForm2T<T, ORDER> {
     /// Builds a realization from a discrete `TransferFunction` divided
     /// through by its leading denominator coefficient (FR-8).
     ///
-    /// `ORDER` is the denominator degree `D - 1` and `N <= D`.
+    /// `ORDER` is the denominator degree `D - 1` and `N <= D`. This
+    /// constructor divides coefficients and tests the leading one, so it
+    /// needs `T: Float`; [`new`](Self::new) accepts any
+    /// `T: Scalar + Signed + MulAcc`, including `Fixed`.
     ///
     /// # Errors
     /// - [`ClassicalError::NotDiscrete`] when `tf` is continuous.
@@ -1323,40 +1436,25 @@ impl<S, const L: usize> BiquadCascade<S, L> {
     }
 }
 
-impl<S, const L: usize> BiquadCascade<S, L> {
+impl<S: Section, const L: usize> BiquadCascade<S, L> {
     /// Processes one input sample through every section in order.
     #[inline]
-    pub fn update<T>(&mut self, u: T) -> T
-    where
-        S: Section<T>,
-    {
+    pub fn update(&mut self, u: S::Sample) -> S::Sample {
         self.sections.iter_mut().fold(u, |x, s| s.update(x))
+    }
+
+    /// Sets every section state to zero.
+    pub fn reset(&mut self) {
+        self.sections.iter_mut().for_each(S::reset);
     }
 
     /// Replaces every section's coefficients without clearing state
     /// (FR-18).
-    pub fn set_coefficients<T>(&mut self, c: &SectionArray<T, L>)
-    where
-        S: Section<T>,
-    {
+    pub fn set_coefficients(&mut self, c: &CascadeCoefficients<S, L>) {
         self.sections
             .iter_mut()
             .zip(c)
             .for_each(|(s, ci)| s.set_coefficients(ci));
-    }
-}
-
-impl<T: Scalar + Signed + MulAcc, const L: usize> BiquadCascade<Df1<T>, L> {
-    /// Sets every section state to zero.
-    pub fn reset(&mut self) {
-        self.sections.iter_mut().for_each(Section::<T>::reset);
-    }
-}
-
-impl<T: Scalar + Signed + MulAcc, const L: usize> BiquadCascade<Df2t<T>, L> {
-    /// Sets every section state to zero.
-    pub fn reset(&mut self) {
-        self.sections.iter_mut().for_each(Section::<T>::reset);
     }
 }
 
@@ -1438,6 +1536,17 @@ where
     Ok(out)
 }
 
+/// The section count `L` that [`to_sections`] needs for a denominator of `d`
+/// coefficients: `max(1, ceil((d - 1) / 2))`.
+///
+/// Order 0 has no poles to pair, and one gain-only section keeps the overall
+/// gain that an empty cascade would drop.
+#[must_use]
+pub const fn section_count(d: usize) -> usize {
+    let order = d.saturating_sub(1);
+    if order == 0 { 1 } else { order.div_ceil(2) }
+}
+
 /// Factors a discrete `TransferFunction` into `L` second-order sections
 /// (FR-10).
 ///
@@ -1449,8 +1558,24 @@ where
 /// first-order section (`b_2 = a_2 = 0`) with its nearest real zero. The
 /// overall gain goes into the first section. Zeros at infinity (numerator
 /// degree below denominator degree) become pure delays in their section.
-/// `L` must be `max(1, ceil((D - 1) / 2))` so a constant (`D = 1`) still
-/// has one section to hold the overall gain.
+/// `L` must equal `max(1, ceil((D - 1) / 2))`, which [`section_count`]
+/// computes, so a constant (`D = 1`) still has one section to hold the
+/// overall gain. A caller writes it as a const argument:
+///
+/// ```
+/// use control_rs::classical_control::{section_count, to_sections};
+/// use control_rs::transfer_function::ArrayTransferFunction;
+///
+/// // H(z) = 1 / (1 - 0.5 z^-1 + 0.06 z^-2), order 2: one section.
+/// let tf = ArrayTransferFunction::<f64, 1, 3>::discrete(
+///     [1.0],
+///     [0.06, -0.5, 1.0],
+///     0.1,
+/// );
+/// let sections = to_sections::<f64, 1, 3, { section_count(3) }>(&tf)?;
+/// assert_eq!(sections.len(), 1);
+/// # Ok::<(), control_rs::classical_control::ClassicalError>(())
+/// ```
 ///
 /// # Errors
 /// - [`ClassicalError::NotDiscrete`]: `tf` is continuous.
@@ -1474,10 +1599,7 @@ where
         return Err(ClassicalError::NotDiscrete);
     }
     let order = D.saturating_sub(1);
-    // Order 0 has no poles to pair. `L = 1` holds a gain-only section;
-    // `L = 0` would return an empty product and drop the overall gain.
-    let needed = if order == 0 { 1 } else { order.div_ceil(2) };
-    if needed != L {
+    if section_count(D) != L {
         return Err(ClassicalError::SectionCount);
     }
     let mut num = [T::ZERO; D];

@@ -96,7 +96,10 @@ Primary usage scenarios:
   and $\lvert |L| - 1 \rvert$ is within the refinement bound for a gain
   crossover, and $\operatorname{Re} L < 0$ with $\operatorname{Im} L$ within the
   refinement bound for a phase crossover. A refinement that lands on a pole
-  or fails the condition is dropped, never reported.
+  or fails the condition is dropped, never reported. A summary form returns
+  the one phase crossover whose gain margin is closest to 0 dB and the one
+  gain crossover with the smallest $\lvert \phi_m \rvert$, so a caller reads
+  a single gain margin and phase margin without sizing a crossing buffer.
 - **FR-6 — PID compensator**: Constructs a PID `TransferFunction` in
   standard, series or parallel form, with an optional first-order
   derivative filter.
@@ -269,7 +272,7 @@ src/classical_control/
 ├── routh.rs        # routh_count
 ├── response.rs     # frequency_response, ResponsePoint
 ├── nyquist.rs      # nyquist_encirclements
-├── margins.rs      # stability_margins, Margins, delay margin
+├── margins.rs      # margin, stability_margins, Margin, Margins, delay margin
 ├── step.rs         # step_info, StepInfo
 ├── compensator.rs  # pid, lead, lag
 ├── realization.rs  # DirectForm2T, Df1, Df2t, BiquadCascade, to_sections, quantize
@@ -288,12 +291,17 @@ over $M$ frequencies writes `[ResponsePoint<T>; M]`, a direct form holds
 
 #### 4.2 Root Locus
 
-`root_locus` returns a $K \times (D-1)$ array of complex roots, one row per
-caller gain. For each gain it copies the denominator into a stack array of
+`root_locus` returns a $K \times D$ array of complex roots, one row per
+caller gain, in the layout of `TransferFunction::poles`: the $D-1$ roots
+come first and the last entry is zero. Every const parameter is inferred from
+the arguments, so a call needs no explicit generic arguments. For each gain
+it copies the denominator into a stack array of
 length $D$, adds $k_i$ times the numerator coefficient by coefficient, and
 passes the sum to `ArrayPolynomial::roots`; the routine defines no
 polynomial type of its own. The roots of $D (s) + k_i N (s)$ are the locus
-points [1]. Rows are independent unordered sets, so branches are not
+points [1]. The bound `TypeNum<N>: DimMax<TypeNum<D>, Output = TypeNum<D>>`
+requires $N \le D$, so an improper open loop does not compile and every
+coefficient of $D + k_i N$ fits the length-$D$ buffer. Rows are independent unordered sets, so branches are not
 matched across gains (continuation [3] and adaptive gain selection [1] are
 rejected, §5). A failed solve ends the sweep with `ClassicalError::Root`.
 
@@ -420,11 +428,15 @@ accumulates no angle and tracks no branch cut.
 #### 4.6 Stability and Delay Margins
 
 `stability_margins` makes one pass over an ascending sweep and keeps only
-the previous finite sample. A sign change of $\operatorname{Im} L$ with
-$\operatorname{Re} L < 0$ at both ends brackets a phase crossover, which
-avoids the $\pm 180^\circ$ branch cut of a wrapped phase, and a sign change
-of $|L| - 1$ brackets a gain crossover [8]. Each bracket is then refined by
-a compile-time number $B$ of bisection steps that evaluate $L$ itself, so
+the previous finite sample; `margin` runs the same pass and keeps only the
+dominant crossing of each kind, in constant stack. A sign change of
+$\operatorname{Im} L$ with $\operatorname{Re} L \le 0$ at one or both ends
+brackets a phase crossover, which avoids the $\pm 180^\circ$ branch cut of a
+wrapped phase, and a sign change of $|L| - 1$ brackets a gain crossover [8].
+One end in $\operatorname{Re} L > 0$ is allowed because a coarse sweep can
+place a sample on either side of the imaginary axis, and a sample exactly on
+it counts as the negative side; the refined root is checked below. Each bracket is then refined by $B$ bisection steps that
+evaluate $L$ itself, with $B$ the constant `BISECTION_STEPS` (40), so
 the error is the bracket width over $2^B$ whatever the sweep density (NFR-3).
 Bisection assumes one sign change in the bracket. A pole of $L$ inside the
 bracket breaks that: $L$ is non-finite there, the side test reads it as
@@ -434,19 +446,24 @@ abandons the bracket if the nudged point is also non-finite. A refined
 crossover is
 therefore re-evaluated and kept only if $L$ is finite and meets its defining
 condition (FR-5, VC-5.5): a phase crossover must satisfy
-$\operatorname{Re} L < 0$ and a gain crossover $\lvert |L| - 1 \rvert$ within
+$\operatorname{Re} L < 0$ and $\lvert \operatorname{Im} L \rvert \le
+\sqrt{\epsilon}\,|L|$, and a gain crossover $\lvert |L| - 1 \rvert$ within
 the bound, or it is dropped. Crossings fill fixed arrays of
-$C$ slots per kind, in frequency order, and further crossings are
-discarded. The stability margin is the minimum of $|1 + L|$ over the
-samples. A non-finite sample, such as an integrator at $\omega = 0$, is
+$C$ slots per kind, in sweep order, which is frequency order for an
+ascending sweep, and further crossings are
+discarded. A bracket that holds two crossings of one kind is not detected,
+so the sweep must resolve each crossover. The stability margin is the minimum
+of $|1 + L|$ over the finite samples, and is absent when no sample is finite. A non-finite sample, such as an integrator at $\omega = 0$, is
 skipped and clears the stored previous sample, so it cannot create a
 bracket or set the stability margin.
 
 Gain margin is $1/|L|$ at a phase crossover. Phase margin is
 $180^\circ + \angle L$ at a gain crossover. The delay margin is
 $\phi_m/\omega_{gc}$ with $\phi_m$ in radians [9], divided by $T_s$ for a
-discrete system so that it is reported in samples. A margin without a
-crossing is `None`, and the routine cannot fail.
+discrete system so that it is reported in samples, and it is negative exactly
+when the phase margin is. A margin without a crossing is `None`, and the
+routine cannot fail. `PhaseCrossing::gain_margin_db` returns the gain margin in
+dB.
 
 #### 4.7 Step-Response Metrics
 
@@ -517,13 +534,21 @@ y[k] = b_0 u[k] + b_1 u[k-1] + b_2 u[k-2] - a_1 y[k-1] - a_2 y[k-2].
 
 - **`DirectForm2T<T, ORDER>`** holds $b_0$, `[T; ORDER]` numerator and
   denominator tails and `[T; ORDER]` state, built from a discrete
-  `TransferFunction` divided through by $a_0$ (FR-8).
-- **`Df2t<T>`** holds $(b_0, b_1, b_2, a_1, a_2)$ and $(d_1, d_2)$, the
-  layout CMSIS-DSP uses per DF2T stage [17]. **`Df1<T>`** holds the same
+  `TransferFunction` divided through by $a_0$ (FR-8). Division and the
+  $a_0$ test need `T: Float`, so `from_transfer_function` is bound `Float`;
+  `new` takes the coefficients already normalized and accepts any
+  `T: Scalar + Signed + MulAcc`, `Fixed` among them.
+- **`Df2t<T>`** is `DirectForm2T<T, 2>` behind the `Section` interface, so
+  it holds $(b_0, b_1, b_2, a_1, a_2)$ and $(d_1, d_2)$, the layout
+  CMSIS-DSP uses per DF2T stage [17], and shares the recurrence below with
+  `DirectForm2T` rather than repeating it. **`Df1<T>`** holds the same
   coefficients and $(u_{k-1}, u_{k-2}, y_{k-1}, y_{k-2})$, the CMSIS DF1
-  state [18]. Both implement a sealed `Section<T>` trait with
-  `update(u) -> y`, `reset()` and `set_coefficients(c)`, the whole
-  run-time surface (FR-18). CMSIS stores $a_1, a_2$ negated relative to
+  state [18]. Both implement a sealed `Section` trait whose associated type
+  `Sample` is the coefficient and signal type, with `update(u) -> y`,
+  `reset()`, `set_coefficients(c)` and `coefficients()`, the whole run-time
+  surface (FR-18). `coefficients()` returns the section's coefficients in
+  the §4.9 convention, so a running section is checked with `is_stable`
+  without a parallel copy. CMSIS stores $a_1, a_2$ negated relative to
   this convention [17]; coefficients exported for CMSIS are negated at
   export, never in the recurrence.
 - **`BiquadCascade<S, L>`** runs `[S; L]` in series (FR-9), the structure
@@ -564,7 +589,10 @@ closest to the unit circle, groups conjugate pairs into real second-order
 sections and, for odd order, keeps one first-order section with
 $b_2 = a_2 = 0$, following SciPy `zpk2sos` [22]. The pairing minimizes
 the peak gain of each section [22]. The overall gain is placed in the
-first section.
+first section. The section count is the const function
+`section_count(D)` $= \max(1, \lceil (D-1)/2 \rceil)$, which a caller passes
+as the const argument `L`, so the count is never computed by hand; a
+mismatched `L` returns `SectionCount`.
 
 **Fixed point.** `quantize` (FR-19) converts `f64` section coefficients,
 the input of `Df1` and `Df2t`, to `Fixed<Repr, SHIFT>` with round-to-nearest and
@@ -616,11 +644,15 @@ operations are the constructor, `step(r, y) -> u`, `reset`, `set_gains`
 and `to_transfer_function`.
 
 `new` returns `InvalidParameter` unless $u_{min} \le u_{max}$, $h > 0$,
-$T_f \ge 0$ and, for `BackCalculation`, $T_t > 0$. It computes
-`ad`, `bd`, `kih` and `hbt` ($h/T_t$ or 0) once, so `step` is a fixed
+$T_f \ge 0$, the gains and time parameters are finite and, for
+`BackCalculation`, $T_t > 0$; a NaN parameter fails its comparison, and an
+infinite limit means no limit. It
+computes `ad`, `bd`, `kih` and `hbt` ($h/T_t$ or 0) once, so `step` is a fixed
 sequence of saturating operations with no branch except the limit
 selection and the anti-windup test (NFR-4). The controller is `Copy` and
-holds no heap state.
+holds no heap state. A non-finite setpoint or measurement enters the state
+and the output and stays until `reset`: screening sensor faults is the
+caller's, because a hold or fallback policy depends on the actuator.
 The derivative acts on the measurement, not the error, with the filter
 $T_f \dot D + D = -K_d \dot y$ discretized by backward difference as in
 Wittenmark et al. [24]. Backward difference keeps the filter coefficient
@@ -693,7 +725,7 @@ The enum has a hand-written `Display`, `impl core::error::Error` and
 | Polynomial (exact) margin computation                 | Needs polynomial root finding per call, and python-control falls back from it when it is inaccurate in discrete time. Bisection on $L$ reaches a stated bound at fixed cost (NFR-3). | [8]                  |
 | Linear interpolation of crossings only                | Accuracy is tied to sweep density; bisection on $L$ costs $B$ extra evaluations per crossing and removes that dependence.                                                            | [8]                  |
 | Distinct compensator type                             | Compensators are ordinary `TransferFunction` values in the reference toolbox; a separate type duplicates composition (C-1).                                                          | [11]                 |
-| One section structure for all types                   | DF2T halves the state but needs wide state range in fixed point, and DF1 is the robust fixed-point and retuning structure; offering both behind `Section<T>` costs one extra type.   | [17], [19], [20]     |
+| One section structure for all types                   | DF2T halves the state but needs wide state range in fixed point, and DF1 is the robust fixed-point and retuning structure; offering both behind `Section` costs one extra type.   | [17], [19], [20]     |
 | Saturate out-of-range coefficients at quantization    | Silently changes the pole and zero locations; an error makes the caller pick a wider integer part.                                                                                   | [18]                 |
 | Per-term multiply-add (`Scalar::mul_add`)             | Rounds each term, up to five times per `Fixed` section output, where a wide accumulator narrows once as the CMSIS DF1 kernels do.                                                    | [18]                 |
 | Fused `libm` multiply-add as the float default        | Software fusion is slower than an unfused multiply and add on most targets; fusion is faster only with an `fma` instruction, so it belongs to an accelerated type (C-8).             | [28]                 |
@@ -736,6 +768,11 @@ The enum has a hand-written `Display`, `impl core::error::Error` and
 | VC-5.2    | FR-5        | `libtest`    | `control_rs::classical_control::margins::tests::absent_crossover`                  | A first-order loop returns `None` for gain margin                                                                                                                                          |
 | VC-5.3    | FR-5        | `libtest`    | `control_rs::classical_control::margins::tests::margins_cross_check`               | Margins on the cross-check cases meet their tolerance entries in §6.2                                                                                                                      |
 | VC-5.4 | FR-5 | `libtest` | `control_rs::classical_control::margins::tests::stability_margin_is_minimum_over_samples` | The stability margin equals the brute-force minimum of $\lvert 1 + L \rvert$ over the samples exactly and is below the last sample's value; one finite sample seeds it |
+| VC-5.7 | FR-5 | `libtest` | `control_rs::classical_control::margins::tests::margin_picks_dominant_crossings` | `margin` returns the first crossing of `stability_margins` for the $4/(s+1)^3$ loop and a gain margin of $20 \log_{10} 2$ dB |
+| VC-5.8 | FR-5 | `libtest` | `control_rs::classical_control::margins::tests::coarse_sweep_straddling_the_imaginary_axis` | A two-sample sweep with $\operatorname{Re} L > 0$ at one end and $\operatorname{Re} L < 0$ at the other still reports the phase crossover at $\sqrt{3}$ and a gain margin of 2 |
+| VC-5.9 | FR-5 | `libtest` | `control_rs::classical_control::margins::tests::sample_on_imaginary_axis_still_brackets` | A sample with $\operatorname{Re} L = 0$ exactly does not hide the crossover at $\omega = 1.2$, in either sweep direction |
+| VC-5.10 | FR-5 | `libtest` | `control_rs::classical_control::margins::tests::dominant_phase_crossing_is_closest_to_unity_gain`, `control_rs::classical_control::margins::tests::dominant_gain_crossing_has_smallest_phase_margin` | The dominant phase crossing is the gain margin closest to 0 dB, the dominant gain crossing has the smallest $\lvert \phi_m \rvert$, and a tie keeps the earlier crossing |
+| VC-5.11 | FR-5 | `libtest` | `control_rs::classical_control::margins::tests::sample_on_imaginary_axis_with_positive_far_end` | A sweep whose one end has $\operatorname{Re} L = 0$ and whose other end has $\operatorname{Re} L > 0$ still reports the crossover at $\omega = 2$ with gain margin $1/15$, in either sweep direction |
 | VC-5.6 | FR-5 | `libtest` | `control_rs::classical_control::margins::tests::reported_crossovers_satisfy_their_definition_near_poles` | For a pole swept from 0.7 to 1.5 in 21 steps, every reported crossover satisfies its defining condition |
 | VC-5.5 | FR-5 | `libtest` | `control_rs::classical_control::margins::tests::bisection_does_not_converge_onto_a_pole` | For $L = 2/((s^2+1)(s+1))$ swept over $[0.5, 1.5]$ the reported gain crossover has finite $L$, $\lvert |L| - 1 \rvert \le 10^{-6}$, is not within $10^{-3}$ of the pole and has a phase margin equal to $180^\circ + \angle L$ |
 | VC-6.1    | FR-6        | `libtest`    | `control_rs::classical_control::compensator::tests::pid_forms`                     | The three forms produce coefficient vectors equal to their closed-form expansions exactly                                                                                                  |
@@ -749,6 +786,7 @@ The enum has a hand-written `Display`, `impl core::error::Error` and
 | VC-9.2    | FR-9        | `libtest`    | `control_rs::classical_control::realization::tests::cascade_reset`                 | After `reset`, every section state is zero                                                                                                                                                 |
 | VC-10.1   | FR-10       | `libtest`    | `control_rs::classical_control::realization::tests::sections_reproduce_source`     | The frequency response of the factored cascade equals that of the source within §6.2 for even and odd orders up to 8                                                                       |
 | VC-10.2   | FR-10       | `libtest`    | `control_rs::classical_control::realization::tests::sections_pairing_order`        | Each section's zeros are the remaining zeros nearest its poles, with poles taken in order of distance to the unit circle, and an odd order yields exactly one section with $b_2 = a_2 = 0$ |
+| VC-10.3   | FR-10       | `libtest`    | `control_rs::classical_control::realization::tests::section_count_values`          | `section_count` equals $\max(1, \lceil (D-1)/2 \rceil)$ for $D \in \lbrace 0, 1, 2, 3, 4, 5, 6, 9 \rbrace$ |
 | VC-11.1   | FR-11       | `libtest`    | `control_rs::classical_control::pid::tests::unsaturated_matches_recurrence`        | Within limits, outputs equal the closed-form recurrence of §4.10 within §6.2                                                                                                               |
 | VC-11.2   | FR-11       | `libtest`    | `control_rs::classical_control::pid::tests::setpoint_step_no_derivative_kick`      | A setpoint step at constant measurement leaves $D$ unchanged exactly                                                                                                                       |
 | VC-11.3   | FR-11       | `libtest`    | `control_rs::classical_control::pid::tests::output_within_limits`                  | Every output lies in $[u_{min}, u_{max}]$ and `new` returns `InvalidParameter` for $u_{min} > u_{max}$, $h \le 0$ or $T_f < 0$                                                             |
@@ -777,6 +815,7 @@ The enum has a hand-written `Display`, `impl core::error::Error` and
 | VC-28.3   | FR-17       | `kani`       | `control_rs::classical_control::realization::proofs::prove_df1_fixed_update_total` | For all `Fixed<i16, 13>` coefficients, states and inputs, `Df1::update` returns without panic                                                                                              |
 | VC-28.4   | FR-17       | `libtest`    | `control_rs::classical_control::realization::tests::df1_fixed_single_rounding`     | Without saturation, each `Df1<Fixed<i16, 13>>` output equals the exact integer sum of its five products rounded once with ties to even                                                     |
 | VC-29.1   | FR-18       | `libtest`    | `control_rs::classical_control::realization::tests::set_coefficients_keeps_state`  | After `set_coefficients`, state equals its value before the call and the next output equals that of a section built with the new coefficients and the same state                           |
+| VC-29.2   | FR-18       | `libtest`    | `control_rs::classical_control::realization::tests::coefficients_round_trip`       | `coefficients` returns the coefficients a `Df1` or `Df2t` section was built or updated with exactly                                                                                       |
 | VC-30.1   | FR-19       | `libtest`    | `control_rs::classical_control::realization::tests::quantize_round_and_range`      | Each quantized coefficient is within $\Delta/2$ of its source and a coefficient outside the range returns `CoefficientRange` with its section index                                        |
 | VC-30.2 | FR-19 | `libtest` | `control_rs::classical_control::realization::tests::quantize_accepts_representable_extremes` | The `f64` image of `Fixed::MIN` and `Fixed::MAX` quantizes for `i32` and for `i64` at two scales, and $\pm 10^{10}$ returns `CoefficientRange` for `Fixed<i64, 30>` |
 | VC-31.1   | C-8         | `inspection` | —                                                                                  | Every recurrence in `realization` is a `MulAcc` chain with one `from_acc` per output, and the section types bound `T: Scalar + Signed + MulAcc`                                              |
@@ -794,7 +833,7 @@ Coverage: 90% line coverage of `src/classical_control`, measured with
 | Routh count (FR-2)                   | Closed-form: polynomials constructed from known roots                                                 | Exact equality                                                                            | Equal                                                                                                                                       |
 | Locus roots (FR-1)                   | Invariant: residual of $D + k N$ at each root                                                         | $\lvert D(p) + kN(p) \rvert / \sum_j \lvert c_j \rvert \lvert p \rvert^j$                 | $\le 10 n u$                                                                                                                                |
 | Frequency response (FR-3)            | Closed-form first-order and second-order responses                                                    | Relative error of magnitude; absolute error of phase                                      | $\le 10 u$; $\le 10^{-9}$ deg                                                                                                               |
-| Margins (FR-5)                       | Closed form for $4/(s+1)^3$: $\omega_{pc} = \sqrt{3}$, $K_g = 2$, $\omega_{gc} = \sqrt{16^{1/3} - 1}$ | Relative error of each crossover and margin                                               | $\le \Delta_\omega / (2^B \omega) + 10 u$, with $\Delta_\omega$ the bracketing grid step; phase margin adds $10 u \cdot 180^\circ / \phi_m$ |
+| Margins (FR-5)                       | Closed form for $4/(s+1)^3$: $\omega_{pc} = \sqrt{3}$, $K_g = 2$, $\omega_{gc} = \sqrt{16^{1/3} - 1}$ | Relative error of each crossover and margin                                               | $\le \Delta_\omega / (2^B \omega) + 10 u$, with $\Delta_\omega$ the bracketing grid step; phase margin adds $10 u \cdot 180^\circ / \phi_m$ and the crossover error times $\lvert d\phi / d\omega \rvert / \phi_m$ |
 | Margins (FR-5)                       | Independent reference implementation (`cross-check`)                                                  | Relative error of each margin and crossover                                               | Tolerance entries `classical-control/<case>/<margin>`                                                                                       |
 | Delay margin (FR-16)                 | Closed form $\phi_m/\omega_{gc}$ from the FR-5 closed form                                            | Relative error                                                                            | Sum of the FR-5 relative bounds on $\phi_m$ and $\omega_{gc}$                                                                               |
 | DF2T and cascade output (FR-8, FR-9) | Independent reference implementation (`cross-check`): SciPy `lfilter` and `sosfilt`                   | Maximum absolute output error over the sequence, relative to $\max_k \lvert y_k \rvert$   | Tolerance entries `classical-control/<case>/output`                                                                                         |
@@ -917,7 +956,6 @@ target (C-6).
   steps, which are data dependent and conflict with NFR-3. Plan: a host-only
   wrapper that refines the gain set from the previous rows' root spacing and
   calls `root_locus`, tracked after phase 5.
-- **Index.** `documentation/README.md` has no control-toolboxes table.
 
 ---
 
@@ -931,9 +969,6 @@ target (C-6).
 | 4. Floating-point execution       | `realization` (`DirectForm2T`, `Df2t`, `Df1`, cascade, `to_sections`, `set_coefficients`, `is_stable`), `pid`, ETS suites, SciPy cross-check cases; needs `num-traits-design.md` Phase 6 | FR-8, FR-9, FR-10, FR-11, FR-12, FR-13, FR-14, FR-17, FR-18, FR-20, NFR-4, C-5, C-6, C-8 | 5 days | Complete |
 | 5. Fixed-point execution          | `quantize`, `Fixed` instantiations, fixed-point tolerance entries, VC-28.3 proof; needs `fixed-num-design.md` Phase 6                                                                    | FR-19, C-9                                                                               | 3 days | Complete |
 
-Phase 4 starts from the prior `classical_tools` realization and PID code (commit
-`9996a73`), reworked to §4.9 and §4.10.
-
 ---
 
 ### 10. Revision History
@@ -946,6 +981,7 @@ Phase 4 starts from the prior `classical_tools` realization and PID code (commit
 | 2.2      | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending review.                                                                                                                                                                                                                                                      |
 | 2.4      | October 14, 2026 | Claude Sonnet 5.5 | Fixes for the PR 88 findings: three-stage Routh with a Hurwitz gate and `RouthIndeterminate` (§4.3, §4.11), raw-unit range check in `quantize` (§4.9, FR-19), pole-stepping bisection (§4.6), arc insertion and segment-to-point test in Nyquist (§4.5); VC-2.6 and VC-5.6 added. |
 | 2.3      | October 14, 2026 | Claude Sonnet 5.5 | Review of PR 88: FR-2 cancellation, FR-4 sample-independent indentation and critical-segment rejection, FR-5 crossover defining condition and exact minimum, FR-13 scope, FR-19 extremes; §4.3 expanded; §4.5 and §4.6 revised; anti-windup and locus alternatives; VC-2.4 to VC-30.2 added; §6.3 and §8 updated. |
+| 2.5      | October 16, 2026 | Claude Sonnet 5.5 | Interface pass: `root_locus` returns $K \times D$ rows and infers every const parameter (§4.2); `margin` summary form (FR-5, §4.6); bisection depth is the constant `BISECTION_STEPS` instead of a type parameter; the stability margin is absent for an empty or non-finite sweep; a phase-crossover bracket needs `Re L <= 0` at one end and the refined root must be real; phase-margin bound gains the crossover-error term (§6.2); VC-5.7 to VC-5.9; `Section` takes its sample type as an associated type and adds `coefficients()`, `Df2t` wraps `DirectForm2T<T, 2>`, and `section_count` gives `to_sections` its `L` (§4.9); classical-control index entry and §8 cleanup. |
 
 ---
 

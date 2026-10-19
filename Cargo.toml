@@ -99,6 +99,10 @@ harness = false
 name = "jitter"
 harness = false
 
+[[bench]]
+name = "classical_control"
+harness = false
+
 [profile.release]
 # Enable Link Time Optimization (LTO)
 lto = "fat" # or true for a simpler LTO, "fat" is more aggressive
