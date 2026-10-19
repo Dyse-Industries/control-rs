@@ -561,6 +561,6 @@ mode = "fail"
 default = false
 command = "cargo run"
 args = ["--package", "control-rs-ci", "--bin", "regression", "--", "--all", "--budgets", ".cargo/regression.toml"]
-diff-trigger = ["src/", "benches/", ".cargo/regression.toml", "control-rs-ci/src/bin/regression.rs"]
+diff-trigger = ["src/", "benches/", ".cargo/regression.toml", "control-rs-ci/"]
 timeout_secs = 7200
 description = "Evaluates Criterion benchmark outputs against performance budgets and regression baselines"

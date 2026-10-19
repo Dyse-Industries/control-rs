@@ -20,8 +20,9 @@ use serde::{Deserialize, Serialize};
 
 use super::reqs::TraceConfig;
 use super::{
-    CONDITION, DEFINITION, Defect, Defects, Row, SCHEMA, doc_of,
-    links_on_cycles, read_text, write_file,
+    CONDITION, DEFINITION, Defect, Defects, LinkGraph, Row, SCHEMA,
+    cycle_message, doc_of, empty_document_message, no_target_message,
+    read_text, unresolved_target_message, write_file,
 };
 use crate::error::GateResult;
 
@@ -332,30 +333,18 @@ impl<'a> Links<'a> {
         order: &[&'a str],
         conditions: &ById<'a>,
     ) -> BTreeSet<&'a str> {
-        let mut edges = Vec::new();
-        let mut owners = Vec::new();
-        for &id in order {
-            edges.push((doc_of(id), id));
-            owners.push(None);
-        }
-        for (&id, row) in conditions {
-            for parent in &row.parents {
-                edges.push((parent.as_str(), id));
-                owners.push(None);
-            }
-        }
+        let mut graph = LinkGraph::new(
+            order.iter().copied(),
+            conditions
+                .iter()
+                .map(|(&id, row)| (id, row.parents.as_slice())),
+        );
         for (&id, row) in &self.rows {
-            for target in &row.targets {
-                if self.resolves(target) {
-                    edges.push((id, target.as_str()));
-                    owners.push(Some(id));
-                }
+            for target in row.targets.iter().filter(|t| self.resolves(t)) {
+                graph.add_link(id, target.as_str());
             }
         }
-        links_on_cycles(&edges)
-            .into_iter()
-            .filter_map(|index| owners.get(index).copied().flatten())
-            .collect()
+        graph.cyclic_links()
     }
 
     /// Whether `target` names a defined requirement, condition, or document
@@ -392,13 +381,10 @@ impl<'a> Links<'a> {
         let mut items = Vec::new();
         let status = if row.targets.is_empty() {
             self.defects
-                .push(Defect::at(row, format!("{} names no target", row.id)));
+                .push(Defect::at(row, no_target_message(&row.id)));
             Status::Uncovered
         } else if self.cyclic.contains(id) {
-            self.defects.push(Defect::at(
-                row,
-                format!("condition {} lies on a link cycle", row.id),
-            ));
+            self.defects.push(Defect::at(row, cycle_message(&row.id)));
             Status::Fail
         } else {
             let mut worst_status = Status::Pass;
@@ -434,28 +420,29 @@ impl<'a> Links<'a> {
         target: &'a str,
         statuses: &mut Statuses<'a>,
     ) -> Status {
-        let at = |message: &str| {
-            Defect::at(
-                row,
-                format!("condition {} target '{target}' {message}", row.id),
-            )
-        };
         if target.contains('#') {
             if self.defined.contains(target) {
                 self.requirement(target, statuses)
             } else if self.condition_ids.contains(target) {
                 self.condition(target, statuses)
             } else {
-                self.defects.push(at("not found in reqs.jsonl"));
+                self.defects.push(Defect::at(
+                    row,
+                    unresolved_target_message(&row.id, target),
+                ));
                 Status::Unrun
             }
         } else if self.requirements.contains_key(target) {
             self.document(target, statuses)
         } else if !self.docs.contains(target) {
-            self.defects.push(at("not found in reqs.jsonl"));
+            self.defects.push(Defect::at(
+                row,
+                unresolved_target_message(&row.id, target),
+            ));
             Status::Unrun
         } else {
-            self.defects.push(at("defines no requirement"));
+            self.defects
+                .push(Defect::at(row, empty_document_message(&row.id, target)));
             Status::Uncovered
         }
     }
@@ -1772,7 +1759,9 @@ mod tests {
                 .iter()
                 .map(|d| d.message.as_str())
                 .collect::<Vec<_>>(),
-            ["condition a#VC-1.1 target 'zz' not found in reqs.jsonl"]
+            [
+                "condition a#VC-1.1 target 'zz' names no selected document, requirement or condition"
+            ]
         );
     }
 
@@ -1864,7 +1853,9 @@ mod tests {
                 .iter()
                 .map(|d| d.message.as_str())
                 .collect::<Vec<_>>(),
-            ["condition a#VC-1.1 target 'b#FR-9' not found in reqs.jsonl"]
+            [
+                "condition a#VC-1.1 target 'b#FR-9' names no selected document, requirement or condition"
+            ]
         );
     }
 }

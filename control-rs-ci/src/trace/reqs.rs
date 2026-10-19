@@ -15,8 +15,9 @@ use regex::Regex;
 use serde::Deserialize;
 
 use super::{
-    CONDITION, DEFINITION, Defect, Link, Row, SCHEMA, doc_of, links_on_cycles,
-    normalize, read_text,
+    CONDITION, DEFINITION, Defect, LinkGraph, Row, SCHEMA, cycle_message,
+    doc_of, empty_document_message, no_target_message, normalize, read_text,
+    unresolved_target_message,
 };
 use crate::error::{GateError, GateResult};
 
@@ -28,9 +29,6 @@ type DocFirstFile<'a> = BTreeMap<&'a str, &'a Row>;
 
 /// A document ID and file path pair for reporting collisions.
 type DocFilePair<'a> = (&'a str, &'a str);
-
-/// Link-graph edges and the link condition that owns each, if any.
-type LinkGraph<'a> = (Vec<Link<'a>>, Vec<Option<&'a Row>>);
 
 /// Definition rows by ID.
 type Definitions<'a> = BTreeMap<&'a str, Vec<&'a Row>>;
@@ -52,6 +50,9 @@ pub type MarkdownScan = (Vec<Row>, Vec<Defect>);
 
 /// A file path and its text.
 pub type Source<'a> = (&'a str, &'a str);
+
+/// Link conditions by ID.
+type Owners<'a> = BTreeMap<&'a str, &'a Row>;
 
 /// Decision records by ID.
 type Decisions<'a> = BTreeMap<&'a str, &'a Decision>;
@@ -681,11 +682,8 @@ fn check_duplicate_document_ids(rows: &[Row], defects: &mut Vec<Defect>) {
 }
 
 /// The `link` defects: a link condition with no target, a target that names
-/// no document among `rows` and no defined requirement or condition, and
-/// every link condition on a cycle. The tripartite cycle graph has an edge
-/// from each document to its requirements, from each requirement to its
-/// conditions, and from each link condition to the document, requirement, or
-/// condition its targets name.
+/// no document among `rows` and no defined requirement or condition, a target
+/// document that defines no requirement, and every link condition on a cycle.
 fn check_links(
     definitions: &Definitions<'_>,
     conditions: &[&Row],
@@ -700,15 +698,21 @@ fn check_links(
     let docs: BTreeSet<&str> = defined.iter().map(|id| doc_of(id)).collect();
     let doc_reqs: BTreeSet<&str> =
         definitions.keys().map(|id| doc_of(id)).collect();
-    let (mut edges, mut owners) = condition_edges(definitions, conditions);
+    let mut graph = LinkGraph::new(
+        definitions.keys().copied(),
+        conditions
+            .iter()
+            .map(|c| (c.id.as_str(), c.parents.as_slice())),
+    );
+    let mut owners = Owners::new();
     for &link in conditions.iter().filter(|c| {
         c.method
             .as_ref()
             .is_some_and(|m| rules.link_methods.contains(m))
     }) {
+        owners.entry(link.id.as_str()).or_insert(link);
         if link.targets.is_empty() {
-            defects
-                .push(Defect::at(link, format!("{} names no target", link.id)));
+            defects.push(Defect::at(link, no_target_message(&link.id)));
         }
         for target in link.targets.iter().map(String::as_str) {
             let resolves = if target.contains('#') {
@@ -717,47 +721,25 @@ fn check_links(
                 doc_reqs.contains(target)
             };
             if resolves {
-                edges.push((link.id.as_str(), target));
-                owners.push(Some(link));
+                graph.add_link(link.id.as_str(), target);
             } else if target.contains('#') || !docs.contains(target) {
                 defects.push(Defect::at(
                     link,
-                    format!(
-                        "condition {} target '{target}' names no selected document, requirement or condition",
-                        link.id
-                    ),
+                    unresolved_target_message(&link.id, target),
+                ));
+            } else {
+                defects.push(Defect::at(
+                    link,
+                    empty_document_message(&link.id, target),
                 ));
             }
         }
     }
-    let mut reported = BTreeSet::new();
-    for index in links_on_cycles(&edges) {
-        if let Some(Some(link)) = owners.get(index)
-            && reported.insert(link.id.as_str())
-        {
-            defects.push(Defect::at(
-                link,
-                format!("condition {} lies on a link cycle", link.id),
-            ));
+    for id in graph.cyclic_links() {
+        if let Some(link) = owners.get(id) {
+            defects.push(Defect::at(link, cycle_message(id)));
         }
     }
-}
-
-/// The structural edges from each document to its requirements and from each
-/// requirement to its conditions, each with no owning link condition.
-fn condition_edges<'a>(
-    definitions: &Definitions<'a>,
-    conditions: &[&'a Row],
-) -> LinkGraph<'a> {
-    definitions
-        .keys()
-        .map(|&id| ((doc_of(id), id), None))
-        .chain(conditions.iter().flat_map(|c| {
-            c.parents
-                .iter()
-                .map(|p| ((p.as_str(), c.id.as_str()), None))
-        }))
-        .unzip()
 }
 
 /// The defects in `rows`, sorted by file, then line.
@@ -1683,7 +1665,7 @@ automated_methods = []
     fn link_condition_without_a_target_is_reported() {
         assert_eq!(
             link_messages(&[linking("a", "—")]),
-            ["a#VC-1.1 names no target"]
+            ["condition a#VC-1.1 names no target"]
         );
     }
 
@@ -1702,6 +1684,19 @@ automated_methods = []
                 CLEAN.replace("(widget)", "(c)")
             ]),
             Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn link_target_document_without_requirements_is_reported() {
+        let only_conditions =
+            "# E (e)\n\n| VC-1.1 | FR-9 | `test` | C |\n".to_string();
+        assert_eq!(
+            link_messages(&[linking("a", "`e`"), only_conditions])
+                .into_iter()
+                .filter(|m| m.contains("target"))
+                .collect::<Vec<_>>(),
+            ["condition a#VC-1.1 target 'e' defines no requirement"]
         );
     }
 

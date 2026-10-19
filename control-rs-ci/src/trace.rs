@@ -46,9 +46,6 @@ pub type FlagValues<const N: usize> = [PathBuf; N];
 /// A directed edge between interned vertex indices.
 type IndexedEdge = (usize, usize);
 
-/// A link from one node of the link graph to another, by ID.
-pub type Link<'a> = (&'a str, &'a str);
-
 /// Rows of one artifact.
 pub type Rows = Vec<Row>;
 
@@ -81,6 +78,26 @@ pub struct Defect {
     pub line: usize,
     /// What is wrong.
     pub message: String,
+}
+
+/// A directed edge of the link graph, by node ID.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Edge<'a> {
+    /// Source node: a document, requirement or condition.
+    pub from: &'a str,
+    /// Target node.
+    pub to: &'a str,
+    /// The link condition that owns the edge; `None` for a structural edge.
+    pub link: Option<&'a str>,
+}
+
+/// The tripartite link graph: an edge from each document to its
+/// requirements, from each requirement to its conditions, and from each link
+/// condition to each node its targets name.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LinkGraph<'a> {
+    /// Structural edges first, then link edges in insertion order.
+    edges: Vec<Edge<'a>>,
 }
 
 /// One occurrence of one requirement or condition ID: a line of `reqs.jsonl`.
@@ -145,6 +162,74 @@ impl Defect {
 impl fmt::Display for Defect {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}:{}: {}", self.file, self.line, self.message)
+    }
+}
+
+impl<'a> LinkGraph<'a> {
+    /// The structural edges over `requirements` and the `(condition, parents)`
+    /// pairs of `conditions`.
+    pub fn new(
+        requirements: impl IntoIterator<Item = &'a str>,
+        conditions: impl IntoIterator<Item = (&'a str, &'a [String])>,
+    ) -> Self {
+        let mut edges: Vec<Edge<'a>> = requirements
+            .into_iter()
+            .map(|id| Edge {
+                from: doc_of(id),
+                to: id,
+                link: None,
+            })
+            .collect();
+        for (id, parents) in conditions {
+            edges.extend(parents.iter().map(|p| Edge {
+                from: p.as_str(),
+                to: id,
+                link: None,
+            }));
+        }
+        Self { edges }
+    }
+
+    /// Adds the edge from link condition `link` to the node `target`.
+    pub fn add_link(&mut self, link: &'a str, target: &'a str) {
+        self.edges.push(Edge {
+            from: link,
+            to: target,
+            link: Some(link),
+        });
+    }
+
+    /// The link conditions that own an edge on a cycle.
+    ///
+    /// One Tarjan strongly connected components pass: an edge `(u, v)` lies
+    /// on a cycle when `u` and `v` belong to the same component.
+    #[must_use]
+    pub fn cyclic_links(&self) -> BTreeSet<&'a str> {
+        let mut ids = VertexIds::new();
+        let mut adj = Adjacency::new();
+        let mut indexed: Vec<IndexedEdge> =
+            Vec::with_capacity(self.edges.len());
+        for edge in &self.edges {
+            let u = intern_vertex(edge.from, &mut ids, &mut adj);
+            let v = intern_vertex(edge.to, &mut ids, &mut adj);
+            if let Some(neighbors) = adj.get_mut(u) {
+                neighbors.push(v);
+            }
+            indexed.push((u, v));
+        }
+        let n = adj.len();
+        let mut tarjan = Tarjan::new(adj);
+        for v in 0..n {
+            if tarjan.index.get(v).copied().unwrap_or(0) == 0 {
+                tarjan.visit(v);
+            }
+        }
+        self.edges
+            .iter()
+            .zip(indexed)
+            .filter(|(_, (u, v))| tarjan.comp.get(*u) == tarjan.comp.get(*v))
+            .filter_map(|(edge, _)| edge.link)
+            .collect()
     }
 }
 
@@ -257,36 +342,31 @@ pub fn doc_of(id: &str) -> &str {
     id.split('#').next().unwrap_or(id)
 }
 
-/// The indices of the links in `edges` that lie on a cycle.
-///
-/// Computed in a single Tarjan strongly connected components pass: an edge
-/// `(u, v)` lies on a cycle when `u` and `v` belong to the same component.
+/// Defect message: link condition `id` names no target.
 #[must_use]
-pub fn links_on_cycles(edges: &[Link<'_>]) -> BTreeSet<usize> {
-    let mut ids = VertexIds::new();
-    let mut adj = Adjacency::new();
-    let mut indexed: Vec<IndexedEdge> = Vec::with_capacity(edges.len());
-    for &(from, to) in edges {
-        let u = intern_vertex(from, &mut ids, &mut adj);
-        let v = intern_vertex(to, &mut ids, &mut adj);
-        if let Some(neighbors) = adj.get_mut(u) {
-            neighbors.push(v);
-        }
-        indexed.push((u, v));
-    }
-    let n = adj.len();
-    let mut tarjan = Tarjan::new(adj);
-    for v in 0..n {
-        if tarjan.index.get(v).copied().unwrap_or(0) == 0 {
-            tarjan.visit(v);
-        }
-    }
-    indexed
-        .into_iter()
-        .enumerate()
-        .filter(|(_, (u, v))| tarjan.comp.get(*u) == tarjan.comp.get(*v))
-        .map(|(index, _)| index)
-        .collect()
+pub fn no_target_message(id: &str) -> String {
+    format!("condition {id} names no target")
+}
+
+/// Defect message: `target` of link condition `id` names nothing defined.
+#[must_use]
+pub fn unresolved_target_message(id: &str, target: &str) -> String {
+    format!(
+        "condition {id} target '{target}' names no selected document, requirement or condition"
+    )
+}
+
+/// Defect message: `target` of link condition `id` is a document without
+/// requirements.
+#[must_use]
+pub fn empty_document_message(id: &str, target: &str) -> String {
+    format!("condition {id} target '{target}' defines no requirement")
+}
+
+/// Defect message: link condition `id` lies on a link cycle.
+#[must_use]
+pub fn cycle_message(id: &str) -> String {
+    format!("condition {id} lies on a link cycle")
 }
 
 /// Interns `node` into `ids` and `adj`, returning its vertex index.
