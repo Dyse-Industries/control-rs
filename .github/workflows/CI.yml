@@ -476,37 +476,16 @@ jobs:
           retention-days: 7
 
   # ============================================================================
-  # Post stage: mutants-* (mutation testing, one job per chunk)
+  # Post stage: mutants (mutation testing)
   # ============================================================================
-  # The matrix is every `mutants-*` gate in gate.toml. The gates partition the
-  # root package by file, and the largest files split further with --shard.
-  mutants-plan:
-    name: Mutation Chunks
+  # The `mutants` gate covers the whole workspace; the caller picks the scenario
+  # with passthrough arguments. A pull request mutates only the code its diff
+  # changes. A push to main runs every mutant, split across MUTANT_SHARDS jobs.
+  mutants_pr:
+    name: Mutation Testing (changed code)
     runs-on: ubuntu-latest
-    outputs:
-      gates: ${{ steps.list.outputs.gates }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: List mutants-* gates
-        id: list
-        shell: python
-        run: |
-          import json, os, tomllib
-          with open(".cargo/gate.toml", "rb") as f:
-              gates = [name for name in tomllib.load(f) if name.startswith("mutants-")]
-          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-              out.write("gates=" + json.dumps(gates) + "\n")
-
-  mutants:
-    name: Mutation Testing (${{ matrix.gate }})
-    runs-on: ubuntu-latest
-    needs: mutants-plan
+    if: github.event_name == 'pull_request'
     timeout-minutes: 360
-    strategy:
-      fail-fast: false
-      matrix:
-        gate: ${{ fromJSON(needs.mutants-plan.outputs.gates) }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -520,14 +499,68 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: cargo binstall -y cargo-mutants
 
+      - name: Diff against the pull request base
+        run: |
+          mkdir -p target/ci-artifacts
+          git diff origin/${{ github.base_ref }}.. > target/ci-artifacts/pr.diff
+
       - name: Run Mutants Gate
-        run: cargo ci --verbose --diff --only ${{ matrix.gate }}
+        run: cargo gate --verbose --diff --only mutants -- --in-diff target/ci-artifacts/pr.diff
 
       - name: Upload Mutants Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ci-artifacts-${{ matrix.gate }}
+          name: ci-artifacts-mutants
+          path: target/ci-artifacts/
+          retention-days: 7
+
+  mutants_plan:
+    name: Mutation Shards
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    env:
+      # Shard count. Every shard of a run divides the mutant list by this value.
+      MUTANT_SHARDS: 16
+    outputs:
+      shards: ${{ steps.plan.outputs.shards }}
+      count: ${{ steps.plan.outputs.count }}
+    steps:
+      - id: plan
+        run: |
+          echo "count=$MUTANT_SHARDS" >> "$GITHUB_OUTPUT"
+          echo "shards=$(seq 0 $((MUTANT_SHARDS - 1)) | jq -cs .)" >> "$GITHUB_OUTPUT"
+
+  mutants:
+    name: Mutation Testing (shard ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    needs: mutants_plan
+    timeout-minutes: 360
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(needs.mutants_plan.outputs.shards) }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: cargo-bins/cargo-binstall@main
+      - name: Install cargo-mutants
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: cargo binstall -y cargo-mutants
+
+      - name: Run Mutants Gate
+        run: cargo gate --verbose --only mutants -- --shard ${{ matrix.shard }}/${{ needs.mutants_plan.outputs.count }}
+
+      # Outside the `ci-artifacts-*` pattern: shards share one gate result name,
+      # so the report job must not merge them.
+      - name: Upload Mutants Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutants-shard-${{ matrix.shard }}
           path: target/ci-artifacts/
           retention-days: 7
 
@@ -537,7 +570,7 @@ jobs:
   report:
     name: Aggregate Report
     runs-on: ubuntu-latest
-    needs: [ report_comment, lint, build_test, target, audit, verify, coverage, regression, mutants, kani, miri, trace ]
+    needs: [ report_comment, lint, build_test, target, audit, verify, coverage, regression, mutants_pr, mutants, kani, miri, trace ]
     if: always()
     permissions:
       pull-requests: write
