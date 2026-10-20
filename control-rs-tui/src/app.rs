@@ -516,6 +516,9 @@ impl App {
                     );
                 }
                 self.faults.clear();
+                if let Some(first) = self.catalog.case_ids().first() {
+                    self.status = Status::Running(*first);
+                }
                 Some(Request::RunAll)
             }
             Command::Stop => Some(Request::Stop),
@@ -1133,6 +1136,17 @@ mod tests {
         assert_eq!(key(&mut app, KeyCode::Char('s')), Some(Request::Stop));
         assert_eq!(key(&mut app, KeyCode::Char('q')), Some(Request::Quit));
         assert!(app.quit);
+    }
+
+    #[test]
+    fn run_all_leaves_idle_so_a_second_run_is_not_queued() {
+        let mut app = ready(false);
+        assert_eq!(key(&mut app, KeyCode::Char('r')), Some(Request::RunAll));
+        assert!(matches!(app.status, Status::Running(_)));
+        assert_eq!(key(&mut app, KeyCode::Char('r')), None);
+        assert_eq!(key(&mut app, KeyCode::Enter), None);
+        app.on_update(Update::Idle);
+        assert_eq!(app.status, Status::Idle);
     }
 
     #[test]
