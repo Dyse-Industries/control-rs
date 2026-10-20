@@ -139,6 +139,21 @@ impl Worker {
         }
     }
 
+    /// Sends `request` to the worker. A stop reaches the run control directly; a new run starts
+    /// with the stop flag cleared, so a stop pressed while the run is still queued is kept.
+    pub fn submit(&self, request: Request) {
+        match request {
+            Request::Stop => self.control.stop(),
+            Request::RunAll | Request::RunCase(_) | Request::RunTask { .. } => {
+                self.control.clear();
+                let _ = self.requests.send(request);
+            }
+            other => {
+                let _ = self.requests.send(other);
+            }
+        }
+    }
+
     /// Stops the worker and waits for it.
     pub fn shutdown(&mut self) {
         let _ = self.requests.send(Request::Quit);
@@ -201,7 +216,6 @@ fn serve(
         match requests.recv_timeout(IDLE) {
             Ok(Request::Quit) | Err(RecvTimeoutError::Disconnected) => break,
             Ok(request) => {
-                control.clear();
                 let resets = session.results().resets;
                 if let Err(e) = handle(&mut session, request, updates, control)
                 {
@@ -438,6 +452,24 @@ mod tests {
         assert_eq!(catalog.suites.len(), 1);
         assert_eq!(details.board_id, 1);
         assert_eq!(next(&worker), Update::Idle);
+    }
+
+    #[test]
+    fn a_stop_that_precedes_dequeue_is_not_cleared_by_the_worker() {
+        let fake = ETSBridge::fake(None);
+        for t in discovery(PROTOCOL_VERSION) {
+            fake.tx.send(BridgeMessage::Telemetry(t)).unwrap();
+        }
+        let mut worker = Worker::spawn(fake.bridge, quick());
+        assert!(matches!(next(&worker), Update::Catalog(..)));
+        assert_eq!(next(&worker), Update::Idle);
+        worker.submit(Request::Stop);
+        worker.requests.send(Request::RunAll).unwrap();
+        assert_eq!(next(&worker), Update::Idle);
+        assert!(worker.control.stop_requested());
+        worker.submit(Request::RunAll);
+        assert!(!worker.control.stop_requested(), "a new run clears it");
+        worker.shutdown();
     }
 
     #[test]
