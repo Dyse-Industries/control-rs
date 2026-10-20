@@ -267,7 +267,8 @@ description = "Derives condition verification status from reqs and the libtest, 
 # Mutation testing over the whole workspace. The caller selects the scenario
 # with passthrough arguments (`cargo gate --only mutants -- <args>`):
 #   pull request   --in-diff <diff file>   mutate only the changed code
-#   full run       --shard <k>/<n>         one slice of the whole mutant list
+#   full run       --shard <k>/<n> --sharding round-robin
+#                                          one slice of the whole mutant list
 #   local          any `cargo mutants` option, or none for everything
 # Exclusions live in .cargo/mutants.toml. CI runs this gate in one job event
 # at a time, so the report does not require its result.
@@ -276,7 +277,7 @@ mode = "fail"
 default = false
 required = false
 command = "cargo mutants"
-args = ["--workspace", "--json", "--sharding", "round-robin", "--output", "target/ci-artifacts/mutants.out"]
+args = ["--workspace", "--json", "--output", "target/ci-artifacts/mutants.out"]
 diff-trigger = ["src/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-tui/", ".cargo/mutants.toml"]
 timeout_secs = 19800
 description = "Mutation testing with cargo-mutants over the workspace"
