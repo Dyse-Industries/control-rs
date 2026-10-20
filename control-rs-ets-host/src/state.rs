@@ -693,7 +693,10 @@ impl SessionState {
         }
     }
 
-    /// Records a passing metric report and starts the next queued test.
+    /// Attaches a metric report to its test and starts the next queued test.
+    ///
+    /// A test already recorded as failed keeps that state; the report only adds its metrics.
+    /// The queue advances only while the session is running.
     ///
     /// `report` carries the metrics; its name fields are filled in here.
     fn on_metric_report(
@@ -701,7 +704,10 @@ impl SessionState {
         mut report: TestOutcome,
     ) -> Vec<SessionAction> {
         if let Some(test) = self.test_mut(report.suite_id, report.test_id) {
-            test.state = TestState::Passed;
+            if test.state != TestState::Failed {
+                test.state = TestState::Passed;
+            }
+            report.state = test.state;
             test.cycles = report.cycles;
             test.time_us = report.time_us;
             test.stack_peak = report.stack_peak;
@@ -709,6 +715,9 @@ impl SessionState {
         (report.suite_name, report.test_name) =
             self.case_names(report.suite_id, report.test_id);
         self.record_outcome(report);
+        if self.phase != SessionPhase::Running {
+            return Vec::new();
+        }
         self.start_next_or_exit().into_iter().collect()
     }
 
@@ -744,6 +753,7 @@ impl SessionState {
         };
 
         self.current_running = None;
+        self.run_queue.clear();
         for s in &mut self.suites {
             s.reset_discovery();
         }
@@ -1044,6 +1054,59 @@ mod tests {
         assert_eq!(state.results.get(1).unwrap().test_id, 1);
         // Failed state does not advance queue until TargetPanic or complete
         assert_eq!(state.current_running, Some((0, 1)));
+    }
+
+    #[test]
+    fn run_stats_keep_a_recorded_failure_and_attach_metrics() {
+        let mut state = matched();
+        feed(&mut state, make_test_suite_telemetry(0, "S", 2, 0));
+        let _ = state.handle_message(BridgeMessage::Telemetry(
+            OwnedTelemetry::DiscoveryComplete,
+        ));
+        let _ = state.handle_message(BridgeMessage::Telemetry(
+            OwnedTelemetry::TestStateChange {
+                message: None,
+                suite_id: 0,
+                test_id: 0,
+                state: TestState::Failed,
+                verdict: Some(control_rs_ets::wire::Verdict::Fail),
+            },
+        ));
+        let actions = state.handle_message(BridgeMessage::Telemetry(
+            run_stats((0, 0), 7, 5000, 3),
+        ));
+        assert_eq!(actions.len(), 1, "the queue still advances");
+        let outcome = state.find_outcome(0, 0).unwrap();
+        assert_eq!(outcome.state, TestState::Failed);
+        assert_eq!(outcome.cycles, Some(7));
+        assert_eq!(state.test_mut(0, 0).unwrap().state, TestState::Failed);
+    }
+
+    #[test]
+    fn a_late_metric_report_while_recovering_does_not_advance_the_queue() {
+        let mut state = matched();
+        feed(&mut state, make_test_suite_telemetry(0, "S", 3, 0));
+        let _ = state.handle_message(BridgeMessage::Telemetry(
+            OwnedTelemetry::DiscoveryComplete,
+        ));
+        assert_eq!(state.run_queue, vec![(0, 1), (0, 2)]);
+        let _ = state.handle_message(BridgeMessage::Telemetry(
+            OwnedTelemetry::TargetPanic {
+                message: "m".to_string(),
+                file: "f.rs".to_string(),
+                line: 1,
+                suite_id: Some(0),
+                test_id: Some(0),
+                fault_status: 0,
+            },
+        ));
+        assert_eq!(state.phase, SessionPhase::Recovering);
+        assert_eq!(state.run_queue, []);
+        let actions = state.handle_message(BridgeMessage::Telemetry(
+            run_stats((0, 1), 1, 1000, 1),
+        ));
+        assert!(actions.is_empty());
+        assert_eq!(state.current_running, None);
     }
 
     #[test]
