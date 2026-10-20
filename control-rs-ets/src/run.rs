@@ -134,6 +134,8 @@ pub struct Runner<'a, L, P, B, M> {
 struct State {
     cycles: u64,
     deadline_ns: u64,
+    /// Release schedule origin: set when the paced run arms (after setup).
+    epoch_ns: u64,
     input: [u8; MAX_PACKET_SIZE],
     input_len: usize,
     input_seq: Option<u64>,
@@ -184,6 +186,7 @@ impl State {
         Self {
             cycles: 0,
             deadline_ns: 0,
+            epoch_ns: 0,
             input: [0; MAX_PACKET_SIZE],
             input_len: 0,
             input_seq: None,
@@ -297,8 +300,10 @@ where
             state: ItemState::Running,
             message: None,
         })?;
+        // Wall-clock origin for RunStats; release epoch and link deadline open after setup
+        // (FR-5 scopes the heartbeat to waiting for input/release; FR-8 / the state diagram
+        // arm the release source only after setup succeeds).
         state.started_ns = self.now();
-        state.deadline_ns = Self::deadline_from(state.started_ns, exec);
         if let Err(message) = (exec.setup)() {
             state.end(Verdict::Error, Some(message));
             return Ok(());
@@ -307,6 +312,8 @@ where
             let period = (M::PACING == Pacing::Periodic).then_some(period_ns);
             self.board.arm(period);
         }
+        state.epoch_ns = self.now();
+        state.deadline_ns = Self::deadline_from(state.epoch_ns, exec);
         while state.verdict.is_none() {
             // A masked single step has no boundary: nothing can interrupt it, and a link that
             // can only block would stall it.
@@ -430,7 +437,7 @@ where
         if M::PACING != Pacing::Periodic || self.job.period_ns == 0 {
             return 0;
         }
-        let elapsed = self.now().saturating_sub(state.started_ns);
+        let elapsed = self.now().saturating_sub(state.epoch_ns);
         let due = elapsed
             .checked_div(u64::from(self.job.period_ns))
             .unwrap_or(0)
@@ -477,7 +484,7 @@ where
         state.step_max_ns = state.step_max_ns.max(took);
         if M::PACING == Pacing::Periodic && period_ns != 0 {
             let release = state
-                .started_ns
+                .epoch_ns
                 .saturating_add(state.k.saturating_mul(u64::from(period_ns)));
             let late = u32::try_from(started.saturating_sub(release))
                 .unwrap_or(u32::MAX);
@@ -590,6 +597,14 @@ mod tests {
     static RESETS: AtomicUsize = AtomicUsize::new(0);
     static SERIAL: Mutex<()> = Mutex::new(());
     static SETUPS: AtomicUsize = AtomicUsize::new(0);
+    /// Nanoseconds queued by a slow setup; consumed on the next profiler clock read.
+    static SETUP_ADVANCE_NS: core::sync::atomic::AtomicU64 =
+        core::sync::atomic::AtomicU64::new(0);
+    static SLOW: ExecDescriptor = {
+        let mut d = task(echo, 1);
+        d.setup = slow_setup;
+        d
+    };
     const STOP: Command<'static> = Command::StopNow { suite: 0, item: 0 };
     static TEARDOWNS: AtomicUsize = AtomicUsize::new(0);
     static TIMED: ExecDescriptor = task(echo, 1);
@@ -694,7 +709,13 @@ mod tests {
         }
 
         fn get_nanos(&self) -> u64 {
-            self.now.set(self.now.get().saturating_add(self.tick));
+            let queued = SETUP_ADVANCE_NS.swap(0, Ordering::SeqCst);
+            self.now.set(
+                self.now
+                    .get()
+                    .saturating_add(self.tick)
+                    .saturating_add(queued),
+            );
             self.now.get()
         }
 
@@ -721,6 +742,13 @@ mod tests {
 
     fn bad_setup() -> HookOf {
         counted(&SETUPS).and(Err("no sensor"))
+    }
+
+    /// Setup that burns more than one millisecond of profiler time (and more than
+    /// one 10 µs period when the clock tick is 1 µs).
+    fn slow_setup() -> HookOf {
+        SETUP_ADVANCE_NS.store(2_000_000, Ordering::SeqCst);
+        counted(&SETUPS)
     }
 
     fn reset() -> HookOf {
@@ -892,6 +920,7 @@ mod tests {
         SETUPS.store(0, Ordering::SeqCst);
         RESETS.store(0, Ordering::SeqCst);
         TEARDOWNS.store(0, Ordering::SeqCst);
+        SETUP_ADVANCE_NS.store(0, Ordering::SeqCst);
     }
 
     #[test]
@@ -1231,6 +1260,33 @@ mod tests {
         let _g = serial();
         let o = drive::<FreeRunning>(&BROKEN, Vec::new(), &[], (3, 0));
         assert_eq!(timing(&o), Some((0, 0, 0)));
+    }
+
+    #[test]
+    fn setup_longer_than_one_period_does_not_overrun_before_step_zero() {
+        let _g = serial();
+        reset_counters();
+        // Clock-paced Periodic: setup burns 2 ms while period_ns is 10 µs. The release
+        // epoch must open after setup/arm, or the first ready() stacks due ≫ 1 → Overrun.
+        let o = drive::<Periodic>(&SLOW, Vec::new(), &[], (3, 10_000));
+        assert_eq!(o.result, Ok(()));
+        assert_eq!(verdict(&o), Some((Verdict::Bounded, None)));
+        assert_eq!(stats(&o), Some((3, 0)));
+        assert_eq!(SETUPS.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn setup_longer_than_link_timeout_does_not_time_out_before_wait() {
+        let _g = serial();
+        reset_counters();
+        // SLOW has link_timeout_ms = 1 and burns 2 ms of profiler time in setup. The
+        // deadline must open after setup, or the first boundary ends with TimedOut
+        // before any wait/step (FR-5).
+        let o = drive::<Lockstep>(&SLOW, Vec::new(), &[], (0, 0));
+        assert_eq!(o.result, Ok(()));
+        assert_eq!(verdict(&o), Some((Verdict::TimedOut, None)));
+        assert!(o.waits > 0, "timeout only after waiting for input");
+        assert_eq!(stats(&o), Some((0, 0)));
     }
 
     #[test]
