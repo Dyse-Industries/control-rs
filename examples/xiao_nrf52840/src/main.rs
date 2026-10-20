@@ -97,7 +97,7 @@ pub mod xiao_nrf52840_suite {
 
     fn test_kalman_state_estimate() {
         // Discrete state prediction: x = F * x
-        let f = Owned::<f64, 2, 2>::from_array([[1.0, 0.0], [0.01, 1.0]]);
+        let f = Owned::<f64, 2, 2>::from_row_arrays([[1.0, 0.0], [0.01, 1.0]]);
         let x = Owned::<f64, 2, 1>::from_array([[10.0, 0.5]]);
         let mut x_pred = Owned::<f64, 2, 1>::zero();
         f.mul_into(&x, &mut x_pred);
