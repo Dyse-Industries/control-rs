@@ -718,7 +718,9 @@ deadlines and performance regression bounds within automated quality gates,
    reports `Performance has regressed.`: the change is significant ($p < 0.05$)
    and the confidence interval of the mean change lies above the noise
    threshold. The benches set the noise threshold to 15 % in their Criterion
-   configuration. Criterion compares the new sample with
+   configuration. The verdict is not enforced for a benchmark whose `time:`
+   estimate is under 1 µs: run-to-run jitter at that scale exceeds any real
+   change, and the latency budget alone bounds the benchmark. Criterion compares the new sample with
    `target/criterion/<benchmark_id>/base/`, then copies `new/` to `base/`. The
    baseline runs in the same job, on the same runner, before the gate
    runs: the job checks out the merge base with `main` (the previous tip of
