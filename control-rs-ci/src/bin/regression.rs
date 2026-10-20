@@ -4,8 +4,10 @@
 //! benchmark's `time:` point estimate is checked against a real-time latency
 //! budget (for example, 10 µs jitter for flight control loops). Criterion
 //! compares every benchmark with its `base/` sample and prints a verdict; a
-//! `regressed` verdict fails the gate. A benchmark without a baseline is only
-//! checked against its budget.
+//! `regressed` verdict fails the gate unless the benchmark runs under
+//! [`VERDICT_FLOOR_NS`], where run-to-run jitter exceeds any real change and
+//! only the budget applies. A benchmark without a baseline is only checked
+//! against its budget.
 //!
 //! Budgets come from a TOML file (`--budgets`, default
 //! `.cargo/regression.toml`). A key names a benchmark identifier exactly, or a
@@ -20,6 +22,11 @@ use std::process::{Command, Stdio};
 
 use control_rs_ci::cli::{USAGE_EXIT, arg_spelling};
 use control_rs_ci::ui;
+
+/// Time below which Criterion's `regressed` verdict is not enforced. A shift of
+/// a few nanoseconds is within the jitter of a shared runner; the latency
+/// budget still bounds these benchmarks.
+const VERDICT_FLOOR_NS: f64 = 1e3;
 
 /// Benchmarks in the order Criterion printed them.
 type Results = Vec<BenchmarkResult>;
@@ -359,7 +366,9 @@ fn failures(result: &BenchmarkResult, budgets: &Budgets) -> Vec<String> {
         Some(_) => {}
         None => reasons.push("No budget registered".to_string()),
     }
-    if result.verdict == Some(Verdict::Regressed) {
+    if result.verdict == Some(Verdict::Regressed)
+        && result.time_ns >= VERDICT_FLOOR_NS
+    {
         reasons.push("Criterion reports a performance regression".to_string());
     }
     reasons
@@ -692,6 +701,27 @@ state_space_scaling/zoh_dim/128
         assert_eq!(format_duration(1_000_000.0), "1.00 ms");
         assert_eq!(format_duration(2_500_000.0), "2.50 ms");
         assert_eq!(format_duration(1_000_000_000.0), "1.00 s");
+    }
+
+    #[test]
+    fn regressed_verdict_below_the_floor_defers_to_the_budget() {
+        let result = |time_ns| super::BenchmarkResult {
+            id: "a".to_string(),
+            time_ns,
+            change_pct: Some(10.5),
+            verdict: Some(Verdict::Regressed),
+        };
+        let budget = |text: &str| {
+            Budgets::parse(&format!("[budgets]\n\"a\" = \"{text}\"\n")).unwrap()
+        };
+        let roomy = budget("1 ms");
+        for time_ns in [15.1, super::VERDICT_FLOOR_NS - 1.0] {
+            let got = failures(&result(time_ns), &roomy);
+            assert!(got.is_empty(), "{got:?}");
+        }
+        assert_eq!(failures(&result(super::VERDICT_FLOOR_NS), &roomy).len(), 1);
+        // The budget still applies below the floor.
+        assert_eq!(failures(&result(15.1), &budget("10 ns")).len(), 1);
     }
 
     #[test]
