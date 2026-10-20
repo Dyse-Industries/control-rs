@@ -18,14 +18,13 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::link::{GraphFormat, LinkGraph};
-use super::reqs::{AUTOMATED_METHODS, LINK_METHOD, TraceConfig};
+use super::reqs::{
+    AUTOMATED_METHODS, DEFERRED_METHOD as DEFERRED, LINK_METHOD, TraceConfig,
+};
 use super::{
     CONDITION, DEFINITION, Defect, Defects, Row, SCHEMA, read_text, write_file,
 };
 use crate::error::GateResult;
-
-/// The method whose conditions are planned but not yet verifiable.
-const DEFERRED: &str = "deferred";
 
 /// A report and its defects.
 pub type Derived = (TraceReport, Defects);
@@ -693,7 +692,7 @@ fn parse_artifact(method: &str, text: &str) -> Option<ResultLog> {
 
 fn load_method_artifacts(config: &TraceConfig, base: &Path) -> MethodResultMap {
     let mut result_cache = HashMap::new();
-    for method in config.automated_methods() {
+    for method in AUTOMATED_METHODS {
         let Some(artifact_rel) = config
             .method
             .get(method)
@@ -733,7 +732,7 @@ fn check_staleness(
     let Some((doc_time, doc)) = newest else {
         return;
     };
-    for method in config.automated_methods() {
+    for method in AUTOMATED_METHODS {
         let Some(artifact) = config
             .method
             .get(method)
@@ -1023,11 +1022,6 @@ mod tests {
             doc_id: r"^#\s+.*\((?P<doc>[a-z0-9-]+)\)".to_string(),
             definition: r"^- \*\*(?:FR|NFR|C)-".to_string(),
             verification: r"^\| *(?:[a-z0-9-]+#)?VC-".to_string(),
-            methods: [
-                "libtest", "kani", "pytest", "gtest", "review", "deferred",
-            ]
-            .map(String::from)
-            .to_vec(),
             method,
             retired: vec![],
             decisions: None,
@@ -1455,12 +1449,6 @@ mod tests {
         }
     }
 
-    fn link_config() -> TraceConfig {
-        let mut config = default_config();
-        config.methods.push("link".to_string());
-        config
-    }
-
     fn condition_status_of<'a>(
         derived: &'a Derived,
         id: &str,
@@ -1483,7 +1471,7 @@ mod tests {
             definition_of("l#FR-1"),
             condition_of("l#VC-1.1", "l#FR-1", "link", &["w"]),
         ];
-        let derived = derive_with_base(&rows, &link_config(), &dir);
+        let derived = derive_with_base(&rows, &default_config(), &dir);
         let linked = condition_status_of(&derived, "l#VC-1.1").unwrap();
         assert_eq!(linked.status, Status::Fail);
         assert_eq!(linked.items.len(), 1);
@@ -1499,7 +1487,7 @@ mod tests {
             definition_of("l#FR-1"),
             condition_of("l#VC-1.1", "l#FR-1", "link", &["w#FR-1"]),
         ];
-        let derived = derive_with_base(&rows, &link_config(), &dir);
+        let derived = derive_with_base(&rows, &default_config(), &dir);
         let linked = condition_status_of(&derived, "l#VC-1.1").unwrap();
         assert_eq!(linked.status, Status::Review);
         let listed: Vec<&str> =

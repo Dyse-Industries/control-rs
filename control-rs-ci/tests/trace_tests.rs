@@ -84,7 +84,6 @@ mod cli {
          doc_id = '^#\\s+.*\\((?P<doc>[a-z0-9-]+)\\)'\n\
          definition = '^- \\*\\*(?:FR|NFR|C)-'\n\
          verification = '^\\| *(?:[a-z0-9-]+#)?VC-'\n\
-         methods = [\"libtest\", \"analysis\", \"inspection\", \"review\", \"link\"]\n\
          retired = []\n\n\
          [method.libtest]\n\
          result_artifact = \"out/test.log\"\n"

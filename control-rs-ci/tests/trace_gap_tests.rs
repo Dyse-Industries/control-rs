@@ -20,7 +20,6 @@ mod trace_gap {
          doc_id = '^#\\s+.*\\((?P<doc>[a-z0-9-]+)\\)'\n\
          definition = '^- \\*\\*(?:FR|NFR|C)-'\n\
          verification = '^\\| *(?:[a-z0-9-]+#)?VC-'\n\
-         methods = [\"libtest\", \"analysis\", \"inspection\", \"review\"]\n\
          retired = []\n\n\
          [method.libtest]\n\
          result_artifact = \"test.log\"\n",

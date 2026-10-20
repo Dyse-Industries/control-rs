@@ -11,7 +11,6 @@ files = [
 doc_id = '^#\s+.*\((?P<doc>[a-z0-9-]+)\)'
 definition = '^- \*\*(?:FR|NFR|C)-'
 verification = '^\| *(?:[a-z0-9-]+#)?VC-'
-methods = ["libtest", "kani", "pytest", "gtest", "analysis", "inspection", "review", "deferred", "link"]
 retired = [
     "requirement-traceability#FR-5",
     "requirement-traceability#VC-5.1",

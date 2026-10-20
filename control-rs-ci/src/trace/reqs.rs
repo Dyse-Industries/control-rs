@@ -21,13 +21,32 @@ use super::{
 use crate::error::{GateError, GateResult};
 
 /// The methods whose conditions name targets that a result artifact must
-/// record as passed. A configuration that lists one of them also names its
-/// `result_artifact`.
+/// record as passed. `[method.<m>]` names the artifact of method `<m>`.
 pub const AUTOMATED_METHODS: [&str; 4] = ["libtest", "kani", "pytest", "gtest"];
+
+/// The method whose conditions are planned but not yet verifiable.
+pub const DEFERRED_METHOD: &str = "deferred";
 
 /// The method whose conditions name documents, requirements or conditions as
 /// targets.
 pub const LINK_METHOD: &str = "link";
+
+/// The verification methods a condition may name.
+///
+/// The automated methods, the sign-off methods `analysis`, `inspection` and
+/// `review`, `deferred` and `link`. The set is fixed; a configuration does
+/// not list it.
+pub const METHODS: [&str; 9] = [
+    "libtest",
+    "kani",
+    "pytest",
+    "gtest",
+    "analysis",
+    "inspection",
+    "review",
+    DEFERRED_METHOD,
+    LINK_METHOD,
+];
 
 /// A file and line.
 pub(super) type At<'a> = (&'a str, usize);
@@ -81,9 +100,7 @@ pub struct TraceConfig {
     pub definition: String,
     /// Pattern for a line that defines a verification condition.
     pub verification: String,
-    /// Verification methods a condition may name.
-    pub methods: Vec<String>,
-    /// Result artifact per method.
+    /// Result artifact per automated method.
     #[serde(default)]
     pub method: BTreeMap<String, MethodConfig>,
     /// Qualified IDs that must not be defined or referenced again.
@@ -136,8 +153,6 @@ pub struct Rules {
     definition: Regex,
     /// A verification condition line.
     verification: Regex,
-    /// Verification methods a condition may name.
-    methods: Vec<String>,
     /// Pattern matching the document ID declaration in Markdown.
     doc_id: Regex,
     /// IDs that must not appear.
@@ -178,14 +193,6 @@ struct ScanContext<'a> {
 }
 
 impl TraceConfig {
-    /// The automated methods this configuration lists, in [`AUTOMATED_METHODS`]
-    /// order.
-    pub fn automated_methods(&self) -> impl Iterator<Item = &'static str> + '_ {
-        AUTOMATED_METHODS
-            .into_iter()
-            .filter(|m| self.methods.iter().any(|listed| listed == m))
-    }
-
     /// The file-name endings of the Markdown files a directory root selects.
     #[must_use]
     pub fn doc_suffixes(&self) -> Vec<String> {
@@ -219,16 +226,15 @@ impl TraceConfig {
                 error(format!("`{key}` is not a valid pattern: {e}"))
             })
         };
-        for m in self.automated_methods() {
-            let has_artifact = self
-                .method
-                .get(m)
-                .is_some_and(|c| c.result_artifact.is_some());
-            if !has_artifact {
-                return Err(error(format!(
-                    "automated method `{m}` has no `result_artifact`"
-                )));
-            }
+        if let Some(m) = self
+            .method
+            .keys()
+            .find(|m| !AUTOMATED_METHODS.contains(&m.as_str()))
+        {
+            return Err(error(format!(
+                "`method.{m}` names no automated method; expected one of {}",
+                AUTOMATED_METHODS.join(", ")
+            )));
         }
         compile("doc", &self.doc)?;
         compile("id", &self.id)?;
@@ -249,7 +255,6 @@ impl TraceConfig {
             condition_occurrence: compile("condition", &condition_occurrence)?,
             definition: compile("definition", &self.definition)?,
             verification: compile("verification", &self.verification)?,
-            methods: self.methods.clone(),
             doc_id: compile("doc_id", &self.doc_id)?,
             retired: self.retired.iter().cloned().collect(),
             decisions,
@@ -299,12 +304,12 @@ impl Rules {
             Some(format!("{owner}{QUALIFIER}{id}"))
         })
     }
+}
 
-    /// Whether `name` is one of the configured verification methods.
-    #[must_use]
-    pub fn is_method(&self, name: &str) -> bool {
-        self.methods.iter().any(|m| m == name)
-    }
+/// Whether `name` is one of the verification [`METHODS`].
+#[must_use]
+pub fn is_method(name: &str) -> bool {
+    METHODS.contains(&name)
 }
 
 fn default_doc_id() -> String {
@@ -405,13 +410,13 @@ fn scan_condition_line(
     let c_doc = cond_caps.name("trace_doc").map_or(ctx.doc, |m| m.as_str());
     let cond_qualified = format!("{c_doc}{QUALIFIER}{c_id}");
 
-    // The method is the code span whose content is in `methods`; failing
+    // The method is the code span whose content is in `METHODS`; failing
     // that, the first code span that holds no ID, so that `check` reports it
-    // as outside `methods`.
+    // as an unknown method.
     let spans = super::code_spans(line);
     let method = spans
         .iter()
-        .find(|s| ctx.rules.is_method(s.content))
+        .find(|s| is_method(s.content))
         .or_else(|| {
             spans.iter().find(|s| {
                 !ctx.rules.occurrence.is_match(s.content)
@@ -607,13 +612,13 @@ fn check_condition_methods(
         }
         let methods = super::code_spans(&condition.text)
             .iter()
-            .filter(|s| rules.is_method(s.content))
+            .filter(|s| is_method(s.content))
             .count();
         let message = match &condition.method {
             None => {
                 Some(format!("condition {id} names no verification method"))
             }
-            Some(m) if !rules.is_method(m) => {
+            Some(m) if !is_method(m) => {
                 Some(format!("condition {id} names unknown method `{m}`"))
             }
             Some(_) if methods > 1 => {
@@ -894,7 +899,7 @@ mod tests {
 
 | Condition | Requirement | Method | Criterion |
 |:----------|:------------|:-------|:----------|
-| VC-1.1    | FR-1        | `test` | Exact size match |
+| VC-1.1    | FR-1        | `libtest` | Exact size match |
 ";
 
     const DECISIONS: &str = r#"retired = []
@@ -916,7 +921,6 @@ files = ["docs/*-design.md"]
 doc_id = '^#\s+.*\((?P<doc>[a-z0-9-]+)\)'
 definition = '^- \*\*(?:FR|NFR|C)-'
 verification = '^\| *(?:[a-z0-9-]+#)?VC-'
-methods = ["test", "analysis", "inspection", "review"]
 "#;
 
     const LINKED: &str = "\
@@ -991,7 +995,7 @@ methods = ["test", "analysis", "inspection", "review"]
 ```
 
    ```text
-   | VC-3.1 | FR-3 | `test` | indented fence |
+   | VC-3.1 | FR-3 | `libtest` | indented fence |
    ```
 
 ~~~
@@ -1026,7 +1030,7 @@ methods = ["test", "analysis", "inspection", "review"]
 
     #[test]
     fn reference_lines_record_every_local_and_qualified_id() {
-        let source = "# Widget (widget)\n\n| VC-1.1 | FR-1, storage#FR-3 | `test` | Criterion FR-2 |\n";
+        let source = "# Widget (widget)\n\n| VC-1.1 | FR-1, storage#FR-3 | `libtest` | Criterion FR-2 |\n";
         let (rows, _) = scan_markdown(FILE, source, &rules());
         assert_eq!(rows.len(), 1);
         let cond = rows.first().unwrap();
@@ -1035,19 +1039,22 @@ methods = ["test", "analysis", "inspection", "review"]
             cond.parents,
             ["widget#FR-1", "storage#FR-3", "widget#FR-2"]
         );
-        assert_eq!(cond.method, Some("test".to_string()));
+        assert_eq!(cond.method, Some("libtest".to_string()));
     }
 
     #[test]
     fn rows_carry_normalized_text() {
         let (rows, _) = scan_markdown(FILE, CLEAN, &rules());
         let plan = rows.get(1).unwrap();
-        assert_eq!(plan.text, "| VC-1.1 | FR-1 | `test` | Exact size match |");
+        assert_eq!(
+            plan.text,
+            "| VC-1.1 | FR-1 | `libtest` | Exact size match |"
+        );
     }
 
     #[test]
     fn doc_id_is_extracted_from_the_title_declaration() {
-        let source = "# Storage Backends (storage)\n\n- **FR-1**: Desc\n\n| VC-1.1 | FR-1 | `test` | C |\n";
+        let source = "# Storage Backends (storage)\n\n- **FR-1**: Desc\n\n| VC-1.1 | FR-1 | `libtest` | C |\n";
         let (rows, defects) =
             scan_markdown("docs/storage.md", source, &rules());
         assert!(defects.is_empty(), "{defects:?}");
@@ -1056,7 +1063,7 @@ methods = ["test", "analysis", "inspection", "review"]
 
     #[test]
     fn missing_doc_id_declaration_is_reported_as_defect() {
-        let source = "# Storage Backends\n\n- **FR-1**: Desc\n\n| VC-1.1 | FR-1 | `test` | C |\n";
+        let source = "# Storage Backends\n\n- **FR-1**: Desc\n\n| VC-1.1 | FR-1 | `libtest` | C |\n";
         let (rows, defects) =
             scan_markdown("docs/storage.md", source, &rules());
         assert_eq!(defects.len(), 1);
@@ -1072,12 +1079,12 @@ methods = ["test", "analysis", "inspection", "review"]
     fn duplicate_doc_id_across_files_is_reported() {
         let (rows1, _) = scan_markdown(
             "docs/a.md",
-            "# Doc A (widget)\n\n- **FR-1**: Desc\n\n| VC-1.1 | FR-1 | `test` | C |\n",
+            "# Doc A (widget)\n\n- **FR-1**: Desc\n\n| VC-1.1 | FR-1 | `libtest` | C |\n",
             &rules(),
         );
         let (rows2, _) = scan_markdown(
             "docs/b.md",
-            "# Doc B (widget)\n\n- **FR-2**: Desc\n\n| VC-2.1 | FR-2 | `test` | C |\n",
+            "# Doc B (widget)\n\n- **FR-2**: Desc\n\n| VC-2.1 | FR-2 | `libtest` | C |\n",
             &rules(),
         );
         let all_rows = [rows1, rows2].concat();
@@ -1136,12 +1143,12 @@ methods = ["test", "analysis", "inspection", "review"]
     fn only_definitions_make_a_document_id_shared_between_files() {
         let (defined, _) = scan_markdown(
             "docs/a.md",
-            "# Doc A (widget)\n\n- **FR-1**: Desc\n\n| VC-1.1 | FR-1 | `test` | C |\n",
+            "# Doc A (widget)\n\n- **FR-1**: Desc\n\n| VC-1.1 | FR-1 | `libtest` | C |\n",
             &rules(),
         );
         let (only_conditions, _) = scan_markdown(
             "docs/b.md",
-            "# Doc B (widget)\n\n| VC-2.1 | FR-1 | `test` | C |\n",
+            "# Doc B (widget)\n\n| VC-2.1 | FR-1 | `libtest` | C |\n",
             &rules(),
         );
         let rows = [defined, only_conditions].concat();
@@ -1175,7 +1182,7 @@ methods = ["test", "analysis", "inspection", "review"]
 
     #[test]
     fn reference_to_an_undefined_id_is_unresolved() {
-        let source = format!("{CLEAN}| VC-7.1 | FR-7 | `test` | Other |\n");
+        let source = format!("{CLEAN}| VC-7.1 | FR-7 | `libtest` | Other |\n");
         assert_eq!(
             messages(&source, &rules()),
             [
@@ -1236,7 +1243,7 @@ methods = ["test", "analysis", "inspection", "review"]
 
     #[test]
     fn scan_condition_finds_parents() {
-        let source = "# Widget (widget)\n\n| VC-1.1 | FR-1, FR-2 | `test` |";
+        let source = "# Widget (widget)\n\n| VC-1.1 | FR-1, FR-2 | `libtest` |";
         let (found, _) = scan_markdown(FILE, source, &rules());
         assert_eq!(found.len(), 1);
 
@@ -1246,12 +1253,12 @@ methods = ["test", "analysis", "inspection", "review"]
             first.parents,
             ["widget#FR-1".to_string(), "widget#FR-2".to_string()]
         );
-        assert_eq!(first.method, Some("test".to_string()));
+        assert_eq!(first.method, Some("libtest".to_string()));
     }
 
     #[test]
     fn condition_without_parents_is_an_orphan() {
-        let source = "| VC-1.1 | | `test` |";
+        let source = "| VC-1.1 | | `libtest` |";
         let (found, mut defects) = scan_markdown(FILE, source, &rules());
         defects.extend(check(&found, &rules()));
         assert!(defects.iter().any(|d| d.message.contains("has no parent")));
@@ -1259,7 +1266,7 @@ methods = ["test", "analysis", "inspection", "review"]
 
     #[test]
     fn ids_inside_longer_tokens_or_condition_ids_are_not_parents() {
-        let source = "# Widget (widget)\n\n| VC-1.1 | FR-1 | `test` | Per IEC-61508 and XFR-2 |\n";
+        let source = "# Widget (widget)\n\n| VC-1.1 | FR-1 | `libtest` | Per IEC-61508 and XFR-2 |\n";
         let (rows, _) = scan_markdown(FILE, source, &rules());
         assert_eq!(
             rows.first().map(|r| r.parents.as_slice()),
@@ -1271,7 +1278,7 @@ methods = ["test", "analysis", "inspection", "review"]
     fn row_and_method_defects_are_reported() {
         let cases = [
             (
-                "| VC-1.1 | VC-1.2 | FR-1 | `test` | Two |",
+                "| VC-1.1 | VC-1.2 | FR-1 | `libtest` | Two |",
                 "verification row of widget#VC-1.1 names more than one \
                  condition ID",
             ),
@@ -1284,7 +1291,7 @@ methods = ["test", "analysis", "inspection", "review"]
                 "condition widget#VC-1.1 names unknown method `demo`",
             ),
             (
-                "| VC-1.1 | FR-1 | `test` | `review` |",
+                "| VC-1.1 | FR-1 | `libtest` | `review` |",
                 "condition widget#VC-1.1 names more than one method",
             ),
         ];
@@ -1297,29 +1304,33 @@ methods = ["test", "analysis", "inspection", "review"]
     }
 
     #[test]
-    fn a_listed_automated_method_needs_a_result_artifact() {
-        let accepted = |methods: &str, tail: &str| {
-            let text = format!("{KEYS}retired = []{tail}").replace(
-                "[\"test\", \"analysis\"",
-                &format!("[{methods}, \"analysis\""),
-            );
+    fn a_method_table_names_an_automated_method() {
+        let accepted = |tail: &str| {
+            let text = format!("{KEYS}retired = []{tail}");
             let config: TraceConfig = toml::from_str(&text).unwrap();
             config.rules(Path::new("trace.toml")).is_ok()
         };
-        assert!(accepted("\"test\"", ""));
-        assert!(!accepted("\"libtest\"", ""));
+        assert!(accepted(""));
         assert!(accepted(
-            "\"libtest\"",
             "\n[method.libtest]\nresult_artifact = \"t.log\"\n"
         ));
+        assert!(!accepted(
+            "\n[method.review]\nresult_artifact = \"t.log\"\n"
+        ));
+    }
+
+    #[test]
+    fn methods_is_not_a_configuration_key() {
+        let text = format!("{KEYS}retired = []\nmethods = [\"libtest\"]\n");
+        assert!(toml::from_str::<TraceConfig>(&text).is_err());
     }
 
     #[test]
     fn targets_are_the_code_spans_of_the_fourth_cell() {
         let source = "# Widget (widget)\n\n\
-            | VC-1.1 | FR-1 | `test` | `a::t::x`, `a::t::y` | `z` Crit |\n\
+            | VC-1.1 | FR-1 | `libtest` | `a::t::x`, `a::t::y` | `z` Crit |\n\
             | VC-1.2 | FR-1 | `review` | — | Crit |\n\
-            | VC-1.3 | FR-1 | `test` | Crit |\n";
+            | VC-1.3 | FR-1 | `libtest` | Crit |\n";
         let (rows, _) = scan_markdown(FILE, source, &rules());
         let targets: Vec<_> = rows.iter().map(|r| r.targets.clone()).collect();
         assert_eq!(
@@ -1334,7 +1345,7 @@ methods = ["test", "analysis", "inspection", "review"]
 
     #[test]
     fn a_parent_named_twice_is_recorded_once() {
-        let source = "# Widget (widget)\n\n| VC-1.1 | FR-1 | `test` | FR-1 holds iff both hold |\n";
+        let source = "# Widget (widget)\n\n| VC-1.1 | FR-1 | `libtest` | FR-1 holds iff both hold |\n";
         let (rows, _) = scan_markdown(FILE, source, &rules());
         assert_eq!(
             rows.first().map(|r| r.parents.as_slice()),
@@ -1366,7 +1377,7 @@ methods = ["test", "analysis", "inspection", "review"]
     #[test]
     fn document_with_no_definitions_is_a_defect() {
         let source =
-            "# Widget (widget)\n\n| VC-1.1 | FR-1 | `test` | Orphan |\n";
+            "# Widget (widget)\n\n| VC-1.1 | FR-1 | `libtest` | Orphan |\n";
         let (rows, defects) = scan_markdown(FILE, source, &rules());
         assert_eq!(rows.len(), 1);
         assert_eq!(defects.len(), 1);
@@ -1379,7 +1390,7 @@ methods = ["test", "analysis", "inspection", "review"]
 
     #[test]
     fn verification_row_first_cell_validation() {
-        let bad = "# Widget (widget)\n\n- **FR-1 — Size**: shall report.\n\n| VC-X | FR-1 | `test` | see VC-9.1 |\n";
+        let bad = "# Widget (widget)\n\n- **FR-1 — Size**: shall report.\n\n| VC-X | FR-1 | `libtest` | see VC-9.1 |\n";
         let defects = messages(bad, &rules());
         assert!(
             defects
@@ -1387,7 +1398,7 @@ methods = ["test", "analysis", "inspection", "review"]
                 .any(|d| d == "verification row names no condition ID")
         );
 
-        let good = "# Widget (widget)\n\n- **FR-1 — Size**: shall report.\n\n| VC-1.1 | FR-1 | `test` | Valid |\n";
+        let good = "# Widget (widget)\n\n- **FR-1 — Size**: shall report.\n\n| VC-1.1 | FR-1 | `libtest` | Valid |\n";
         let (rows, defects) = scan_markdown(FILE, good, &rules());
         assert_eq!(rows.len(), 2);
         assert_eq!(rows.get(1).map(|r| r.id.as_str()), Some("widget#VC-1.1"));
