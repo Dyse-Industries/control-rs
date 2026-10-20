@@ -480,7 +480,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "--config", ".cargo/mutants-tools.toml", "--package", "control-rs-ci", "--shard", "0/2", "--output", "target/ci-artifacts/mutants-ci-0.out"]
-diff-trigger = ["control-rs-ci/"]
+diff-trigger = ["control-rs-ci/", ".cargo/mutants-tools.toml"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ci, chunk 1 of 2"
 
@@ -489,7 +489,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "--config", ".cargo/mutants-tools.toml", "--package", "control-rs-ci", "--shard", "1/2", "--output", "target/ci-artifacts/mutants-ci-1.out"]
-diff-trigger = ["control-rs-ci/"]
+diff-trigger = ["control-rs-ci/", ".cargo/mutants-tools.toml"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ci, chunk 2 of 2"
 
@@ -507,7 +507,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "--config", ".cargo/mutants-tools.toml", "--package", "control-rs-compare", "--output", "target/ci-artifacts/mutants-compare.out"]
-diff-trigger = ["control-rs-compare/"]
+diff-trigger = ["control-rs-compare/", ".cargo/mutants-tools.toml"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-compare"
 
@@ -520,7 +520,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "--config", ".cargo/mutants-tools.toml", "--package", "control-rs-ets-host", "--output", "target/ci-artifacts/mutants-ets-host.out"]
-diff-trigger = ["control-rs-ets-host/"]
+diff-trigger = ["control-rs-ets-host/", ".cargo/mutants-tools.toml"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ets-host"
 
@@ -534,7 +534,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "--config", ".cargo/mutants-tools.toml", "--package", "control-rs-ets", "--output", "target/ci-artifacts/mutants-ets.out"]
-diff-trigger = ["control-rs-ets/"]
+diff-trigger = ["control-rs-ets/", ".cargo/mutants-tools.toml"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ets"
 
