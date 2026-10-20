@@ -133,6 +133,7 @@ Graillat
 Gram-Schmidt
 Greenbaum
 Greif
+gtest
 H_series
 Haidar
 Hammarling
@@ -271,6 +272,7 @@ Profilers
 Protobuf
 Pseudospectra
 Puzikova
+pytest
 QEMU
 Quantizes
 Qx

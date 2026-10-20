@@ -716,6 +716,7 @@ Four choices keep the stronger levels additive:
 | 2.3      | October 20, 2026   | @MitchellDScott, Claude Sonnet 5.5 | Added the optional trace-check --graph argument.                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | 2.4      | October 20, 2026   | @MitchellDScott, Claude Sonnet 5.5 | Added FR-13 Links: link_methods, Matching Rule 7, the link check, link status derivation, VC-19.1 to VC-19.3 and Phase 8.                                                                                                                                                                                                                                                                                                                                                                              |
 | 2.5 | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5 | Counts include link conditions. |
+| 2.6 | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5 | Hardcoded the link method and the automated methods libtest, kani, pytest and gtest; removed link_methods and automated_methods from the configuration. |
 
 ---
 
