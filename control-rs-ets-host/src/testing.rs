@@ -33,6 +33,9 @@ pub struct ScriptLink {
     pub preload: Vec<LinkEvent>,
 }
 
+/// Case id and verdict used when a fake omits the trailing `RunStats`.
+pub type OmitStats = (u16, Verdict);
+
 /// The model of a target behind a [`ScriptLink`].
 #[derive(Debug, Clone)]
 pub struct Fake {
@@ -46,6 +49,12 @@ pub struct Fake {
     pub panic_item: Option<u16>,
     /// Setting index that discovery drops.
     pub drop_setting: Option<u16>,
+    /// Executable index that discovery drops (`None` slot after `SuiteInfo`).
+    pub drop_exec: Option<u16>,
+    /// Case that settles with `Done(verdict)` and never sends `RunStats`.
+    pub omit_stats: Option<OmitStats>,
+    /// Task item that ends with `RunStats` and never sends `Done`.
+    pub orphan_stats: Option<u16>,
     /// Release-source flag of `TargetInfo`.
     pub release_source: bool,
     /// Wire revision reported.
@@ -76,6 +85,9 @@ impl Default for Fake {
             missed: 0,
             panic_item: None,
             drop_setting: None,
+            drop_exec: None,
+            omit_stats: None,
+            orphan_stats: None,
             release_source: false,
             version: PROTOCOL_VERSION,
             active: None,
@@ -152,6 +164,9 @@ impl Fake {
             (1, "boom", ExecMode::Atomic.bit(), PacketDecl::default()),
             (2, "loop", 0b1_1111, byte),
         ] {
+            if self.drop_exec == Some(item) {
+                continue;
+            }
             out.push(OwnedTelemetry::TestInfo {
                 description: String::new(),
                 input: io.clone(),
@@ -231,10 +246,32 @@ impl Fake {
                 out.push(sample(0, vec![9]));
                 out.extend(self.finish(1, Verdict::Bounded));
             }
+            (2, _) if self.orphan_stats == Some(item) => {
+                out.push(stats(item, 1, 0, 0));
+            }
             (2, _) => self.active = Some((item, mode, max_steps)),
             _ => {
-                out.push(state(item, TestState::Passed, Some(Verdict::Pass)));
-                out.push(stats(item, 1, 0, 0));
+                if let Some((omit_item, verdict)) = self.omit_stats
+                    && omit_item == item
+                {
+                    let failed = !matches!(verdict, Verdict::Pass);
+                    out.push(state(
+                        item,
+                        if failed {
+                            TestState::Failed
+                        } else {
+                            TestState::Passed
+                        },
+                        Some(verdict),
+                    ));
+                } else {
+                    out.push(state(
+                        item,
+                        TestState::Passed,
+                        Some(Verdict::Pass),
+                    ));
+                    out.push(stats(item, 1, 0, 0));
+                }
             }
         }
         out

@@ -413,23 +413,9 @@ impl SessionState {
                 self.on_test_state_change((suite_id, test_id), state);
                 Vec::new()
             }
-            OwnedTelemetry::RunStats {
-                suite_id,
-                test_id,
-                cycles,
-                time_ns,
-                stack_peak,
-                ..
-            } => self.on_metric_report(TestOutcome {
-                suite_id,
-                test_id,
-                suite_name: String::new(),
-                test_name: String::new(),
-                state: TestState::Passed,
-                cycles: Some(cycles),
-                time_us: Some(time_ns / 1000),
-                stack_peak: Some(stack_peak),
-            }),
+            stats @ OwnedTelemetry::RunStats { .. } => {
+                self.on_run_stats(&stats)
+            }
             OwnedTelemetry::TargetPanic {
                 message,
                 file,
@@ -680,15 +666,56 @@ impl SessionState {
         }
     }
 
-    /// Records a passing metric report and starts the next queued test.
+    /// Builds a metric report from `RunStats`, preserving a prior Failed settle.
+    fn on_run_stats(&mut self, stats: &OwnedTelemetry) -> Vec<SessionAction> {
+        let OwnedTelemetry::RunStats {
+            suite_id,
+            test_id,
+            cycles,
+            time_ns,
+            stack_peak,
+            ..
+        } = *stats
+        else {
+            return Vec::new();
+        };
+        // Wire settle is Done(verdict) then RunStats. Keep Failed from
+        // Done(Fail|Bounded) / Faulted instead of forcing Passed.
+        let prior_failed = self
+            .find_outcome(suite_id, test_id)
+            .is_some_and(|o| o.state == TestState::Failed)
+            || self
+                .test_mut(suite_id, test_id)
+                .is_some_and(|t| t.state == TestState::Failed);
+        self.on_metric_report(TestOutcome {
+            suite_id,
+            test_id,
+            suite_name: String::new(),
+            test_name: String::new(),
+            state: if prior_failed {
+                TestState::Failed
+            } else {
+                TestState::Passed
+            },
+            cycles: Some(cycles),
+            time_us: Some(time_ns / 1000),
+            stack_peak: Some(stack_peak),
+        })
+    }
+
+    /// Attaches metrics from a `RunStats` report and advances the queue while Running.
     ///
-    /// `report` carries the metrics; its name fields are filled in here.
+    /// `report.state` is the settled outcome (`Passed` or a prior `Failed`). Name
+    /// fields are filled in here.
     fn on_metric_report(
         &mut self,
         mut report: TestOutcome,
     ) -> Vec<SessionAction> {
+        if self.phase != SessionPhase::Running {
+            return Vec::new();
+        }
         if let Some(test) = self.test_mut(report.suite_id, report.test_id) {
-            test.state = TestState::Passed;
+            test.state = report.state;
             test.cycles = report.cycles;
             test.time_us = report.time_us;
             test.stack_peak = report.stack_peak;
@@ -731,6 +758,9 @@ impl SessionState {
         };
 
         self.current_running = None;
+        // Drop the pre-panic queue; rediscovery rebuilds pending work. Leaving
+        // entries lets a late RunStats during Recovering emit RunExecutable.
+        self.run_queue.clear();
         for s in &mut self.suites {
             s.reset_discovery();
         }
@@ -1084,10 +1114,68 @@ mod tests {
 
         assert_eq!(state.phase, SessionPhase::Recovering);
         assert_eq!(state.current_running, None);
+        assert!(state.run_queue.is_empty());
         assert_eq!(state.results.len(), 1);
         assert_eq!(state.results.first().unwrap().suite_id, 0);
         assert_eq!(state.results.first().unwrap().test_id, 0);
         assert_eq!(state.results.first().unwrap().state, TestState::Failed);
+    }
+
+    #[test]
+    fn run_stats_preserves_failed_after_done_fail() {
+        let mut state = matched();
+        let frames = make_test_suite_telemetry(0, "Suite0", 2, 0);
+        for f in frames {
+            let _ = state.handle_message(BridgeMessage::Telemetry(f));
+        }
+        let _ = state.handle_message(BridgeMessage::Telemetry(
+            OwnedTelemetry::DiscoveryComplete,
+        ));
+        assert_eq!(state.current_running, Some((0, 0)));
+
+        let _ = state.handle_message(BridgeMessage::Telemetry(
+            OwnedTelemetry::TestStateChange {
+                message: None,
+                suite_id: 0,
+                test_id: 0,
+                state: TestState::Failed,
+                verdict: Some(control_rs_ets::wire::Verdict::Fail),
+            },
+        ));
+        assert_eq!(state.results.len(), 1);
+        assert_eq!(state.results.first().unwrap().state, TestState::Failed);
+
+        let actions = state.handle_message(BridgeMessage::Telemetry(
+            run_stats((0, 0), 10, 1000, 8),
+        ));
+        assert_eq!(state.results.len(), 1);
+        assert_eq!(state.results.first().unwrap().state, TestState::Failed);
+        assert_eq!(state.results.first().unwrap().cycles, Some(10));
+        assert_eq!(state.current_running, Some((0, 1)));
+        assert_eq!(actions.len(), 1);
+    }
+
+    #[test]
+    fn late_run_stats_during_recovering_does_not_advance_queue() {
+        let mut state = matched();
+        let frames = make_test_suite_telemetry(0, "Suite0", 2, 0);
+        for f in frames {
+            let _ = state.handle_message(BridgeMessage::Telemetry(f));
+        }
+        let _ = state.handle_message(BridgeMessage::Telemetry(
+            OwnedTelemetry::DiscoveryComplete,
+        ));
+        let _ = state
+            .handle_message(BridgeMessage::Telemetry(target_panic("boom")));
+        assert_eq!(state.phase, SessionPhase::Recovering);
+        assert!(state.run_queue.is_empty());
+
+        let actions = state.handle_message(BridgeMessage::Telemetry(
+            run_stats((0, 0), 1, 1, 1),
+        ));
+        assert!(actions.is_empty());
+        assert_eq!(state.phase, SessionPhase::Recovering);
+        assert!(state.current_running.is_none());
     }
 
     #[test]

@@ -424,6 +424,11 @@ impl<L: HostLink<Error = HostError>> Session<L> {
         for (suite, index) in self.catalog.missing_settings() {
             let _ = self.get_setting(suite, ParamKey::Index(index))?;
         }
+        // Settings refill by Param index; executable holes have no refetch.
+        // Skipping them would let case_ids omit registered cases (false green).
+        if !self.catalog.missing_executables().is_empty() {
+            return Err(HostError::Discovery);
+        }
         self.device = DeviceState::Idle;
         Ok(())
     }
@@ -442,8 +447,16 @@ impl<L: HostLink<Error = HostError>> Session<L> {
             match self.wait_event(until) {
                 Wait::Closed => return Err(closed()),
                 Wait::Timeout => {
+                    // Wire settle is Done(verdict) then RunStats. A timeout after
+                    // Done must keep the verdict and leave Idle; only true silence
+                    // is UnreportedFault + recover.
+                    if let Some(v) = verdict {
+                        outcome.status = CaseStatus::Done(v);
+                        self.device = DeviceState::Idle;
+                        return Ok(outcome);
+                    }
                     outcome.status = CaseStatus::UnreportedFault;
-                    self.recover()?;
+                    let _ = self.recover();
                     return Ok(outcome);
                 }
                 Wait::Event(event) => match *event {
@@ -478,7 +491,8 @@ impl<L: HostLink<Error = HostError>> Session<L> {
                             line,
                             message,
                         };
-                        self.recover()?;
+                        // Keep Faulted even when rediscovery fails after reset.
+                        let _ = self.recover();
                         return Ok(outcome);
                     }
                     _ => {}
@@ -828,5 +842,31 @@ mod tests {
             Some(HostError::Transport { .. })
         ));
         assert_eq!(open(Fake::default()).console(), "");
+    }
+
+    #[test]
+    fn dropped_executable_fails_discovery() {
+        let err = Session::open_with(
+            Fake {
+                drop_exec: Some(1),
+                ..Fake::default()
+            }
+            .link(),
+            quick(),
+        )
+        .err();
+        assert!(matches!(err, Some(HostError::Discovery)));
+    }
+
+    #[test]
+    fn done_without_stats_keeps_verdict() {
+        let mut s = open(Fake {
+            omit_stats: Some((0, Verdict::Fail)),
+            ..Fake::default()
+        });
+        let outcome = s.run_case((0, 0)).unwrap();
+        assert_eq!(outcome.status, CaseStatus::Done(Verdict::Fail));
+        assert!(outcome.stats.is_none());
+        assert_eq!(s.device_state(), DeviceState::Idle);
     }
 }
