@@ -22,7 +22,7 @@ Gates, groups and commands are declared in [`.cargo/gate.toml`](../.cargo/gate.t
 cargo ci --list            # registered gates
 cargo ci --group lint      # one group
 cargo ci --only fmt,clippy # selected gates
-cargo ci --all             # include default = false gates (mutants-*, regression)
+cargo ci --all             # include default = false gates (mutants, regression)
 cargo ci --skip valgrind   # all but one (for example on macOS)
 cargo ci -j 2              # at most two groups at once
 cargo ci -v --group verify # stream output as "[verify] cross-compare | ..."
