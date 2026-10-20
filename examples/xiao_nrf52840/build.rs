@@ -15,9 +15,9 @@ fn main() {
             b"
 MEMORY
 {
-  /* nRF52840 with Adafruit / Seeed UF2 Bootloader offset */
-  FLASH : ORIGIN = 0x00001000, LENGTH = 1020K
-  RAM   : ORIGIN = 0x20000008, LENGTH = 255K
+  /* nRF52840 above the Seeed UF2 bootloader's SoftDevice S140 7.3.0 */
+  FLASH : ORIGIN = 0x00027000, LENGTH = 0xC6000
+  RAM   : ORIGIN = 0x20006000, LENGTH = 0x3A000
 }
 ",
         )
