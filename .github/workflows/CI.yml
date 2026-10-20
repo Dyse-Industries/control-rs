@@ -552,7 +552,7 @@ jobs:
         run: cargo binstall -y cargo-mutants
 
       - name: Run Mutants Gate
-        run: cargo gate --verbose --only mutants -- --shard ${{ matrix.shard }}/${{ needs.mutants_plan.outputs.count }}
+        run: cargo gate --verbose --only mutants -- --shard ${{ matrix.shard }}/${{ needs.mutants_plan.outputs.count }} --sharding round-robin
 
       # Outside the `ci-artifacts-*` pattern: shards share one gate result name,
       # so the report job must not merge them.
