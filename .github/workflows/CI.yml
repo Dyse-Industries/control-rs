@@ -499,13 +499,47 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: cargo binstall -y cargo-mutants
 
+      # `--in-diff` only matches mutateable production lines. A diff that drops
+      # kills (tests, exclude_re, gate/workflow wiring) yields
+      # "No mutants to filter" and exit 0, so the job would pass unmeasured.
+      # Those paths fall back to a full `mutants` run (same as the pre-shard
+      # path-trigger behaviour when `.cargo/mutants.toml` or CI config changed).
       - name: Diff against the pull request base
+        id: mutants_diff
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
+          set -euo pipefail
           mkdir -p target/ci-artifacts
-          git diff origin/${{ github.base_ref }}.. > target/ci-artifacts/pr.diff
+          base="origin/${BASE_REF}"
+          # Three-dot: changes on the PR since the merge-base with the base tip.
+          git diff "${base}...HEAD" > target/ci-artifacts/pr.diff
+          if git diff --name-only "${base}...HEAD" \
+            | grep -E '(^\.cargo/mutants\.toml$|^\.cargo/gate\.toml$|^\.github/workflows/|/tests/)'; then
+            echo "coverage_paths=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "coverage_paths=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Run Mutants Gate
-        run: cargo gate --verbose --diff --only mutants -- --in-diff target/ci-artifacts/pr.diff
+        env:
+          COVERAGE_PATHS: ${{ steps.mutants_diff.outputs.coverage_paths }}
+        run: |
+          set -euo pipefail
+          set +e
+          cargo gate --verbose --diff --only mutants -- \
+            --in-diff target/ci-artifacts/pr.diff \
+            2>&1 | tee target/ci-artifacts/mutants-console.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            exit "$status"
+          fi
+          if grep -q 'No mutants to filter' target/ci-artifacts/mutants-console.log \
+            && [ "$COVERAGE_PATHS" = "true" ]; then
+            echo "::warning::--in-diff produced no mutants while coverage-affecting paths changed; re-running without --in-diff"
+            cargo gate --verbose --diff --only mutants
+          fi
 
       - name: Upload Mutants Artifacts
         if: always()
