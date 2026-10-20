@@ -134,6 +134,7 @@ pub struct Runner<'a, L, P, B, M> {
 struct State {
     cycles: u64,
     deadline_ns: u64,
+    epoch_ns: u64,
     input: [u8; MAX_PACKET_SIZE],
     input_len: usize,
     input_seq: Option<u64>,
@@ -184,6 +185,7 @@ impl State {
         Self {
             cycles: 0,
             deadline_ns: 0,
+            epoch_ns: 0,
             input: [0; MAX_PACKET_SIZE],
             input_len: 0,
             input_seq: None,
@@ -298,7 +300,6 @@ where
             message: None,
         })?;
         state.started_ns = self.now();
-        state.deadline_ns = Self::deadline_from(state.started_ns, exec);
         if let Err(message) = (exec.setup)() {
             state.end(Verdict::Error, Some(message));
             return Ok(());
@@ -307,6 +308,9 @@ where
             let period = (M::PACING == Pacing::Periodic).then_some(period_ns);
             self.board.arm(period);
         }
+        // The release schedule and the link deadline start once setup has finished.
+        state.epoch_ns = self.now();
+        state.deadline_ns = Self::deadline_from(state.epoch_ns, exec);
         while state.verdict.is_none() {
             // A masked single step has no boundary: nothing can interrupt it, and a link that
             // can only block would stall it.
@@ -430,7 +434,7 @@ where
         if M::PACING != Pacing::Periodic || self.job.period_ns == 0 {
             return 0;
         }
-        let elapsed = self.now().saturating_sub(state.started_ns);
+        let elapsed = self.now().saturating_sub(state.epoch_ns);
         let due = elapsed
             .checked_div(u64::from(self.job.period_ns))
             .unwrap_or(0)
@@ -477,7 +481,7 @@ where
         state.step_max_ns = state.step_max_ns.max(took);
         if M::PACING == Pacing::Periodic && period_ns != 0 {
             let release = state
-                .started_ns
+                .epoch_ns
                 .saturating_add(state.k.saturating_mul(u64::from(period_ns)));
             let late = u32::try_from(started.saturating_sub(release))
                 .unwrap_or(u32::MAX);
@@ -575,7 +579,7 @@ mod tests {
     use core::cell::Cell;
     use std::collections::VecDeque;
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::vec::Vec;
 
     static BROKEN: ExecDescriptor = {
@@ -590,6 +594,17 @@ mod tests {
     static RESETS: AtomicUsize = AtomicUsize::new(0);
     static SERIAL: Mutex<()> = Mutex::new(());
     static SETUPS: AtomicUsize = AtomicUsize::new(0);
+    static SETUP_COST: AtomicU64 = AtomicU64::new(0);
+    static SLOW: ExecDescriptor = {
+        let mut d = task(echo, 1);
+        d.setup = slow_setup;
+        d
+    };
+    static SLOW_PERIODIC: ExecDescriptor = {
+        let mut d = task(echo, 0);
+        d.setup = slow_setup;
+        d
+    };
     const STOP: Command<'static> = Command::StopNow { suite: 0, item: 0 };
     static TEARDOWNS: AtomicUsize = AtomicUsize::new(0);
     static TIMED: ExecDescriptor = task(echo, 1);
@@ -694,7 +709,13 @@ mod tests {
         }
 
         fn get_nanos(&self) -> u64 {
-            self.now.set(self.now.get().saturating_add(self.tick));
+            let cost = SETUP_COST.swap(0, Ordering::SeqCst);
+            self.now.set(
+                self.now
+                    .get()
+                    .saturating_add(self.tick)
+                    .saturating_add(cost),
+            );
             self.now.get()
         }
 
@@ -716,6 +737,12 @@ mod tests {
     }
 
     fn setup() -> HookOf {
+        counted(&SETUPS)
+    }
+
+    /// A setup that takes 5 ms of clock time.
+    fn slow_setup() -> HookOf {
+        SETUP_COST.store(5_000_000, Ordering::SeqCst);
         counted(&SETUPS)
     }
 
@@ -1028,6 +1055,22 @@ mod tests {
         // No board source: releases come from the clock, which ticks 1000 nanoseconds per read.
         let o = drive::<Periodic>(&ECHO, Vec::new(), &[], (3, 10_000));
         assert_eq!(o.result, Ok(()));
+        assert_eq!(verdict(&o), Some((Verdict::Bounded, None)));
+        assert_eq!(stats(&o), Some((3, 0)));
+    }
+
+    #[test]
+    fn a_setup_longer_than_one_period_does_not_overrun_before_step_zero() {
+        let _g = serial();
+        let o = drive::<Periodic>(&SLOW_PERIODIC, Vec::new(), &[], (3, 10_000));
+        assert_eq!(verdict(&o), Some((Verdict::Bounded, None)));
+        assert_eq!(stats(&o), Some((3, 0)));
+    }
+
+    #[test]
+    fn a_setup_longer_than_the_link_timeout_does_not_time_out() {
+        let _g = serial();
+        let o = drive::<FreeRunning>(&SLOW, Vec::new(), &[], (3, 0));
         assert_eq!(verdict(&o), Some((Verdict::Bounded, None)));
         assert_eq!(stats(&o), Some((3, 0)));
     }
