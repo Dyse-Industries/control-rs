@@ -111,7 +111,7 @@ fn create_temp_context(scenario: NegativeScenario) -> io::Result<TempContext> {
     fs::create_dir_all(&trace_dir)?;
     fs::write(
         trace_dir.join("trace.toml"),
-        "id = 'FR-[0-9]+'\ndoc = '[a-z]+'\nfiles = [\"docs\"]\ndoc_id = '^#\\s+.*\\((?P<doc>[a-z]+)\\)'\ndefinition = '^- \\*\\*FR-'\ncondition = 'VC-[0-9]+'\nverification = '^\\| VC-'\nmethods = [\"libtest\", \"review\"]\nautomated_methods = [\"libtest\"]\nretired = []\n[method.libtest]\nresult_artifact = \"target/ci-artifacts/test.log\"\n",
+        "id = 'FR-[0-9]+'\ndoc = '[a-z]+'\nfiles = [\"docs\"]\ndoc_id = '^#\\s+.*\\((?P<doc>[a-z]+)\\)'\ndefinition = '^- \\*\\*FR-'\ncondition = 'VC-[0-9]+'\nverification = '^\\| VC-'\nmethods = [\"libtest\", \"review\"]\nretired = []\n[method.libtest]\nresult_artifact = \"target/ci-artifacts/test.log\"\n",
     )?;
 
     match scenario {

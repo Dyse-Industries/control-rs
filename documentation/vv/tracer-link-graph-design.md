@@ -108,7 +108,7 @@ The graph is the module `control_rs_ci::trace::link`, in
 `control_rs_ci::trace::status`. It adds no crate and no crate boundary.
 
 `requirement-traceability-design.md` supplies three inputs this design relies on
-and does not restate: the `link_methods` configuration, the spelling of a link
+and does not restate: the `link` method, the spelling of a link
 target, and the position of the `link` rows in its status derivation. A link
 target is a qualified ID `<doc>#<id>` or a bare document name `<doc>`, and a
 link condition carries its targets in `Row::targets`.
@@ -136,10 +136,7 @@ pub type ConditionMap<'a> = BTreeMap<&'a str, ConditionStatus>;
 
 impl<'a> LinkGraph<'a, Resolved> {
     /// Builds the graph and reports the resolution defects, in row order.
-    pub fn resolve(
-        rows: &'a [Row],
-        link_methods: &BTreeSet<String>,
-    ) -> Built<'a, Resolved>;
+    pub fn resolve(rows: &'a [Row]) -> Built<'a, Resolved>;
 }
 ```
 
@@ -151,7 +148,7 @@ prefix. An edge points from a vertex to each vertex whose status it depends on:
 
 - a document to each requirement it defines;
 - a requirement to each condition that names it as a parent;
-- a link condition, a row whose method is in `link_methods`, to the document,
+- a link condition, a row whose method is `link`, to the document,
   requirement or condition each of its targets names.
 
 A bare `<doc>` target gives one edge to the document vertex instead of one
@@ -218,7 +215,7 @@ Serves: FR-3, FR-4, NFR-1, NFR-2
 impl<'a> LinkGraph<'a, Acyclic> {
     /// Derives the status of every condition row, keyed by condition ID.
     /// `leaf` supplies the status of a row whose method is not in
-    /// `link_methods`.
+    /// `link`.
     pub fn derive(
         &self,
         leaf: impl FnMut(&Row) -> ConditionStatus,
@@ -234,7 +231,7 @@ added [4], and the precomputed linear order of a topological scheduler [6].
 Status is the maximum of `Status`, in the existing order `Pass`, `Review`,
 `Deferred`, `Uncovered`, `Unrun`, `Fail`.
 
-- A condition outside `link_methods` takes `leaf(row)`.
+- A condition whose method is not `link` takes `leaf(row)`.
 - A link condition in `cyclic` is `Fail` and carries no `ItemOutcome`.
 - A link condition with no target is `Uncovered`.
 - Any other link condition takes the worst status of its targets, a target
@@ -309,9 +306,8 @@ still writes it. Nothing reads the file back.
 
 Serves: FR-3, FR-4, FR-5
 
-`TraceConfig` and `Rules` of `control_rs_ci::trace::reqs` gain
-`link_methods: BTreeSet<String>`, read from the configuration key of
-`requirement-traceability-design.md`. `trace-reqs` calls `resolve` and
+`control_rs_ci::trace::reqs` gains the constant `LINK_METHOD`, the method name
+`link`. `trace-reqs` calls `resolve` and
 `condense` from its checks and reports both defect lists. `trace-check` calls
 the same two functions, reports the same defects, then calls `derive` with its
 result-log evaluation of a condition as `leaf` and reports the derived statuses
@@ -321,8 +317,7 @@ report and also when the gate fails; the format follows the extension (`.mmd` or
 `.dot`) and any other extension is a usage error, checked before the run. A
 link condition is excluded from the `Review` and `Deferred` lists of the report,
 and the per-status counts include it. `trace-check` builds the graph a second
-time for `--graph`. A configuration whose `link_methods` names a method outside
-`methods` or inside `automated_methods` is rejected when the rules compile.
+time for `--graph`.
 
 ```rust
 /// Required and optional flag values of a command line.
@@ -332,7 +327,6 @@ pub type Flags<const N: usize, const M: usize> =
 /// The link view of `reqs` in `format`, with the condition statuses of `report`.
 pub fn render_graph(
     reqs: &[Row],
-    config: &TraceConfig,
     report: &TraceReport,
     format: GraphFormat,
 ) -> String;
@@ -407,7 +401,7 @@ is an I/O error of the binary, reported as its other write errors are.
 
 #### 6.3 Limits
 
-- The target spelling, the `link_methods` configuration and the scan of link
+- The target spelling, the `link` method and the scan of link
   rows are verified in `requirement-traceability-design.md`, not here; the
   graph is tested on rows.
 - NFR-1 is shown by analysis and one edge-count test; no wall-clock bound is
@@ -433,7 +427,7 @@ numeric policy.
 ### 8. Risks & Open Questions
 
 - `requirement-traceability-design.md` does not yet contain the `link`
-  method, `link_methods`, the target spelling or the `link` rows of its status
+  method, the target spelling or the `link` rows of its status
   derivation. Those requirements land there first; implementation of this design
   waits for them. Affects FR-1 to FR-4.
 - `Fail` for a link on a cycle is a project choice. The cited tool detects link

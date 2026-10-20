@@ -20,6 +20,15 @@ use super::{
 };
 use crate::error::{GateError, GateResult};
 
+/// The methods whose conditions name targets that a result artifact must
+/// record as passed. A configuration that lists one of them also names its
+/// `result_artifact`.
+pub const AUTOMATED_METHODS: [&str; 4] = ["libtest", "kani", "pytest", "gtest"];
+
+/// The method whose conditions name documents, requirements or conditions as
+/// targets.
+pub const LINK_METHOD: &str = "link";
+
 /// A file and line.
 pub(super) type At<'a> = (&'a str, usize);
 
@@ -74,13 +83,6 @@ pub struct TraceConfig {
     pub verification: String,
     /// Verification methods a condition may name.
     pub methods: Vec<String>,
-    /// The subset of methods whose conditions name targets that a result
-    /// artifact must record as passed.
-    pub automated_methods: Vec<String>,
-    /// The subset of methods whose conditions name documents, requirements or
-    /// conditions as targets.
-    #[serde(default)]
-    pub link_methods: Vec<String>,
     /// Result artifact per method.
     #[serde(default)]
     pub method: BTreeMap<String, MethodConfig>,
@@ -136,8 +138,6 @@ pub struct Rules {
     verification: Regex,
     /// Verification methods a condition may name.
     methods: Vec<String>,
-    /// Methods whose conditions name documents, requirements or conditions.
-    link_methods: BTreeSet<String>,
     /// Pattern matching the document ID declaration in Markdown.
     doc_id: Regex,
     /// IDs that must not appear.
@@ -178,19 +178,12 @@ struct ScanContext<'a> {
 }
 
 impl TraceConfig {
-    /// A message when a link method is not a method or is also automated.
-    fn check_link_methods(&self) -> Result<(), String> {
-        for m in &self.link_methods {
-            if !self.methods.contains(m) {
-                return Err(format!("link method `{m}` is not in `methods`"));
-            }
-            if self.automated_methods.contains(m) {
-                return Err(format!(
-                    "link method `{m}` is also an automated method"
-                ));
-            }
-        }
-        Ok(())
+    /// The automated methods this configuration lists, in [`AUTOMATED_METHODS`]
+    /// order.
+    pub fn automated_methods(&self) -> impl Iterator<Item = &'static str> + '_ {
+        AUTOMATED_METHODS
+            .into_iter()
+            .filter(|m| self.methods.iter().any(|listed| listed == m))
     }
 
     /// The file-name endings of the Markdown files a directory root selects.
@@ -226,12 +219,7 @@ impl TraceConfig {
                 error(format!("`{key}` is not a valid pattern: {e}"))
             })
         };
-        for m in &self.automated_methods {
-            if !self.methods.contains(m) {
-                return Err(error(format!(
-                    "automated method `{m}` is not in `methods`"
-                )));
-            }
+        for m in self.automated_methods() {
             let has_artifact = self
                 .method
                 .get(m)
@@ -242,7 +230,6 @@ impl TraceConfig {
                 )));
             }
         }
-        self.check_link_methods().map_err(error)?;
         compile("doc", &self.doc)?;
         compile("id", &self.id)?;
         compile("condition", &self.condition)?;
@@ -263,7 +250,6 @@ impl TraceConfig {
             definition: compile("definition", &self.definition)?,
             verification: compile("verification", &self.verification)?,
             methods: self.methods.clone(),
-            link_methods: self.link_methods.iter().cloned().collect(),
             doc_id: compile("doc_id", &self.doc_id)?,
             retired: self.retired.iter().cloned().collect(),
             decisions,
@@ -312,13 +298,6 @@ impl Rules {
             let owner = caps.name("trace_doc").map_or(doc, |m| m.as_str());
             Some(format!("{owner}{QUALIFIER}{id}"))
         })
-    }
-
-    /// The methods whose conditions name documents, requirements or
-    /// conditions as targets.
-    #[must_use]
-    pub const fn link_methods(&self) -> &BTreeSet<String> {
-        &self.link_methods
     }
 
     /// Whether `name` is one of the configured verification methods.
@@ -442,9 +421,7 @@ fn scan_condition_line(
         .map(|s| s.content.to_string());
 
     // The targets of a link condition are not its parents.
-    let is_link = method
-        .as_deref()
-        .is_some_and(|m| ctx.rules.link_methods.contains(m));
+    let is_link = method.as_deref().is_some_and(|m| m == LINK_METHOD);
     let scanned = if is_link {
         without_target_cell(line)
     } else {
@@ -694,7 +671,7 @@ pub fn check(rows: &[Row], rules: &Rules) -> Vec<Defect> {
     check_condition_parents(&conditions, &definitions, &mut defects);
     check_condition_methods(&conditions, rules, &mut defects);
     check_duplicate_document_ids(rows, &mut defects);
-    check_links(rows, rules, &mut defects);
+    check_links(rows, &mut defects);
 
     for row in rows {
         for id in std::iter::once(&row.id).chain(&row.parents) {
@@ -712,11 +689,8 @@ pub fn check(rows: &[Row], rules: &Rules) -> Vec<Defect> {
 
 /// Adds the defects of the link conditions in `rows`: targets that resolve to
 /// nothing, and links on a cycle.
-fn check_links(rows: &[Row], rules: &Rules, defects: &mut Vec<Defect>) {
-    if rules.link_methods.is_empty() {
-        return;
-    }
-    let (graph, resolution) = LinkGraph::resolve(rows, &rules.link_methods);
+fn check_links(rows: &[Row], defects: &mut Vec<Defect>) {
+    let (graph, resolution) = LinkGraph::resolve(rows);
     let (_, cycles) = graph.condense();
     defects.extend(resolution);
     defects.extend(cycles);
@@ -943,7 +917,6 @@ doc_id = '^#\s+.*\((?P<doc>[a-z0-9-]+)\)'
 definition = '^- \*\*(?:FR|NFR|C)-'
 verification = '^\| *(?:[a-z0-9-]+#)?VC-'
 methods = ["test", "analysis", "inspection", "review"]
-automated_methods = []
 "#;
 
     const LINKED: &str = "\
@@ -1324,23 +1297,20 @@ automated_methods = []
     }
 
     #[test]
-    fn an_automated_method_needs_a_listed_name_and_a_result_artifact() {
-        let rejected = |method: &str, tail: &str| {
+    fn a_listed_automated_method_needs_a_result_artifact() {
+        let accepted = |methods: &str, tail: &str| {
             let text = format!("{KEYS}retired = []{tail}").replace(
-                "automated_methods = []",
-                &format!("automated_methods = [\"{method}\"]"),
+                "[\"test\", \"analysis\"",
+                &format!("[{methods}, \"analysis\""),
             );
             let config: TraceConfig = toml::from_str(&text).unwrap();
-            matches!(
-                config.rules(Path::new("trace.toml")),
-                Err(GateError::Config { .. })
-            )
+            config.rules(Path::new("trace.toml")).is_ok()
         };
-        assert!(rejected("fuzz", ""));
-        assert!(rejected("test", ""));
-        assert!(!rejected(
-            "test",
-            "\n[method.test]\nresult_artifact = \"t.log\"\n"
+        assert!(accepted("\"test\"", ""));
+        assert!(!accepted("\"libtest\"", ""));
+        assert!(accepted(
+            "\"libtest\"",
+            "\n[method.libtest]\nresult_artifact = \"t.log\"\n"
         ));
     }
 
@@ -1602,7 +1572,7 @@ automated_methods = []
     /// Rules with a `link` method.
     fn link_rules() -> Rules {
         let keys = KEYS.replace("\"review\"]", "\"review\", \"link\"]");
-        let text = format!("{keys}link_methods = [\"link\"]\nretired = []");
+        let text = format!("{keys}retired = []");
         let config: TraceConfig = toml::from_str(&text).unwrap();
         config.rules(Path::new("trace.toml")).unwrap()
     }
@@ -1639,36 +1609,5 @@ automated_methods = []
             messages(&cycle, &rules),
             ["condition widget#VC-2.1 lies on a link cycle"]
         );
-    }
-
-    #[test]
-    fn link_methods_must_be_methods_and_not_automated() {
-        for (extra, expected) in [
-            (
-                "link_methods = [\"link\"]\nretired = []",
-                "is not in `methods`",
-            ),
-            ("link_methods = [\"review\"]\nretired = []", ""),
-        ] {
-            let text = format!("{KEYS}{extra}");
-            let config: TraceConfig = toml::from_str(&text).unwrap();
-            let result = config.rules(Path::new("trace.toml"));
-            if expected.is_empty() {
-                assert!(result.is_ok());
-            } else {
-                assert!(result.unwrap_err().to_string().contains(expected));
-            }
-        }
-        let automated = KEYS.replace(
-            "automated_methods = []",
-            "automated_methods = [\"test\"]",
-        );
-        let text = format!(
-            "{automated}link_methods = [\"test\"]\nretired = []\n\n\
-             [method.test]\nresult_artifact = \"t.log\"\n"
-        );
-        let config: TraceConfig = toml::from_str(&text).unwrap();
-        let error = config.rules(Path::new("trace.toml")).unwrap_err();
-        assert!(error.to_string().contains("also an automated method"));
     }
 }

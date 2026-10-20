@@ -10,6 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use super::reqs::LINK_METHOD;
 use super::status::{ConditionStatus, ItemOutcome, Status};
 use super::{CONDITION, DEFINITION, Defect, Defects, QUALIFIER, Row};
 
@@ -224,18 +225,12 @@ impl<'a> Builder<'a> {
     }
 
     /// Resolves the targets of every link condition and adds its edges.
-    fn links(
-        &mut self,
-        rows: &[Row],
-        link_methods: &BTreeSet<String>,
-    ) -> (Links, Defects) {
+    fn links(&mut self, rows: &[Row]) -> (Links, Defects) {
         let mut links = Links::new();
         let mut defects = Defects::new();
         for (i, row) in rows.iter().enumerate() {
-            let is_link = row
-                .method
-                .as_deref()
-                .is_some_and(|m| link_methods.contains(m));
+            let is_link =
+                row.method.as_deref().is_some_and(|m| m == LINK_METHOD);
             let Some(v) = self.condition_of(row, i).filter(|_| is_link) else {
                 continue;
             };
@@ -478,17 +473,14 @@ impl<'a> LinkGraph<'a, Resolved> {
 
     /// Builds the graph and reports the resolution defects, in row order.
     ///
-    /// A row whose method is in `link_methods` is a link condition. A target
+    /// A row whose method is `link` is a link condition. A target
     /// is a qualified ID `<doc>#<id>` or a bare document name `<doc>`.
     #[must_use]
-    pub fn resolve(
-        rows: &'a [Row],
-        link_methods: &BTreeSet<String>,
-    ) -> Built<'a, Resolved> {
+    pub fn resolve(rows: &'a [Row]) -> Built<'a, Resolved> {
         let mut builder = Builder::default();
         builder.scan(rows);
         builder.parents(rows);
-        let (links, defects) = builder.links(rows, link_methods);
+        let (links, defects) = builder.links(rows);
         let graph = Self {
             edges: builder.edges,
             links,
@@ -502,8 +494,7 @@ impl<'a> LinkGraph<'a, Resolved> {
 
 impl<'a> LinkGraph<'a, Acyclic> {
     /// Derives the status of every condition row, keyed by condition ID.
-    /// `leaf` supplies the status of a row whose method is not in
-    /// `link_methods`.
+    /// `leaf` supplies the status of a row whose method is not `link`.
     ///
     /// A link condition on a cycle is `Fail` and one with no target is
     /// `Uncovered`. Any other takes the worst status of its targets, a target
@@ -865,16 +856,12 @@ mod tests {
         cond([id, parent], "link", targets, line)
     }
 
-    fn methods() -> BTreeSet<String> {
-        BTreeSet::from(["link".to_string()])
-    }
-
     fn messages(defects: &[Defect]) -> Vec<String> {
         defects.iter().map(|d| d.message.clone()).collect()
     }
 
     fn acyclic(rows: &[Row]) -> Built<'_, Acyclic> {
-        let (graph, mut defects) = LinkGraph::resolve(rows, &methods());
+        let (graph, mut defects) = LinkGraph::resolve(rows);
         let (graph, cycles) = graph.condense();
         defects.extend(cycles);
         (graph, defects)
@@ -905,7 +892,7 @@ mod tests {
     }
 
     fn out_degree(rows: &[Row], name: &str) -> usize {
-        let (graph, _) = LinkGraph::resolve(rows, &methods());
+        let (graph, _) = LinkGraph::resolve(rows);
         let v = graph.vertices.iter().position(|x| x.name == name).unwrap();
         graph.edges.get(v).map_or(0, Vec::len)
     }
@@ -913,7 +900,7 @@ mod tests {
     #[test]
     fn link_without_a_target_is_reported() {
         let rows = [def("a#FR-1", 1), link("a#VC-1.1", "a#FR-1", &[], 3)];
-        let (_, defects) = LinkGraph::resolve(&rows, &methods());
+        let (_, defects) = LinkGraph::resolve(&rows);
         assert_eq!(
             messages(&defects),
             ["condition a#VC-1.1 names no link target"]
@@ -927,7 +914,7 @@ mod tests {
             def("a#FR-1", 1),
             link("a#VC-1.1", "a#FR-1", &["b#FR-9", "nowhere"], 3),
         ];
-        let (_, defects) = LinkGraph::resolve(&rows, &methods());
+        let (_, defects) = LinkGraph::resolve(&rows);
         assert_eq!(
             messages(&defects),
             [
@@ -946,7 +933,7 @@ mod tests {
             link("a#VC-1.1", "a#FR-1", &["b"], 3),
             cond(["b#VC-1.1", "b#FR-1"], "libtest", &["t"], 5),
         ];
-        let (_, defects) = LinkGraph::resolve(&rows, &methods());
+        let (_, defects) = LinkGraph::resolve(&rows);
         assert_eq!(
             messages(&defects),
             ["condition a#VC-1.1 target 'b' defines no requirement"]
@@ -961,7 +948,7 @@ mod tests {
             def("b#FR-1", 5),
             link("a#VC-2.1", "a#FR-1", &["b", "b#FR-1", "a#VC-1.1"], 7),
         ];
-        let (_, defects) = LinkGraph::resolve(&rows, &methods());
+        let (_, defects) = LinkGraph::resolve(&rows);
         assert!(defects.is_empty(), "{defects:?}");
     }
 

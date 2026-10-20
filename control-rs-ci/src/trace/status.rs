@@ -1,11 +1,11 @@
 //! Requirement and condition status derivation.
 //!
 //! Each condition takes a status:
-//! - `Pass`: method in `automated_methods`, every target recorded as passed.
-//! - `Fail`: method in `automated_methods`, any target recorded as failed (fails gate).
-//! - `Unrun`: method in `automated_methods`, any target absent from its result log (fails gate).
-//! - `Uncovered`: method in `automated_methods` and no target named (fails gate).
-//! - `Review`: method outside `automated_methods`; awaits sign-off.
+//! - `Pass`: automated method, every target recorded as passed.
+//! - `Fail`: automated method, any target recorded as failed (fails gate).
+//! - `Unrun`: automated method, any target absent from its result log (fails gate).
+//! - `Uncovered`: automated method and no target named (fails gate).
+//! - `Review`: method outside the automated methods; awaits sign-off.
 //! - `Deferred`: method `deferred`; verification is planned for a later phase.
 //!
 //! A requirement takes the worst status among its conditions in order:
@@ -18,7 +18,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 
 use super::link::{GraphFormat, LinkGraph};
-use super::reqs::TraceConfig;
+use super::reqs::{AUTOMATED_METHODS, LINK_METHOD, TraceConfig};
 use super::{
     CONDITION, DEFINITION, Defect, Defects, Row, SCHEMA, read_text, write_file,
 };
@@ -80,7 +80,7 @@ enum Lookup {
 pub enum Status {
     /// All targets passed verification.
     Pass,
-    /// Method outside `automated_methods`; awaits sign-off.
+    /// Method outside the automated methods; awaits sign-off.
     Review,
     /// Method `deferred`; verification is planned for a later phase.
     Deferred,
@@ -620,7 +620,7 @@ fn condition_status(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
     if method == DEFERRED {
         return status(Status::Deferred, Vec::new());
     }
-    if !ctx.config.automated_methods.contains(&method) {
+    if !AUTOMATED_METHODS.contains(&method.as_str()) {
         return status(Status::Review, Vec::new());
     }
     if row.targets.is_empty() {
@@ -693,7 +693,7 @@ fn parse_artifact(method: &str, text: &str) -> Option<ResultLog> {
 
 fn load_method_artifacts(config: &TraceConfig, base: &Path) -> MethodResultMap {
     let mut result_cache = HashMap::new();
-    for method in &config.automated_methods {
+    for method in config.automated_methods() {
         let Some(artifact_rel) = config
             .method
             .get(method)
@@ -705,7 +705,7 @@ fn load_method_artifacts(config: &TraceConfig, base: &Path) -> MethodResultMap {
             continue;
         };
         if let Some(results) = parse_artifact(method, &text) {
-            result_cache.insert(method.clone(), results);
+            result_cache.insert(method.to_string(), results);
         }
     }
     result_cache
@@ -733,7 +733,7 @@ fn check_staleness(
     let Some((doc_time, doc)) = newest else {
         return;
     };
-    for method in &config.automated_methods {
+    for method in config.automated_methods() {
         let Some(artifact) = config
             .method
             .get(method)
@@ -794,9 +794,7 @@ fn evaluate_all_conditions(
     let mut review = Vec::new();
     let mut deferred = Vec::new();
 
-    let link_methods: BTreeSet<String> =
-        ctx.config.link_methods.iter().cloned().collect();
-    let (graph, resolution) = LinkGraph::resolve(reqs, &link_methods);
+    let (graph, resolution) = LinkGraph::resolve(reqs);
     let (graph, cycles) = graph.condense();
     ctx.defects.extend(resolution);
     ctx.defects.extend(cycles);
@@ -806,7 +804,7 @@ fn evaluate_all_conditions(
         let Some(status) = derived.remove(row.id.as_str()) else {
             continue;
         };
-        let is_link = link_methods.contains(&status.method);
+        let is_link = status.method == LINK_METHOD;
 
         if let Some(count) = counts.get_mut(&status.status) {
             *count = count.saturating_add(1);
@@ -836,13 +834,10 @@ fn evaluate_all_conditions(
 #[must_use]
 pub fn render_graph(
     reqs: &[Row],
-    config: &TraceConfig,
     report: &TraceReport,
     format: GraphFormat,
 ) -> String {
-    let link_methods: BTreeSet<String> =
-        config.link_methods.iter().cloned().collect();
-    let (graph, _) = LinkGraph::resolve(reqs, &link_methods);
+    let (graph, _) = LinkGraph::resolve(reqs);
     let (graph, _) = graph.condense();
     let statuses = report
         .requirements
@@ -1033,10 +1028,6 @@ mod tests {
             ]
             .map(String::from)
             .to_vec(),
-            automated_methods: ["libtest", "kani", "pytest", "gtest"]
-                .map(String::from)
-                .to_vec(),
-            link_methods: vec![],
             method,
             retired: vec![],
             decisions: None,
@@ -1467,7 +1458,6 @@ mod tests {
     fn link_config() -> TraceConfig {
         let mut config = default_config();
         config.methods.push("link".to_string());
-        config.link_methods = vec!["link".to_string()];
         config
     }
 

@@ -85,8 +85,6 @@ mod cli {
          definition = '^- \\*\\*(?:FR|NFR|C)-'\n\
          verification = '^\\| *(?:[a-z0-9-]+#)?VC-'\n\
          methods = [\"libtest\", \"analysis\", \"inspection\", \"review\", \"link\"]\n\
-         automated_methods = [\"libtest\"]\n\
-         link_methods = [\"link\"]\n\
          retired = []\n\n\
          [method.libtest]\n\
          result_artifact = \"out/test.log\"\n"

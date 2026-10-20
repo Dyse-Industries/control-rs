@@ -73,7 +73,7 @@ fn run(
     report.write(out)?;
     ui::status("Writing", out.display());
     if let Some((path, format)) = graph {
-        let text = status::render_graph(&reqs, &trace_cfg, &report, format);
+        let text = status::render_graph(&reqs, &report, format);
         write_file(&path, text.as_bytes())?;
         ui::status("Writing", path.display());
     }
