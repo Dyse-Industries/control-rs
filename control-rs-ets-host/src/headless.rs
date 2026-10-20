@@ -158,6 +158,7 @@ pub(crate) fn drive<L: HostLink<Error = HostError>>(
     options: RunOptions,
 ) -> RunRecord {
     let start = Instant::now();
+    let case_timeout = session.opts.case_timeout;
     let mut pending = session.catalog().case_ids();
     let mut results = Vec::new();
     let mut abort = None;
@@ -170,8 +171,13 @@ pub(crate) fn drive<L: HostLink<Error = HostError>>(
             abort = Some(Completion::TimedOut);
             break;
         };
+        // Wall remainder bounds the wait (FR-6). collect_case keeps a
+        // Done(verdict) if RunStats is late, so a short remainder does not
+        // rewrite Fail/Bounded as UnreportedFault.
         session.opts.case_timeout = remaining;
-        let Ok(outcome) = session.run_case(id) else {
+        let run = session.run_case(id);
+        session.opts.case_timeout = case_timeout;
+        let Ok(outcome) = run else {
             abort = Some(if session.link.exited().unwrap_or(true) {
                 Completion::TargetExited
             } else {
