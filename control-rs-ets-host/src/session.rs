@@ -424,6 +424,9 @@ impl<L: HostLink<Error = HostError>> Session<L> {
         for (suite, index) in self.catalog.missing_settings() {
             let _ = self.get_setting(suite, ParamKey::Index(index))?;
         }
+        if !self.catalog.missing_executables().is_empty() {
+            return Err(HostError::Discovery);
+        }
         self.device = DeviceState::Idle;
         Ok(())
     }
@@ -442,8 +445,15 @@ impl<L: HostLink<Error = HostError>> Session<L> {
             match self.wait_event(until) {
                 Wait::Closed => return Err(closed()),
                 Wait::Timeout => {
+                    if let Some(v) = verdict {
+                        // The verdict arrived and only the statistics are missing.
+                        outcome.status = CaseStatus::Done(v);
+                        self.device = DeviceState::Idle;
+                        return Ok(outcome);
+                    }
                     outcome.status = CaseStatus::UnreportedFault;
-                    self.recover()?;
+                    // A failed recovery surfaces on the next command; the outcome is kept.
+                    let _ = self.recover();
                     return Ok(outcome);
                 }
                 Wait::Event(event) => match *event {
@@ -478,7 +488,7 @@ impl<L: HostLink<Error = HostError>> Session<L> {
                             line,
                             message,
                         };
-                        self.recover()?;
+                        let _ = self.recover();
                         return Ok(outcome);
                     }
                     _ => {}
@@ -809,6 +819,32 @@ mod tests {
         let echoed = s.set_setting(0, "bias", Param::U8(4)).unwrap();
         assert_eq!(echoed.name, "bias");
         assert_eq!(s.catalog().missing_settings(), Vec::<ItemId>::new());
+    }
+
+    #[test]
+    fn a_dropped_executable_fails_discovery() {
+        let link = Fake {
+            drop_exec: Some(1),
+            ..Fake::default()
+        }
+        .link();
+        assert!(matches!(
+            Session::open_with(link, quick()).err(),
+            Some(HostError::Discovery)
+        ));
+    }
+
+    #[test]
+    fn a_verdict_without_statistics_is_kept() {
+        let mut s = open(Fake {
+            drop_stats: Some(0),
+            ..Fake::default()
+        });
+        let outcome = s.run_case((0, 0)).unwrap();
+        assert_eq!(outcome.status, CaseStatus::Done(Verdict::Pass));
+        assert_eq!(outcome.stats, None);
+        assert_eq!(s.results().resets, 0);
+        assert_eq!(s.device_state(), DeviceState::Idle);
     }
 
     #[test]
