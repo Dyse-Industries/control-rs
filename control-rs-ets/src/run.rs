@@ -304,13 +304,11 @@ where
             state.end(Verdict::Error, Some(message));
             return Ok(());
         }
-        if M::PACING != Pacing::None {
-            let period = (M::PACING == Pacing::Periodic).then_some(period_ns);
-            self.board.arm(period);
-        }
-        // The release schedule and the link deadline start once setup has finished.
-        state.epoch_ns = self.now();
-        state.deadline_ns = Self::deadline_from(state.epoch_ns, exec);
+        // FR-5 scopes the heartbeat to waiting for input or a release; open it after setup.
+        // The release schedule opens after the first boundary so link-poll latency is not
+        // charged as a missed release before step 0 (state diagram: Ready before Boundary;
+        // overrun means a release passed while a step ran).
+        state.deadline_ns = Self::deadline_from(self.now(), exec);
         while state.verdict.is_none() {
             // A masked single step has no boundary: nothing can interrupt it, and a link that
             // can only block would stall it.
@@ -319,6 +317,12 @@ where
             }
             if state.verdict.is_some() {
                 break;
+            }
+            if M::PACING != Pacing::None && state.epoch_ns == 0 {
+                let period =
+                    (M::PACING == Pacing::Periodic).then_some(period_ns);
+                self.board.arm(period);
+                state.epoch_ns = self.now();
             }
             self.board.feed();
             match self.ready(state) {
@@ -582,6 +586,13 @@ mod tests {
     use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
     use std::vec::Vec;
 
+    static BOUNDARY_COST: AtomicU64 = AtomicU64::new(0);
+    /// Setup that makes the leading boundary burn 50 µs of profiler time.
+    static BOUNDARY_HEAVY: ExecDescriptor = {
+        let mut d = task(echo, 1);
+        d.setup = heavy_first_boundary_setup;
+        d
+    };
     static BROKEN: ExecDescriptor = {
         let mut d = task(echo, 0);
         d.setup = bad_setup;
@@ -595,6 +606,8 @@ mod tests {
     static SERIAL: Mutex<()> = Mutex::new(());
     static SETUPS: AtomicUsize = AtomicUsize::new(0);
     static SETUP_COST: AtomicU64 = AtomicU64::new(0);
+    /// Skips this many `get_nanos` reads before [`BOUNDARY_COST`] is applied.
+    static SKIP_COST_READS: AtomicUsize = AtomicUsize::new(0);
     static SLOW: ExecDescriptor = {
         let mut d = task(echo, 1);
         d.setup = slow_setup;
@@ -709,12 +722,19 @@ mod tests {
         }
 
         fn get_nanos(&self) -> u64 {
-            let cost = SETUP_COST.swap(0, Ordering::SeqCst);
+            let setup = SETUP_COST.swap(0, Ordering::SeqCst);
+            let boundary = if SKIP_COST_READS.load(Ordering::SeqCst) > 0 {
+                let _ = SKIP_COST_READS.fetch_sub(1, Ordering::SeqCst);
+                0
+            } else {
+                BOUNDARY_COST.swap(0, Ordering::SeqCst)
+            };
             self.now.set(
                 self.now
                     .get()
                     .saturating_add(self.tick)
-                    .saturating_add(cost),
+                    .saturating_add(setup)
+                    .saturating_add(boundary),
             );
             self.now.get()
         }
@@ -736,6 +756,22 @@ mod tests {
             .ok_or("count overflow")
     }
 
+    fn bad_setup() -> HookOf {
+        counted(&SETUPS).and(Err("no sensor"))
+    }
+
+    /// Arms a 50 µs cost on the first `get_nanos` after the post-setup deadline read
+    /// (the leading boundary's deadline check when `link_timeout_ms != 0`).
+    fn heavy_first_boundary_setup() -> HookOf {
+        SKIP_COST_READS.store(1, Ordering::SeqCst);
+        BOUNDARY_COST.store(50_000, Ordering::SeqCst);
+        counted(&SETUPS)
+    }
+
+    fn reset() -> HookOf {
+        counted(&RESETS)
+    }
+
     fn setup() -> HookOf {
         counted(&SETUPS)
     }
@@ -744,14 +780,6 @@ mod tests {
     fn slow_setup() -> HookOf {
         SETUP_COST.store(5_000_000, Ordering::SeqCst);
         counted(&SETUPS)
-    }
-
-    fn bad_setup() -> HookOf {
-        counted(&SETUPS).and(Err("no sensor"))
-    }
-
-    fn reset() -> HookOf {
-        counted(&RESETS)
     }
 
     fn teardown() -> HookOf {
@@ -919,6 +947,9 @@ mod tests {
         SETUPS.store(0, Ordering::SeqCst);
         RESETS.store(0, Ordering::SeqCst);
         TEARDOWNS.store(0, Ordering::SeqCst);
+        SETUP_COST.store(0, Ordering::SeqCst);
+        BOUNDARY_COST.store(0, Ordering::SeqCst);
+        SKIP_COST_READS.store(0, Ordering::SeqCst);
     }
 
     #[test]
@@ -1286,5 +1317,21 @@ mod tests {
             params: PARAMS,
         };
         assert_eq!(SUITE.executables.len(), 1);
+    }
+
+    #[test]
+    fn leading_boundary_longer_than_one_period_does_not_overrun_before_step_zero()
+     {
+        let _g = serial();
+        reset_counters();
+        // BOUNDARY_HEAVY burns 50 µs on the leading boundary deadline check while
+        // period_ns is 10 µs. Opening the release schedule after that boundary keeps
+        // step 0 from seeing due ≫ 1. Arming after the boundary likewise keeps a
+        // board release source from stacking counts during the poll.
+        let o =
+            drive::<Periodic>(&BOUNDARY_HEAVY, Vec::new(), &[], (3, 10_000));
+        assert_eq!(o.result, Ok(()));
+        assert_eq!(verdict(&o), Some((Verdict::Bounded, None)));
+        assert_eq!(stats(&o), Some((3, 0)));
     }
 }
