@@ -46,6 +46,10 @@ pub struct Fake {
     pub panic_item: Option<u16>,
     /// Setting index that discovery drops.
     pub drop_setting: Option<u16>,
+    /// Item whose `TestInfo` discovery drops.
+    pub drop_exec: Option<u16>,
+    /// Item that reports its verdict but never its statistics.
+    pub drop_stats: Option<u16>,
     /// Release-source flag of `TargetInfo`.
     pub release_source: bool,
     /// Wire revision reported.
@@ -76,6 +80,8 @@ impl Default for Fake {
             missed: 0,
             panic_item: None,
             drop_setting: None,
+            drop_exec: None,
+            drop_stats: None,
             release_source: false,
             version: PROTOCOL_VERSION,
             active: None,
@@ -152,6 +158,9 @@ impl Fake {
             (1, "boom", ExecMode::Atomic.bit(), PacketDecl::default()),
             (2, "loop", 0b1_1111, byte),
         ] {
+            if self.drop_exec == Some(item) {
+                continue;
+            }
             out.push(OwnedTelemetry::TestInfo {
                 description: String::new(),
                 input: io.clone(),
@@ -234,7 +243,9 @@ impl Fake {
             (2, _) => self.active = Some((item, mode, max_steps)),
             _ => {
                 out.push(state(item, TestState::Passed, Some(Verdict::Pass)));
-                out.push(stats(item, 1, 0, 0));
+                if self.drop_stats != Some(item) {
+                    out.push(stats(item, 1, 0, 0));
+                }
             }
         }
         out
