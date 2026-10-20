@@ -26,7 +26,7 @@ use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
 use crate::app::App;
-use crate::worker::{Request, Worker};
+use crate::worker::Worker;
 
 mod app;
 mod keys;
@@ -136,13 +136,11 @@ where
             app.dirty = false;
         }
         match event::poll(TICK)?.then(event::read).transpose()? {
-            Some(Event::Key(key)) => match app.on_key(key) {
-                Some(Request::Stop) => worker.control.stop(),
-                Some(request) => {
-                    let _ = worker.requests.send(request);
+            Some(Event::Key(key)) => {
+                if let Some(request) = app.on_key(key) {
+                    worker.submit(request);
                 }
-                None => {}
-            },
+            }
             Some(Event::Resize(..)) => app.dirty = true,
             _ => {}
         }
