@@ -62,8 +62,9 @@ impl ByteStream for XiaoNrfUsb {
     fn write(&mut self, buf: &[u8]) -> CountOf<Self> {
         self.service();
         if !self.configured {
-            // Discard output while no host is connected.
-            return Ok(buf.len());
+            // Back-pressure until the host configures CDC-ACM. Ok(buf.len())
+            // would let StreamLink::drain_tx clear the framed message.
+            return Ok(0);
         }
         match self.usb_class.write(buf) {
             Ok(written) => Ok(written),

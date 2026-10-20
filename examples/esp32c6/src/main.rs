@@ -35,8 +35,8 @@ impl ByteStream for Esp32c6Usb {
     }
 
     fn write(&mut self, buf: &[u8]) -> CountOf<Self> {
-        let _ = self.usb.write(buf);
-        let _ = self.usb.flush_tx();
+        self.usb.write(buf).map_err(|_| ())?;
+        self.usb.flush_tx().map_err(|_| ())?;
         Ok(buf.len())
     }
 }
