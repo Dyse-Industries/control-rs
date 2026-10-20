@@ -257,6 +257,20 @@ impl Catalog {
             .collect()
     }
 
+    /// Executables a dropped message left unreported, as `(suite, item)`.
+    #[must_use]
+    pub fn missing_executables(&self) -> Vec<ItemId> {
+        (0_u16..)
+            .zip(&self.suites)
+            .flat_map(|(suite, s)| {
+                (0_u16..)
+                    .zip(&s.executables)
+                    .filter(|(_, e)| e.is_none())
+                    .map(move |(item, _)| (suite, item))
+            })
+            .collect()
+    }
+
     /// The setting `name` of `suite`, if it was reported.
     #[must_use]
     pub fn setting(&self, suite: u16, name: &str) -> Option<&SettingEntry> {
@@ -355,6 +369,12 @@ mod tests {
         c.apply(&setting_info(0));
         assert_eq!(c.missing_settings(), Vec::<ItemId>::new());
         assert_eq!(c.setting(0, "k1").map(|s| s.index), Some(1));
+        let mut c = Catalog::default();
+        c.apply(&suite_info(0, 2));
+        c.apply(&test_info(1, ExecMode::Atomic.bit()));
+        assert_eq!(c.missing_executables(), [(0, 0)]);
+        c.apply(&test_info(0, ExecMode::Atomic.bit()));
+        assert_eq!(c.missing_executables(), Vec::<ItemId>::new());
         assert!(c.setting(0, "none").is_none());
     }
 }
