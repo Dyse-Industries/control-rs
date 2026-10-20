@@ -1,11 +1,13 @@
 # Test suites under src/**/tests/ compile into the library for on-target
 # execution, so cargo-mutants does not recognize them as test code. Mutating
-# them measures nothing.
-exclude_globs = ["src/**/tests/**", "tests/**", "benches/**"]
+# them measures nothing. control-rs-verification is an oracle emitter validated
+# by cross-compare and is not mutated.
+exclude_globs = ["src/**/tests/**", "tests/**", "benches/**", "control-rs-verification/**"]
 
-# Doc-tests are expensive and should not be relied on to catch mutants.
-# This allows speeding up the test command run for each mutant.
-additional_cargo_test_args = ["--lib"]
+# Doc-tests are expensive and should not be relied on to catch mutants. Library,
+# binary and integration tests run for each mutant: the workspace tool crates
+# keep their tests in `tests/` and inline modules.
+additional_cargo_test_args = ["--tests"]
 
 # Behaviorally equivalent mutants (no test can distinguish them):
 # - Bit reversal is an involution, so swapping when `i < j`, `i > j`, or
@@ -90,4 +92,33 @@ exclude_re = [
     # Sign restoration after magnitude rounding: `x <= 0` negates a zero
     # magnitude, which is still zero.
     "replace < with <= in round_shift_signed",
+    # control-rs-ci: `>=` where equality of two instants or byte counts cannot
+    # occur or changes nothing, `match guard ... with true` where the guarded
+    # arm is a no-op for other inputs, and the `cfg(not(unix))` `terminate_tree`,
+    # which is not compiled on the CI platform (`terminate_child_only`).
+    "with true in strip_string_literals",
+    "replace > with >= in Gate::spawn_and_log",
+    "replace < with <= in drain_pumps",
+    "replace terminate_child_only with \\(\\)",
+    "replace > with >= in ReportAggregator::generate_markdown",
+    # control-rs-compare: `>=` on a running maximum re-assigns an equal value,
+    # the serial and parallel array comparisons return the same result on either
+    # side of the chunk threshold, and the run-time limit only moves by one
+    # clock tick.
+    "replace > with >= in compute_chunk_stats",
+    "replace < with <= in compare_float_arrays_parallel",
+    "replace > with >= in execute_variant",
+    # control-rs-ets-host: `>=` on two instants (a wall-clock comparison that
+    # cannot tie) and `RunEnd::drained`, which already returns
+    # `Default::default()`.
+    "replace RunEnd::drained -> Self with Default::default\\(\\)",
+    "replace > with >= in HeadlessRun<'t>::(drive|retry_discovery)",
+    # control-rs-ets: `|` versus `^` joins two bytes with disjoint bits; a frame
+    # buffer shorter than six bytes cannot hold a payload either way; the
+    # Cortex-M and RISC-V profilers only compile for their own targets; and the
+    # default FPU flags are zero on the host that runs the mutation test.
+    "replace \\| with \\^ in FrameReader::handle_byte",
+    "replace < with (==|<=) in FrameEncoder::serialize_then_frame",
+    "<impl CPUProfiler for (CortexMProfiler|RiscvProfiler)>",
+    "replace CPUProfiler::fpu_flags -> u8 with 0",
 ]
