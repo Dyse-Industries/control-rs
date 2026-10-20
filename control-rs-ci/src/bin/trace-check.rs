@@ -4,25 +4,40 @@
 //! of its method, writes `trace-report.json` and fails when a condition is
 //! `Uncovered`, `Unrun` or `Fail`.
 
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use control_rs_ci::GateResult;
+use control_rs_ci::trace::link::GraphFormat;
+use control_rs_ci::trace::reqs::TraceConfig;
 use control_rs_ci::trace::status::{self, Derived, TraceReport};
 use control_rs_ci::trace::{
-    Defect, FlagValues, USAGE_ERROR, cli_args, print_defects, read_rows,
+    Defect, FlagValues, USAGE_ERROR, cli_args_with, print_defects, read_rows,
+    write_file,
 };
 use control_rs_ci::ui;
 
 /// Command-line synopsis.
-const USAGE: &str = "trace-check --config <trace.toml> --reqs <reqs.jsonl> --out <trace-report.json>";
+const USAGE: &str = "trace-check --config <trace.toml> --reqs <reqs.jsonl> --out <trace-report.json> [--graph <links.mmd|links.dot>]";
+
+/// A graph file and the format its name selects.
+type GraphFile = (PathBuf, GraphFormat);
 
 fn main() -> ExitCode {
-    let flags = ["--config", "--reqs", "--out"];
-    let paths = match cli_args(USAGE, flags) {
-        Ok(paths) => paths,
+    let required = ["--config", "--reqs", "--out"];
+    let (paths, [graph]) = match cli_args_with(USAGE, required, ["--graph"]) {
+        Ok(parsed) => parsed,
         Err(code) => return code,
     };
-    match run(&paths) {
+    let format = match graph.as_deref().map(graph_format).transpose() {
+        Ok(format) => format,
+        Err(message) => {
+            ui::error(message);
+            anstream::eprintln!("usage: {USAGE}");
+            return ExitCode::from(USAGE_ERROR);
+        }
+    };
+    match run(&paths, graph.zip(format)) {
         Ok((report, defects)) => finish(&report, &defects),
         Err(e) => {
             ui::error(e);
@@ -31,16 +46,37 @@ fn main() -> ExitCode {
     }
 }
 
-/// Derives the report from the recorded artifacts and writes it.
-fn run([config, reqs, out]: &FlagValues<3>) -> GateResult<Derived> {
+/// The graph format a file name selects: `.mmd` is Mermaid, `.dot` is DOT.
+fn graph_format(path: &Path) -> Result<GraphFormat, String> {
+    match path.extension().and_then(|e| e.to_str()) {
+        Some("mmd") => Ok(GraphFormat::Mermaid),
+        Some("dot") => Ok(GraphFormat::Dot),
+        _ => Err(format!(
+            "`--graph {}` needs a `.mmd` or `.dot` file name",
+            path.display()
+        )),
+    }
+}
+
+/// Derives the report from the recorded artifacts and writes it, then the
+/// link graph when `graph` names one.
+fn run(
+    [config, reqs, out]: &FlagValues<3>,
+    graph: Option<GraphFile>,
+) -> GateResult<Derived> {
     if out.exists() {
         let _ = std::fs::remove_file(out);
     }
     let reqs = read_rows(reqs)?;
-    let trace_cfg = control_rs_ci::trace::reqs::TraceConfig::load(config)?;
+    let trace_cfg = TraceConfig::load(config)?;
     let (report, defects) = status::derive(&reqs, &trace_cfg);
     report.write(out)?;
     ui::status("Writing", out.display());
+    if let Some((path, format)) = graph {
+        let text = status::render_graph(&reqs, &trace_cfg, &report, format);
+        write_file(&path, text.as_bytes())?;
+        ui::status("Writing", path.display());
+    }
     Ok((report, defects))
 }
 

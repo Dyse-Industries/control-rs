@@ -14,7 +14,10 @@ use std::path::Path;
 use regex::Regex;
 use serde::Deserialize;
 
-use super::{CONDITION, DEFINITION, Defect, Row, SCHEMA, normalize, read_text};
+use super::link::LinkGraph;
+use super::{
+    CONDITION, DEFINITION, Defect, QUALIFIER, Row, SCHEMA, normalize, read_text,
+};
 use crate::error::{GateError, GateResult};
 
 /// A file and line.
@@ -74,6 +77,10 @@ pub struct TraceConfig {
     /// The subset of methods whose conditions name targets that a result
     /// artifact must record as passed.
     pub automated_methods: Vec<String>,
+    /// The subset of methods whose conditions name documents, requirements or
+    /// conditions as targets.
+    #[serde(default)]
+    pub link_methods: Vec<String>,
     /// Result artifact per method.
     #[serde(default)]
     pub method: BTreeMap<String, MethodConfig>,
@@ -129,6 +136,8 @@ pub struct Rules {
     verification: Regex,
     /// Verification methods a condition may name.
     methods: Vec<String>,
+    /// Methods whose conditions name documents, requirements or conditions.
+    link_methods: BTreeSet<String>,
     /// Pattern matching the document ID declaration in Markdown.
     doc_id: Regex,
     /// IDs that must not appear.
@@ -169,6 +178,21 @@ struct ScanContext<'a> {
 }
 
 impl TraceConfig {
+    /// A message when a link method is not a method or is also automated.
+    fn check_link_methods(&self) -> Result<(), String> {
+        for m in &self.link_methods {
+            if !self.methods.contains(m) {
+                return Err(format!("link method `{m}` is not in `methods`"));
+            }
+            if self.automated_methods.contains(m) {
+                return Err(format!(
+                    "link method `{m}` is also an automated method"
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// The file-name endings of the Markdown files a directory root selects.
     #[must_use]
     pub fn doc_suffixes(&self) -> Vec<String> {
@@ -218,6 +242,7 @@ impl TraceConfig {
                 )));
             }
         }
+        self.check_link_methods().map_err(error)?;
         compile("doc", &self.doc)?;
         compile("id", &self.id)?;
         compile("condition", &self.condition)?;
@@ -225,11 +250,11 @@ impl TraceConfig {
         let decisions =
             self.decisions.as_ref().map(|d| d.rules(path)).transpose()?;
         let occurrence = format!(
-            r"(?:(?P<trace_doc>{})#)?\b(?P<trace_id>{})\b",
+            r"(?:(?P<trace_doc>{})[{QUALIFIER}])?\b(?P<trace_id>{})\b",
             self.doc, self.id
         );
         let condition_occurrence = format!(
-            r"(?:(?P<trace_doc>{})#)?\b(?P<trace_id>{})\b",
+            r"(?:(?P<trace_doc>{})[{QUALIFIER}])?\b(?P<trace_id>{})\b",
             self.doc, self.condition
         );
         Ok(Rules {
@@ -238,6 +263,7 @@ impl TraceConfig {
             definition: compile("definition", &self.definition)?,
             verification: compile("verification", &self.verification)?,
             methods: self.methods.clone(),
+            link_methods: self.link_methods.iter().cloned().collect(),
             doc_id: compile("doc_id", &self.doc_id)?,
             retired: self.retired.iter().cloned().collect(),
             decisions,
@@ -284,8 +310,15 @@ impl Rules {
         self.occurrence.captures_iter(line).filter_map(move |caps| {
             let id = caps.name("trace_id")?.as_str();
             let owner = caps.name("trace_doc").map_or(doc, |m| m.as_str());
-            Some(format!("{owner}#{id}"))
+            Some(format!("{owner}{QUALIFIER}{id}"))
         })
+    }
+
+    /// The methods whose conditions name documents, requirements or
+    /// conditions as targets.
+    #[must_use]
+    pub const fn link_methods(&self) -> &BTreeSet<String> {
+        &self.link_methods
     }
 
     /// Whether `name` is one of the configured verification methods.
@@ -368,6 +401,20 @@ fn targets(line: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// `line` with the fourth cell of a table line of five or more cells emptied.
+fn without_target_cell(line: &str) -> String {
+    let trimmed = line.trim();
+    let inner = trimmed.strip_prefix('|').unwrap_or(trimmed);
+    let inner = inner.strip_suffix('|').unwrap_or(inner);
+    let mut cells: Vec<&str> = inner.split('|').collect();
+    if cells.len() >= 5
+        && let Some(cell) = cells.get_mut(3)
+    {
+        *cell = "";
+    }
+    cells.join("|")
+}
+
 fn scan_condition_line(
     line: &str,
     cell: &str,
@@ -377,21 +424,7 @@ fn scan_condition_line(
     let cond_caps = ctx.rules.condition_occurrence.captures(cell)?;
     let c_id = cond_caps.name("trace_id")?.as_str();
     let c_doc = cond_caps.name("trace_doc").map_or(ctx.doc, |m| m.as_str());
-    let cond_qualified = format!("{c_doc}#{c_id}");
-
-    let mut parents: Vec<String> = ctx
-        .rules
-        .occurrence
-        .captures_iter(line)
-        .filter_map(|caps| {
-            let id = caps.name("trace_id")?.as_str();
-            let owner = caps.name("trace_doc").map_or(ctx.doc, |d| d.as_str());
-            Some(format!("{owner}#{id}"))
-        })
-        .collect();
-
-    let mut seen = BTreeSet::new();
-    parents.retain(|p| seen.insert(p.clone()));
+    let cond_qualified = format!("{c_doc}{QUALIFIER}{c_id}");
 
     // The method is the code span whose content is in `methods`; failing
     // that, the first code span that holds no ID, so that `check` reports it
@@ -407,6 +440,29 @@ fn scan_condition_line(
             })
         })
         .map(|s| s.content.to_string());
+
+    // The targets of a link condition are not its parents.
+    let is_link = method
+        .as_deref()
+        .is_some_and(|m| ctx.rules.link_methods.contains(m));
+    let scanned = if is_link {
+        without_target_cell(line)
+    } else {
+        line.to_string()
+    };
+    let mut parents: Vec<String> = ctx
+        .rules
+        .occurrence
+        .captures_iter(&scanned)
+        .filter_map(|caps| {
+            let id = caps.name("trace_id")?.as_str();
+            let owner = caps.name("trace_doc").map_or(ctx.doc, |d| d.as_str());
+            Some(format!("{owner}{QUALIFIER}{id}"))
+        })
+        .collect();
+
+    let mut seen = BTreeSet::new();
+    parents.retain(|p| seen.insert(p.clone()));
 
     let mut condition = row(cond_qualified, CONDITION, at, line);
     condition.parents = parents;
@@ -598,7 +654,7 @@ fn check_duplicate_document_ids(rows: &[Row], defects: &mut Vec<Defect>) {
     let mut doc_first_file = DocFirstFile::new();
     let mut reported: BTreeSet<DocFilePair<'_>> = BTreeSet::new();
     for row in rows.iter().filter(|r| r.kind == DEFINITION) {
-        if let Some(doc) = row.id.split('#').next() {
+        if let Some(doc) = row.id.split(QUALIFIER).next() {
             if let Some(first) = doc_first_file.get(doc) {
                 if first.file != row.file
                     && reported.insert((doc, row.file.as_str()))
@@ -638,6 +694,7 @@ pub fn check(rows: &[Row], rules: &Rules) -> Vec<Defect> {
     check_condition_parents(&conditions, &definitions, &mut defects);
     check_condition_methods(&conditions, rules, &mut defects);
     check_duplicate_document_ids(rows, &mut defects);
+    check_links(rows, rules, &mut defects);
 
     for row in rows {
         for id in std::iter::once(&row.id).chain(&row.parents) {
@@ -651,6 +708,18 @@ pub fn check(rows: &[Row], rules: &Rules) -> Vec<Defect> {
         (a.file.as_str(), a.line).cmp(&(b.file.as_str(), b.line))
     });
     defects
+}
+
+/// Adds the defects of the link conditions in `rows`: targets that resolve to
+/// nothing, and links on a cycle.
+fn check_links(rows: &[Row], rules: &Rules, defects: &mut Vec<Defect>) {
+    if rules.link_methods.is_empty() {
+        return;
+    }
+    let (graph, resolution) = LinkGraph::resolve(rows, &rules.link_methods);
+    let (_, cycles) = graph.condense();
+    defects.extend(resolution);
+    defects.extend(cycles);
 }
 
 /// The decision defects of the decision `records` and of the requirement
@@ -876,6 +945,18 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
 methods = ["test", "analysis", "inspection", "review"]
 automated_methods = []
 "#;
+
+    const LINKED: &str = "\
+# Widget (widget)
+
+- **FR-1 — Size**: The widget shall report its size.
+- **FR-2 — Mass**: The widget shall report its mass.
+
+| Condition | Requirement | Method    | Target                | Criterion |
+|:----------|:------------|:----------|:----------------------|:----------|
+| VC-1.1    | FR-1        | `review`  | —                     | Reviewed  |
+| VC-2.1    | FR-2        | `link`    | `widget#FR-1`         | Holds     |
+";
 
     /// A row's kind, ID and line.
     type Found = (String, String, usize);
@@ -1516,5 +1597,78 @@ automated_methods = []
             error.to_string().contains("has no `status` capture"),
             "{error}"
         );
+    }
+
+    /// Rules with a `link` method.
+    fn link_rules() -> Rules {
+        let keys = KEYS.replace("\"review\"]", "\"review\", \"link\"]");
+        let text = format!("{keys}link_methods = [\"link\"]\nretired = []");
+        let config: TraceConfig = toml::from_str(&text).unwrap();
+        config.rules(Path::new("trace.toml")).unwrap()
+    }
+
+    #[test]
+    fn link_targets_are_not_parents() {
+        let (rows, defects) = scan_markdown(FILE, LINKED, &link_rules());
+        assert!(defects.is_empty(), "{defects:?}");
+        let link = rows.iter().find(|r| r.id == "widget#VC-2.1").unwrap();
+        assert_eq!(link.parents, ["widget#FR-2"]);
+        assert_eq!(link.targets, ["widget#FR-1"]);
+    }
+
+    #[test]
+    fn link_conditions_report_resolution_and_cycle_defects() {
+        let rules = link_rules();
+        assert!(
+            messages(LINKED, &rules).is_empty(),
+            "a resolvable link has no defect"
+        );
+        let empty = LINKED.replace("`widget#FR-1`", "—");
+        assert_eq!(
+            messages(&empty, &rules),
+            ["condition widget#VC-2.1 names no link target"]
+        );
+        let unknown = LINKED.replace("`widget#FR-1`", "`widget#FR-9`");
+        assert_eq!(
+            messages(&unknown, &rules),
+            ["condition widget#VC-2.1 target 'widget#FR-9' names no \
+                 selected document, requirement or condition"]
+        );
+        let cycle = LINKED.replace("`widget#FR-1`", "`widget#FR-2`");
+        assert_eq!(
+            messages(&cycle, &rules),
+            ["condition widget#VC-2.1 lies on a link cycle"]
+        );
+    }
+
+    #[test]
+    fn link_methods_must_be_methods_and_not_automated() {
+        for (extra, expected) in [
+            (
+                "link_methods = [\"link\"]\nretired = []",
+                "is not in `methods`",
+            ),
+            ("link_methods = [\"review\"]\nretired = []", ""),
+        ] {
+            let text = format!("{KEYS}{extra}");
+            let config: TraceConfig = toml::from_str(&text).unwrap();
+            let result = config.rules(Path::new("trace.toml"));
+            if expected.is_empty() {
+                assert!(result.is_ok());
+            } else {
+                assert!(result.unwrap_err().to_string().contains(expected));
+            }
+        }
+        let automated = KEYS.replace(
+            "automated_methods = []",
+            "automated_methods = [\"test\"]",
+        );
+        let text = format!(
+            "{automated}link_methods = [\"test\"]\nretired = []\n\n\
+             [method.test]\nresult_artifact = \"t.log\"\n"
+        );
+        let config: TraceConfig = toml::from_str(&text).unwrap();
+        let error = config.rules(Path::new("trace.toml")).unwrap_err();
+        assert!(error.to_string().contains("also an automated method"));
     }
 }

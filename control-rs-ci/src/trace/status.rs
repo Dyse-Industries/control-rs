@@ -17,6 +17,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use super::link::{GraphFormat, LinkGraph};
 use super::reqs::TraceConfig;
 use super::{
     CONDITION, DEFINITION, Defect, Defects, Row, SCHEMA, read_text, write_file,
@@ -783,6 +784,7 @@ fn initial_status_counts() -> StatusCounts {
 }
 
 fn evaluate_all_conditions(
+    reqs: &[Row],
     cond_idx: &Indexed<'_>,
     ctx: &mut StatusCtx<'_>,
     counts: &mut StatusCounts,
@@ -792,15 +794,26 @@ fn evaluate_all_conditions(
     let mut review = Vec::new();
     let mut deferred = Vec::new();
 
+    let link_methods: BTreeSet<String> =
+        ctx.config.link_methods.iter().cloned().collect();
+    let (graph, resolution) = LinkGraph::resolve(reqs, &link_methods);
+    let (graph, cycles) = graph.condense();
+    ctx.defects.extend(resolution);
+    ctx.defects.extend(cycles);
+    let mut derived = graph.derive(|row| condition_status(row, ctx));
+
     for row in condition_order.iter().filter_map(|id| conditions.get(id)) {
-        let status = condition_status(row, ctx);
+        let Some(status) = derived.remove(row.id.as_str()) else {
+            continue;
+        };
+        let is_link = link_methods.contains(&status.method);
 
         if let Some(count) = counts.get_mut(&status.status) {
             *count = count.saturating_add(1);
         }
         let pending = match status.status {
-            Status::Review => Some(&mut review),
-            Status::Deferred => Some(&mut deferred),
+            Status::Review if !is_link => Some(&mut review),
+            Status::Deferred if !is_link => Some(&mut deferred),
             _ => None,
         };
         if let Some(pending) = pending {
@@ -816,6 +829,28 @@ fn evaluate_all_conditions(
     }
 
     (evaluated, review, deferred)
+}
+
+/// The link view of the rows `reqs` as text in `format`, with the condition
+/// statuses of `report`.
+#[must_use]
+pub fn render_graph(
+    reqs: &[Row],
+    config: &TraceConfig,
+    report: &TraceReport,
+    format: GraphFormat,
+) -> String {
+    let link_methods: BTreeSet<String> =
+        config.link_methods.iter().cloned().collect();
+    let (graph, _) = LinkGraph::resolve(reqs, &link_methods);
+    let (graph, _) = graph.condense();
+    let statuses = report
+        .requirements
+        .iter()
+        .flat_map(|r| &r.conditions)
+        .map(|c| (c.id.as_str(), c.clone()))
+        .collect();
+    graph.render(format, Some(&statuses))
 }
 
 /// Derives condition and requirement status from the rows of `trace-reqs`,
@@ -850,7 +885,7 @@ pub fn derive_with_base(
     };
 
     let (evaluated, review, deferred) =
-        evaluate_all_conditions(&cond_idx, &mut ctx, &mut counts);
+        evaluate_all_conditions(reqs, &cond_idx, &mut ctx, &mut counts);
 
     let requirements = requirement_statuses(&order, &evaluated);
     check_staleness(reqs, config, base, &mut warnings);
@@ -1001,6 +1036,7 @@ mod tests {
             automated_methods: ["libtest", "kani", "pytest", "gtest"]
                 .map(String::from)
                 .to_vec(),
+            link_methods: vec![],
             method,
             retired: vec![],
             decisions: None,
@@ -1404,5 +1440,80 @@ mod tests {
         touch(&log, 2_000);
         let (equal, _) = derive_with_base(&rows, &default_config(), &dir);
         assert!(equal.warnings.iter().all(|w| w.code != "W-3"));
+    }
+
+    /// A definition of `id` in the document of `id`.
+    fn definition_of(id: &str) -> Row {
+        Row {
+            id: id.to_string(),
+            ..definition()
+        }
+    }
+
+    /// A condition `id` of `parent` with `method` naming `targets`.
+    fn condition_of(
+        id: &str,
+        parent: &str,
+        method: &str,
+        targets: &[&str],
+    ) -> Row {
+        Row {
+            id: id.to_string(),
+            parents: vec![parent.to_string()],
+            ..condition(method, targets)
+        }
+    }
+
+    fn link_config() -> TraceConfig {
+        let mut config = default_config();
+        config.methods.push("link".to_string());
+        config.link_methods = vec!["link".to_string()];
+        config
+    }
+
+    fn condition_status_of<'a>(
+        derived: &'a Derived,
+        id: &str,
+    ) -> Option<&'a ConditionStatus> {
+        derived
+            .0
+            .requirements
+            .iter()
+            .flat_map(|r| &r.conditions)
+            .find(|c| c.id == id)
+    }
+
+    #[test]
+    fn link_takes_the_worst_status_of_the_named_documents() {
+        let dir = test_dir("link_worst");
+        write_log(&dir, "libtest.log", "test t::a ... FAILED\n");
+        let rows = [
+            definition_of("w#FR-1"),
+            condition_of("w#VC-1.1", "w#FR-1", "libtest", &["t::a"]),
+            definition_of("l#FR-1"),
+            condition_of("l#VC-1.1", "l#FR-1", "link", &["w"]),
+        ];
+        let derived = derive_with_base(&rows, &link_config(), &dir);
+        let linked = condition_status_of(&derived, "l#VC-1.1").unwrap();
+        assert_eq!(linked.status, Status::Fail);
+        assert_eq!(linked.items.len(), 1);
+        assert!(!derived.0.passes());
+    }
+
+    #[test]
+    fn link_conditions_are_not_listed_for_review() {
+        let dir = test_dir("link_review");
+        let rows = [
+            definition_of("w#FR-1"),
+            condition_of("w#VC-1.1", "w#FR-1", "review", &[]),
+            definition_of("l#FR-1"),
+            condition_of("l#VC-1.1", "l#FR-1", "link", &["w#FR-1"]),
+        ];
+        let derived = derive_with_base(&rows, &link_config(), &dir);
+        let linked = condition_status_of(&derived, "l#VC-1.1").unwrap();
+        assert_eq!(linked.status, Status::Review);
+        let listed: Vec<&str> =
+            derived.0.review.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(listed, ["w#VC-1.1"]);
     }
 }
