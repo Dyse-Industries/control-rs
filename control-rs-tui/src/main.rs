@@ -139,6 +139,17 @@ where
             Some(Event::Key(key)) => match app.on_key(key) {
                 Some(Request::Stop) => worker.control.stop(),
                 Some(request) => {
+                    // Clear a prior Stop only when starting a new run, not when
+                    // writing settings or quitting. Clearing at worker dequeue
+                    // would drop a Stop that won the race against a queued run.
+                    if matches!(
+                        request,
+                        Request::RunAll
+                            | Request::RunCase(_)
+                            | Request::RunTask { .. }
+                    ) {
+                        worker.control.clear();
+                    }
                     let _ = worker.requests.send(request);
                 }
                 None => {}

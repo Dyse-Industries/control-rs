@@ -506,7 +506,9 @@ impl App {
                 Some(Request::Quit)
             }
             Command::RunAll if self.idle() => {
-                for id in self.catalog.case_ids() {
+                let ids = self.catalog.case_ids();
+                let first = ids.first().copied()?;
+                for id in ids {
                     self.cases.insert(
                         id,
                         CaseRow {
@@ -516,6 +518,9 @@ impl App {
                     );
                 }
                 self.faults.clear();
+                // Leave Idle immediately so a second `r` / Enter cannot queue
+                // another run before the first CaseStarted arrives.
+                self.status = Status::Running(first);
                 Some(Request::RunAll)
             }
             Command::Stop => Some(Request::Stop),
@@ -935,6 +940,7 @@ mod tests {
         );
         app.on_update(Update::Idle);
         assert_eq!(key(&mut app, KeyCode::Char('r')), Some(Request::RunAll));
+        assert_eq!(app.status, Status::Running((0, 0)));
         assert_eq!(app.cases.len(), 2, "the task has no case row");
         app.on_update(Update::Idle);
         // Enter on the task starts it in the first mode the host can drive.
@@ -1143,6 +1149,19 @@ mod tests {
         assert_eq!(key(&mut app, KeyCode::Char('r')), None);
         app.on_update(Update::Idle);
         assert_eq!(app.status, Status::Idle);
+    }
+
+    #[test]
+    fn run_all_leaves_idle_before_the_worker_reports() {
+        let mut app = ready(false);
+        assert_eq!(key(&mut app, KeyCode::Char('r')), Some(Request::RunAll));
+        assert_eq!(app.status, Status::Running((0, 0)));
+        assert_eq!(key(&mut app, KeyCode::Char('r')), None);
+        key(&mut app, KeyCode::Down);
+        assert_eq!(key(&mut app, KeyCode::Enter), None);
+        app.on_update(Update::Idle);
+        assert_eq!(app.status, Status::Idle);
+        assert_eq!(key(&mut app, KeyCode::Char('r')), Some(Request::RunAll));
     }
 
     #[test]

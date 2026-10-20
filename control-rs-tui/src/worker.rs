@@ -201,7 +201,8 @@ fn serve(
         match requests.recv_timeout(IDLE) {
             Ok(Request::Quit) | Err(RecvTimeoutError::Disconnected) => break,
             Ok(request) => {
-                control.clear();
+                // Do not clear RunControl here: a Stop pressed after the UI queued
+                // this request but before dequeue must still abort the run.
                 let resets = session.results().resets;
                 if let Err(e) = handle(&mut session, request, updates, control)
                 {
