@@ -934,43 +934,20 @@ mod runner {
     }
 
     #[test]
-    fn test_workspace_gate_toml_mutation_gates_are_executable() {
+    fn test_workspace_gate_toml_mutation_gate_is_executable() {
         let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR"));
         let workspace_gate_toml =
             manifest_dir.parent().unwrap().join(".cargo/gate.toml");
         let config = GateConfig::load_from_path(&workspace_gate_toml).unwrap();
 
-        let mut chunks: Vec<&str> = config
-            .gate_definitions
-            .keys()
-            .map(String::as_str)
-            .filter(|name| name.starts_with("mutants-"))
-            .collect();
-        chunks.sort_unstable();
-        assert!(!chunks.is_empty(), "no mutation chunk gates are defined");
-        for name in chunks {
-            assert_eq!(
-                config.policy_for(name),
-                GatePolicy::Fail,
-                "{name} must be executable (not mode = skip)"
-            );
-            assert!(
-                config
-                    .gate_definitions
-                    .get(name)
-                    .is_some_and(|gate| !gate.default),
-                "{name} must not run by default in unfiltered CI"
-            );
-        }
-
-        // The monolithic gate is executable for local runs, but CI runs only
-        // the chunks, so the report must not require its result.
+        // CI runs the gate in one job event at a time (changed code on a pull
+        // request, shards on main), so the report must not require its result.
         assert_eq!(config.policy_for("mutants"), GatePolicy::Fail);
         let monolith = config.gate_definitions.get("mutants").unwrap();
         assert!(!monolith.default, "mutants must not run by default");
         assert!(
             !monolith.required,
-            "mutants has no CI job; requiring its result would fail the report"
+            "mutants runs in one event type per workflow run; requiring its result would fail the report"
         );
     }
 }

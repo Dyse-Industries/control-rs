@@ -171,8 +171,8 @@ The gates are declared in [`.cargo/gate.toml`](.cargo/gate.toml): `fmt`, `clippy
 `doc`, `vale`, `build`, `test`, `coverage`, `deny`, `deny-duplicates`, `semver`,
 `geiger`,
 `valgrind`, `cross-compare`, `regression` and `mutants`. GitHub Actions
-runs `mutants` as the `mutants-*` chunk gates, one job each, and
-runs the other gates on every PR, across the supported toolchains from the
+runs `mutants` on pull requests (changed code only) and on pushes to
+`main` (every mutant, in shards), and runs the other gates on every PR, across the supported toolchains from the
 MSRV (`1.89.0`) to beta. Some gates need extra tools or are Linux-only;
 see the Development Guide.
 

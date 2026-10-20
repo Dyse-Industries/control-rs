@@ -476,41 +476,39 @@ jobs:
           retention-days: 7
 
   # ============================================================================
-  # Post stage: mutants-* (mutation testing, one job per chunk)
+  # Post stage: mutants (mutation testing)
   # ============================================================================
-  # The matrix is every `mutants-*` gate in gate.toml. The gates partition the
-  # root package by file, and the largest files split further with --shard.
-  mutants-plan:
-    name: Mutation Chunks
+  # The `mutants` gate covers the whole workspace. Every pull request and every
+  # push to main runs every mutant, split across MUTANT_SHARDS jobs: a change
+  # can alter which tests reach unchanged code, so a diff-limited run does not
+  # bound what the change affects.
+  mutants_plan:
+    name: Mutation Shards
     runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' || github.ref == 'refs/heads/main'
+    env:
+      # Shard count. Every shard of a run divides the mutant list by this value.
+      MUTANT_SHARDS: 16
     outputs:
-      gates: ${{ steps.list.outputs.gates }}
+      shards: ${{ steps.plan.outputs.shards }}
+      count: ${{ steps.plan.outputs.count }}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: List mutants-* gates
-        id: list
-        shell: python
+      - id: plan
         run: |
-          import json, os, tomllib
-          with open(".cargo/gate.toml", "rb") as f:
-              gates = [name for name in tomllib.load(f) if name.startswith("mutants-")]
-          with open(os.environ["GITHUB_OUTPUT"], "a") as out:
-              out.write("gates=" + json.dumps(gates) + "\n")
+          echo "count=$MUTANT_SHARDS" >> "$GITHUB_OUTPUT"
+          echo "shards=$(seq 0 $((MUTANT_SHARDS - 1)) | jq -cs .)" >> "$GITHUB_OUTPUT"
 
   mutants:
-    name: Mutation Testing (${{ matrix.gate }})
+    name: Mutation Testing (shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    needs: mutants-plan
+    needs: mutants_plan
     timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix:
-        gate: ${{ fromJSON(needs.mutants-plan.outputs.gates) }}
+        shard: ${{ fromJSON(needs.mutants_plan.outputs.shards) }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
       - uses: dtolnay/rust-toolchain@stable
 
@@ -521,13 +519,15 @@ jobs:
         run: cargo binstall -y cargo-mutants
 
       - name: Run Mutants Gate
-        run: cargo ci --verbose --diff --only ${{ matrix.gate }}
+        run: cargo gate --verbose --only mutants -- --shard ${{ matrix.shard }}/${{ needs.mutants_plan.outputs.count }} --sharding round-robin
 
+      # Outside the `ci-artifacts-*` pattern: shards share one gate result name,
+      # so the report job must not merge them.
       - name: Upload Mutants Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ci-artifacts-${{ matrix.gate }}
+          name: mutants-shard-${{ matrix.shard }}
           path: target/ci-artifacts/
           retention-days: 7
 
