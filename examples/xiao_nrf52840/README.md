@@ -72,7 +72,7 @@ Double-tap the reset button on the XIAO nRF52840 to enter UF2 bootloader mode (m
 
 ```bash
 rust-objcopy -O binary target/thumbv7em-none-eabihf/release/xiao-nrf52840 xiao.bin
-uf2conv xiao.bin -c -f 0xADA52840 -o xiao.uf2
+uf2conv xiao.bin -b 0x27000 -c -f 0xADA52840 -o xiao.uf2
 cp xiao.uf2 /Volumes/Arduino/
 ```
 
