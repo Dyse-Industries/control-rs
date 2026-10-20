@@ -861,6 +861,25 @@ pub mod matrix_test_suite {
     }
 
     #[cfg_attr(test, test)]
+    /// Board examples (Uno R4 / XIAO) use row-major literals via `from_row_arrays`.
+    fn test_board_example_discrete_steps() {
+        let a =
+            Owned::<f64, 2, 2>::from_row_arrays([[0.95, 0.0], [0.05, 0.90]]);
+        let x = Owned::<f64, 2, 1>::from_array([[1.0, 0.0]]);
+        let mut x_next = Owned::<f64, 2, 1>::zero();
+        a.mul_into(&x, &mut x_next);
+        assert_eq!(x_next.get(0, 0), Some(&0.95));
+        assert_eq!(x_next.get(1, 0), Some(&0.05));
+
+        let f = Owned::<f64, 2, 2>::from_row_arrays([[1.0, 0.0], [0.01, 1.0]]);
+        let x0 = Owned::<f64, 2, 1>::from_array([[10.0, 0.5]]);
+        let mut x_pred = Owned::<f64, 2, 1>::zero();
+        f.mul_into(&x0, &mut x_pred);
+        assert_eq!(x_pred.get(0, 0), Some(&10.0));
+        assert_eq!(x_pred.get(1, 0), Some(&0.6));
+    }
+
+    #[cfg_attr(test, test)]
     /// A rotation generator of norm 12 needs scaling and squaring; without it
     /// the series truncation error is large.
     fn test_expm_large_norm_needs_scaling() {
