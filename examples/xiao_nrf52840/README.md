@@ -22,8 +22,8 @@ communicates over native Full-Speed USB 2.0 (12 Mbps) CDC-ACM serial.
 | Core Clock | 64 MHz |
 | Transport | Native Full-Speed USB 2.0 (12 Mbps) CDC-ACM via `nrf52840_hal::usbd::Usbd` |
 | Profiler | `CortexMProfiler` with 1 ms `SysTick` interrupt counter and 64 MHz clock |
-| Bootloader | Adafruit UF2 Bootloader compatible memory map (`ORIGIN = 0x1000`) |
-| Memory Mapping | Linker script `memory.x` (1020 KB Flash, 255 KB SRAM) |
+| Bootloader | Adafruit UF2 + SoftDevice S140 7.3.0 (`FLASH ORIGIN = 0x27000`) |
+| Memory Mapping | Linker script `memory.x` (788 KB app flash, SRAM from `0x20000008`) |
 
 ---
 
@@ -72,7 +72,8 @@ Double-tap the reset button on the XIAO nRF52840 to enter UF2 bootloader mode (m
 
 ```bash
 rust-objcopy -O binary target/thumbv7em-none-eabihf/release/xiao-nrf52840 xiao.bin
-uf2conv xiao.bin -c -f 0xADA52840 -o xiao.uf2
+# Binary has no load address; pass the SoftDevice app base or UF2 overwrites S140.
+uf2conv xiao.bin -c -f 0xADA52840 -b 0x27000 -o xiao.uf2
 cp xiao.uf2 /Volumes/Arduino/
 ```
 

@@ -62,8 +62,9 @@ impl ByteStream for XiaoNrfUsb {
     fn write(&mut self, buf: &[u8]) -> CountOf<Self> {
         self.service();
         if !self.configured {
-            // Discard output while no host is connected.
-            return Ok(buf.len());
+            // Back-pressure until the host configures CDC-ACM. Ok(buf.len())
+            // would let StreamLink drain_tx drop the framed message.
+            return Ok(0);
         }
         match self.usb_class.write(buf) {
             Ok(written) => Ok(written),
@@ -97,7 +98,8 @@ pub mod xiao_nrf52840_suite {
 
     fn test_kalman_state_estimate() {
         // Discrete state prediction: x = F * x
-        let f = Owned::<f64, 2, 2>::from_array([[1.0, 0.0], [0.01, 1.0]]);
+        // `from_array` is column-major; use `from_row_arrays` for row-major literals.
+        let f = Owned::<f64, 2, 2>::from_row_arrays([[1.0, 0.0], [0.01, 1.0]]);
         let x = Owned::<f64, 2, 1>::from_array([[10.0, 0.5]]);
         let mut x_pred = Owned::<f64, 2, 1>::zero();
         f.mul_into(&x, &mut x_pred);

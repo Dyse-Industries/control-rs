@@ -74,7 +74,9 @@ pub mod uno_r4_control_suite {
 
     fn test_matrix_state_transition() {
         // Discrete state-space dynamic step: x[k+1] = A * x[k]
-        let a = Owned::<f64, 2, 2>::from_array([[0.95, 0.0], [0.05, 0.90]]);
+        // `from_array` is column-major; use `from_row_arrays` for row-major literals.
+        let a =
+            Owned::<f64, 2, 2>::from_row_arrays([[0.95, 0.0], [0.05, 0.90]]);
         let x = Owned::<f64, 2, 1>::from_array([[1.0, 0.0]]);
         let mut x_next = Owned::<f64, 2, 1>::zero();
         a.mul_into(&x, &mut x_next);
