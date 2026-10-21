@@ -1,7 +1,8 @@
 # Test suites under src/**/tests/ compile into the library for on-target
 # execution, so cargo-mutants does not recognize them as test code. Mutating
-# them measures nothing.
-exclude_globs = ["src/**/tests/**", "tests/**", "benches/**"]
+# them measures nothing. control-rs-verification is an oracle emitter validated
+# by cross-compare and is not mutated.
+exclude_globs = ["src/**/tests/**", "tests/**", "benches/**", "control-rs-verification/**"]
 
 # Doc-tests are expensive and should not be relied on to catch mutants.
 # This allows speeding up the test command run for each mutant.

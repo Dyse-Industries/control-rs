@@ -474,13 +474,20 @@ description = "Mutation testing: every file not claimed by another mutants-* gat
 # other inputs, and the `cfg(not(unix))` `terminate_tree`, which is not
 # compiled on the CI platform (`terminate_child_only`). The same list is on
 # both shards so `--shard` partitions one mutant list.
+#
+# `children_of`, `stop_tree`, `terminate_tree` and `signal` in gate.rs are
+# excluded for safety, not equivalence: they send `kill -STOP` and `kill -KILL`
+# to the process ids they compute, so a mutant that returns `vec![0]` or
+# `vec![1]` or reroutes a call signals the process group or init of the machine
+# running the mutation test. `timeout_kills_descendants` covers the real
+# behavior in an ordinary test run.
 
 [mutants-ci-0]
 mode = "fail"
 default = false
 command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "replace terminate_child_only with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--shard", "0/2", "--output", "target/ci-artifacts/mutants-ci-0.out"]
-diff-trigger = ["control-rs-ci/"]
+args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "replace terminate_child_only with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--exclude-re", "replace (children_of|stop_tree|terminate_tree|signal)\\b", "--exclude-re", " in (children_of|stop_tree|terminate_tree|signal)$", "--shard", "0/2", "--output", "target/ci-artifacts/mutants-ci-0.out"]
+diff-trigger = ["control-rs-ci/", "control-rs-ets/", "control-rs-ets-host/", ".cargo/trace/", ".cargo/compare.toml", ".cargo/regression.toml"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ci, chunk 1 of 2"
 
@@ -488,8 +495,8 @@ description = "Mutation testing: control-rs-ci, chunk 1 of 2"
 mode = "fail"
 default = false
 command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "replace terminate_child_only with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--shard", "1/2", "--output", "target/ci-artifacts/mutants-ci-1.out"]
-diff-trigger = ["control-rs-ci/"]
+args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "replace terminate_child_only with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--exclude-re", "replace (children_of|stop_tree|terminate_tree|signal)\\b", "--exclude-re", " in (children_of|stop_tree|terminate_tree|signal)$", "--shard", "1/2", "--output", "target/ci-artifacts/mutants-ci-1.out"]
+diff-trigger = ["control-rs-ci/", "control-rs-ets/", "control-rs-ets-host/", ".cargo/trace/", ".cargo/compare.toml", ".cargo/regression.toml"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ci, chunk 2 of 2"
 
@@ -520,7 +527,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "--no-config", "--package", "control-rs-ets-host", "--exclude-re", "replace RunEnd::drained -> Self with Default::default\\(\\)", "--exclude-re", "replace > with >= in HeadlessRun<'t>::(drive|retry_discovery)", "--output", "target/ci-artifacts/mutants-ets-host.out"]
-diff-trigger = ["control-rs-ets-host/"]
+diff-trigger = ["control-rs-ets-host/", "control-rs-ets/"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ets-host"
 
@@ -552,7 +559,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "--no-config", "--package", "control-rs-tui", "--output", "target/ci-artifacts/mutants-tui.out"]
-diff-trigger = ["control-rs-tui/"]
+diff-trigger = ["control-rs-tui/", "control-rs-ets-host/", "control-rs-ets/"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-tui"
 
