@@ -2,7 +2,7 @@
 
 ![Date Badge](https://img.shields.io/badge/Date-October_20,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
-![Design Status Badge](https://img.shields.io/badge/Design%20Status-Draft-orange)
+![Design Status Badge](https://img.shields.io/badge/Design%20Status-Ready-brightgreen)
 
 ---
 
@@ -13,7 +13,7 @@ requirement or a condition, and takes the status of what it names, so a
 requirement can rest on another design without restating its verification.
 `requirement-traceability-design.md` owns the `link` method, its configuration
 and the target spelling. This document specifies the graph that method needs:
-resolving what a link names, finding links that depend on themselves, and
+resolving what a link names, finding links that depend on themselves and
 ordering status evaluation so that a linked status is known before a link reads
 it. A link that depends on itself is never intended and is hard to find by hand
 in a large collection of requirements [1].
@@ -26,16 +26,16 @@ in a large collection of requirements [1].
 
 - **FR-1 — Link target resolution**: Each target of a link condition resolves
   to a design document, a requirement or a condition defined in the selected
-  rows. A link with no target, a target that names nothing defined, and a
+  rows. A link with no target, a target that names nothing defined and a
   target document that defines no requirement are each a defect at the
   condition row.
 - **FR-2 — Link cycle detection**: Every link condition that lies on a cycle of
   links is reported at its row. A link to the condition itself, to its parent
-  requirement, to its own document, or into a chain that returns to it is a
+  requirement, to its own document or into a chain that returns to it is a
   cycle; a link to another requirement of the same document is not.
 - **FR-3 — Link status**: A link condition takes the worst status of the items
   it names, a document taking the worst status of its requirements. A link
-  condition on a cycle is `Fail`, a link with no target is `Uncovered`, and a
+  condition on a cycle is `Fail`, a link with no target is `Uncovered`and a
   status passes along a chain of links.
 - **FR-4 — One set of link defects**: `trace-reqs` and `trace-check` report the
   same link defects for the same rows.
@@ -75,7 +75,8 @@ in a large collection of requirements [1].
 
 The graph lives in the `control-rs-ci` crate beside the tracer it serves. It
 has one vertex per document, requirement and condition, and one edge for each
-dependency of one vertex's status on the status of a second vertex. Three steps run in a fixed
+dependency of one vertex's status on the status of a second vertex. Three steps
+run in a fixed
 order, each producing the input of the next. Cycle detection is the single-pass
 depth-first strongly connected component search of Tarjan [2], which also yields
 the evaluation order. A document is a vertex of its own, so a link to a
@@ -109,7 +110,7 @@ The graph is the module `control_rs_ci::trace::link`, in
 
 `requirement-traceability-design.md` supplies three inputs this design relies on
 and does not restate: the `link` method, the spelling of a link
-target, and the position of the `link` rows in its status derivation. A link
+target and the position of the `link` rows in its status derivation. A link
 target is a qualified ID `<doc>#<id>` or a bare document name `<doc>`, and a
 link condition carries its targets in `Row::targets`.
 
@@ -278,7 +279,7 @@ nodes [8]; a DOT digraph is nodes and `->` edges [9]. Both open in existing
 viewers, so no viewer is written or vendored.
 
 The link view is the subgraph of the link conditions, their parent
-requirements, the documents defining those requirements, and each vertex a
+requirements, the documents defining those requirements and each vertex a
 link names. It does not expand below a named document or requirement, which
 would draw every requirement and condition of the workspace. The removed cyclic
 edges are kept in `Acyclic` and drawn, so a cycle is visible.
@@ -289,9 +290,11 @@ edges are kept in `Acyclic` and drawn, so a cycle is visible.
   statuses, the status name, so colour is never the only signal.
 - A document is a stadium, a requirement a rectangle and a condition a rounded
   box; in DOT, an ellipse, a box and a rounded box. Status selects the fill:
-  `Pass` green `#c8e6c9`, `Review` and `Deferred` grey `#e0e0e0`, `Uncovered`
-  and `Unrun` amber `#ffe0b2`, `Fail` red `#ffcdd2`. A removed cyclic edge is
-  `#d32f2f`. Mermaid draws top down and DOT with `rankdir=TB`.
+  `Pass` green `#66bb6a`, `Review` and `Deferred` grey `#bdbdbd`, `Uncovered`
+  and `Unrun` amber `#ffb74d`, `Fail` red `#e57373`. A removed cyclic edge is
+  `#d32f2f`. A Mermaid vertex has a `#212121` outline 2 px wide and black
+  text, set by one `style` line per vertex rather than a `classDef`, which
+  some viewers ignore. Mermaid draws top down and DOT with `rankdir=TB`.
 - A structural edge and a link edge are solid arrows; a removed cyclic edge is
   red and dashed.
 - A requirement or document status is the worst status of what it depends on,
@@ -322,7 +325,7 @@ time for `--graph`.
 ```rust
 /// Required and optional flag values of a command line.
 pub type Flags<const N: usize, const M: usize> =
-    (FlagValues<N>, [Option<PathBuf>; M]);
+(FlagValues<N>, [Option<PathBuf>; M]);
 
 /// The link view of `reqs` in `format`, with the condition statuses of `report`.
 pub fn render_graph(
@@ -333,7 +336,7 @@ pub fn render_graph(
 
 /// The `parse_flags` and `cli_args` of the tracer with optional flags.
 pub fn parse_flags_with<const N: usize, const M: usize>(
-    args: impl IntoIterator<Item = String>,
+    args: impl IntoIterator<Item=String>,
     required: [&str; N],
     optional: [&str; M],
 ) -> Result<Flags<N, M>, String>;
@@ -442,8 +445,8 @@ numeric policy.
 
 ### 9. Development Plan
 
-| Phase                    | Delivers                                                     | Requirements        | Effort   | Status  |
-|:-------------------------|:-------------------------------------------------------------|:--------------------|:---------|:--------|
+| Phase                    | Delivers                                                     | Requirements        | Effort   | Status   |
+|:-------------------------|:-------------------------------------------------------------|:--------------------|:---------|:---------|
 | 1. Resolution            | `LinkGraph<Resolved>`, `resolve` and its defects             | FR-1, C-1, C-2, C-3 | 1.5 days | Complete |
 | 2. Condensation          | Iterative Tarjan pass, cyclic edge removal, evaluation order | FR-2, NFR-1, NFR-2  | 2 days   | Complete |
 | 3. Derivation and wiring | `derive`, calls from `trace-reqs` and `trace-check`          | FR-3, FR-4          | 2 days   | Complete |
@@ -459,8 +462,10 @@ numeric policy.
 | 1.2      | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5 | Added the link graph export. Affects C-1, C-2, C-3, C-4, FR-1, FR-2, FR-3, FR-4, FR-5, NFR-1, NFR-2, NFR-3.                                                                              |
 | 1.3      | October 20, 2026 | @MitchellDScott                    | Removed AI-generated mark after human review. Affects C-1, C-2, C-3, C-4, FR-1, FR-2, FR-3, FR-4, FR-5, NFR-1, NFR-2, NFR-3.                                                             |
 | 1.4      | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5 | Empty requirement and document rule, render palette, row-reading rules, public aliases and binary wiring. Affects C-1, C-2, C-3, C-4, FR-1, FR-2, FR-3, FR-4, FR-5, NFR-1, NFR-2, NFR-3. |
-| 1.5 | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5 | Binary wiring signatures, the qualifier constant and phase status. Affects C-1, C-2, C-3, C-4, FR-1, FR-2, FR-3, FR-4, FR-5, NFR-1, NFR-2, NFR-3. |
-| 2.0 | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5 | link is a fixed method name: resolve takes no method set, render_graph takes no configuration, and the link_methods configuration is removed. |
+| 1.5      | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5 | Binary wiring signatures, the qualifier constant and phase status. Affects C-1, C-2, C-3, C-4, FR-1, FR-2, FR-3, FR-4, FR-5, NFR-1, NFR-2, NFR-3.                                        |
+| 2.0      | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5 | link is a fixed method name: resolve takes no method set, render_graph takes no configuration, and the link_methods configuration is removed.                                            |
+| 3.0      | October 20, 2026 | @MitchellDScott, Claude Opus 5.5   | Raised graph fill contrast; Mermaid vertices get a dark 2 px outline.                                                                                                                    |
+| 3.1      | October 20, 2026 | @MitchellDScott, Claude Opus 5.5   | Mermaid vertex colours are written as one style line per vertex instead of classDef classes.                                                                                             |
 
 ---
 
@@ -474,7 +479,7 @@ Accessed: Oct. 20, 2026.
 [2] R. Tarjan, "Depth-first search and linear graph algorithms," *SIAM J.
 Comput.*, vol. 1, no. 2, pp. 146–160, Jun. 1972, doi: 10.1137/0201010.
 
-[3] A. Chavan, S. Rabinia, D. Grosu, and M. Brocanelli, "Speeding-up graph
+[3] A. Chavan, S. Rabinia, D. Grosu and M. Brocanelli, "Speeding-up graph
 algorithms via clique partitioning," The Ohio State Univ. and Wayne State
 Univ., arXiv:2502.02477v3, Mar. 2026. [Online]. Available:
 https://arxiv.org/abs/2502.02477. Accessed: Oct. 18, 2026.
@@ -488,7 +493,7 @@ USA, Tech. Rep. 765, Apr. 1988.
 https://github.com/petgraph/petgraph/blob/master/crates/petgraph/src/algo/scc/tarjan_scc.rs.
 Accessed: Oct. 18, 2026.
 
-[6] A. Mokhov, N. Mitchell, and S. Peyton Jones, "Build systems à la carte,"
+[6] A. Mokhov, N. Mitchell and S. Peyton Jones, "Build systems à la carte,"
 *Proc. ACM Program. Lang.*, vol. 2, no. ICFP, pp. 79:1–79:29, Sep. 2018, doi:
 10.1145/3236774.
 

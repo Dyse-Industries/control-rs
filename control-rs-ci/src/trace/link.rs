@@ -18,26 +18,16 @@ use super::{CONDITION, DEFINITION, Defect, Defects, QUALIFIER, Row};
 const CYCLE_STROKE: &str = "#d32f2f";
 
 /// Fill of a vertex with a failing status.
-const FILL_FAIL: &str = "#ffcdd2";
+const FILL_FAIL: &str = "#e57373";
 
 /// Fill of a vertex without coverage or with a target that did not run.
-const FILL_OPEN: &str = "#ffe0b2";
+const FILL_OPEN: &str = "#ffb74d";
 
 /// Fill of a vertex with a passing status.
-const FILL_PASS: &str = "#c8e6c9";
+const FILL_PASS: &str = "#66bb6a";
 
 /// Fill of a vertex that awaits sign-off or is deferred.
-const FILL_PENDING: &str = "#e0e0e0";
-
-/// Every status, in the order the Mermaid classes are defined.
-const STATUSES: [Status; 6] = [
-    Status::Pass,
-    Status::Review,
-    Status::Deferred,
-    Status::Uncovered,
-    Status::Unrun,
-    Status::Fail,
-];
+const FILL_PENDING: &str = "#bdbdbd";
 
 /// Out-edges per vertex: the vertices its status depends on.
 type Adjacency = Vec<Vec<usize>>;
@@ -231,7 +221,7 @@ impl<'a> LinkGraphBuilder<'a> {
             let Some(v) = self.condition_of(row, i) else {
                 continue;
             };
-            // A condition may verify several requirements; each gets an edge
+            // A condition may verify more than one requirement; each gets an edge
             // to it, so a requirement depends on the conditions that verify it.
             for parent in &row.parents {
                 let r = self.ids.get(parent.as_str()).copied();
@@ -768,16 +758,14 @@ impl<'a> LinkGraph<'a, Acyclic> {
             let Some(vertex) = self.vertices.get(v) else {
                 continue;
             };
-            let status = view.status_of(v);
-            let text = label(vertex.name, status).replace('"', "#quot;");
+            let text =
+                label(vertex.name, view.status_of(v)).replace('"', "#quot;");
             let node = match vertex.clique {
                 NodeClique::Document => format!("n{v}([\"{text}\"])"),
                 NodeClique::Requirement => format!("n{v}[\"{text}\"]"),
                 NodeClique::Condition => format!("n{v}(\"{text}\")"),
             };
-            let class = status
-                .map_or_else(String::new, |s| format!(":::{}", class_of(s)));
-            lines.push(format!("    {node}{class}"));
+            lines.push(format!("    {node}"));
         }
         for &(u, w) in view.kept {
             lines.push(format!("    n{u} --> n{w}"));
@@ -785,11 +773,13 @@ impl<'a> LinkGraph<'a, Acyclic> {
         for &(u, w) in view.cut {
             lines.push(format!("    n{u} -.-> n{w}"));
         }
-        if view.status.is_some() {
-            for s in STATUSES {
-                let (class, fill) = (class_of(s), fill_of(s));
+        // One `style` line per vertex: viewers that drop `classDef` still
+        // apply it.
+        for &v in view.shown {
+            if let Some(s) = view.status_of(v) {
+                let fill = fill_of(s);
                 lines.push(format!(
-                    "    classDef {class} fill:{fill},stroke:#555,color:#000"
+                    "    style n{v} fill:{fill},stroke:#212121,stroke-width:2px,color:#000"
                 ));
             }
         }
@@ -814,18 +804,6 @@ impl<'a> LinkGraph<'a, Acyclic> {
 /// graph the slice was sized for.
 fn at(values: &[usize], i: usize) -> usize {
     values.get(i).copied().unwrap_or(0)
-}
-
-/// The Mermaid class of `status`.
-const fn class_of(status: Status) -> &'static str {
-    match status {
-        Status::Pass => "pass",
-        Status::Review => "review",
-        Status::Deferred => "deferred",
-        Status::Uncovered => "uncovered",
-        Status::Unrun => "unrun",
-        Status::Fail => "fail",
-    }
 }
 
 /// Whether a status fails the gate.
@@ -1269,18 +1247,15 @@ mod tests {
     fn render_mermaid_shows_status_and_marks_cycle_edges() {
         let text = rendered(&cycle_rows(), GraphFormat::Mermaid);
         let expected = "flowchart TD\n\
-            \x20   n0([\"a (Fail)\"]):::fail\n\
-            \x20   n1[\"a#FR-1 (Fail)\"]:::fail\n\
-            \x20   n2(\"a#VC-1.1 (Fail)\"):::fail\n\
+            \x20   n0([\"a (Fail)\"])\n\
+            \x20   n1[\"a#FR-1 (Fail)\"]\n\
+            \x20   n2(\"a#VC-1.1 (Fail)\")\n\
             \x20   n0 --> n1\n\
             \x20   n1 --> n2\n\
             \x20   n2 -.-> n1\n\
-            \x20   classDef pass fill:#c8e6c9,stroke:#555,color:#000\n\
-            \x20   classDef review fill:#e0e0e0,stroke:#555,color:#000\n\
-            \x20   classDef deferred fill:#e0e0e0,stroke:#555,color:#000\n\
-            \x20   classDef uncovered fill:#ffe0b2,stroke:#555,color:#000\n\
-            \x20   classDef unrun fill:#ffe0b2,stroke:#555,color:#000\n\
-            \x20   classDef fail fill:#ffcdd2,stroke:#555,color:#000\n\
+            \x20   style n0 fill:#e57373,stroke:#212121,stroke-width:2px,color:#000\n\
+            \x20   style n1 fill:#e57373,stroke:#212121,stroke-width:2px,color:#000\n\
+            \x20   style n2 fill:#e57373,stroke:#212121,stroke-width:2px,color:#000\n\
             \x20   linkStyle 2 stroke:#d32f2f,stroke-dasharray:5 5\n";
         assert_eq!(text, expected);
     }
@@ -1290,9 +1265,9 @@ mod tests {
         let text = rendered(&cycle_rows(), GraphFormat::Dot);
         let expected = "digraph links {\n\
             \x20   rankdir=TB;\n\
-            \x20   n0 [label=\"a (Fail)\", shape=ellipse, style=\"filled\", fillcolor=\"#ffcdd2\"];\n\
-            \x20   n1 [label=\"a#FR-1 (Fail)\", shape=box, style=\"filled\", fillcolor=\"#ffcdd2\"];\n\
-            \x20   n2 [label=\"a#VC-1.1 (Fail)\", shape=box, style=\"rounded,filled\", fillcolor=\"#ffcdd2\"];\n\
+            \x20   n0 [label=\"a (Fail)\", shape=ellipse, style=\"filled\", fillcolor=\"#e57373\"];\n\
+            \x20   n1 [label=\"a#FR-1 (Fail)\", shape=box, style=\"filled\", fillcolor=\"#e57373\"];\n\
+            \x20   n2 [label=\"a#VC-1.1 (Fail)\", shape=box, style=\"rounded,filled\", fillcolor=\"#e57373\"];\n\
             \x20   n0 -> n1;\n\
             \x20   n1 -> n2;\n\
             \x20   n2 -> n1 [style=dashed, color=\"#d32f2f\"];\n\
@@ -1313,10 +1288,7 @@ mod tests {
         }
         let (graph, _) = acyclic(&rows);
         let bare = graph.render(GraphFormat::Mermaid, None);
-        assert!(
-            !bare.contains("Pass") && !bare.contains("classDef"),
-            "{bare}"
-        );
+        assert!(!bare.contains("Pass") && !bare.contains("style"), "{bare}");
     }
 
     #[test]
