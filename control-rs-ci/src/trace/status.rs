@@ -662,8 +662,9 @@ fn worst(conditions: &[ConditionStatus]) -> Status {
 }
 
 /// One entry per requirement in `order`, each with its conditions sorted by
-/// ID and its status from `rolled`, the link graph's rollup. A requirement the
-/// graph has no vertex for takes the worst status of its conditions.
+/// ID and the worse of the link-graph rollup and those conditions. A condition
+/// the graph omitted (for example an unqualified id) still contributes through
+/// the children, so the requirement cannot stay green while a child fails.
 fn requirement_statuses(
     order: &[&str],
     evaluated: &[ConditionStatus],
@@ -683,12 +684,10 @@ fn requirement_statuses(
         .map(|&id| {
             let mut children = by_parent.remove(id).unwrap_or_default();
             children.sort_by(|a, b| a.id.cmp(&b.id));
+            let leaf = worst(&children);
             RequirementStatus {
                 id: id.to_string(),
-                status: rolled
-                    .get(id)
-                    .copied()
-                    .unwrap_or_else(|| worst(&children)),
+                status: rolled.get(id).copied().map_or(leaf, |g| g.max(leaf)),
                 conditions: children,
             }
         })
@@ -818,9 +817,12 @@ fn evaluate_all_conditions<'a>(
     } = graph.derive(|row| condition_status(row, ctx));
 
     for row in condition_order.iter().filter_map(|id| conditions.get(id)) {
-        let Some(status) = derived.remove(row.id.as_str()) else {
-            continue;
-        };
+        // `LinkGraph::resolve` only interns `<doc>#…` ids. A row the graph
+        // omitted must still take its leaf status so the gate cannot pass by
+        // skipping it.
+        let status = derived
+            .remove(row.id.as_str())
+            .unwrap_or_else(|| condition_status(row, ctx));
         let is_link = status.method == LINK_METHOD;
 
         if let Some(count) = counts.get_mut(&status.status) {
@@ -1511,5 +1513,28 @@ mod tests {
         let listed: Vec<&str> =
             derived.0.review.iter().map(|c| c.id.as_str()).collect();
         assert_eq!(listed, ["w#VC-1.1"]);
+    }
+
+    #[test]
+    fn condition_without_doc_qualifier_still_fails_the_gate() {
+        let dir = test_dir("unqualified_condition");
+        let rows = [
+            definition_of("w#FR-1"),
+            condition_of("w#VC-1.1", "w#FR-1", "review", &[]),
+            // Hand-authored / legacy jsonl may omit `<doc>#`; the graph skips
+            // that id, but the gate must still count the leaf Unrun.
+            condition_of("VC-9.9", "w#FR-1", "libtest", &["missing::t"]),
+        ];
+        let derived = derive_with_base(&rows, &default_config(), &dir);
+        let omitted = condition_status_of(&derived, "VC-9.9").unwrap();
+        assert_eq!(omitted.status, Status::Unrun);
+        let parent = derived
+            .0
+            .requirements
+            .iter()
+            .find(|r| r.id == "w#FR-1")
+            .unwrap();
+        assert_eq!(parent.status, Status::Unrun);
+        assert!(!derived.0.passes());
     }
 }
