@@ -2,7 +2,7 @@
 
 ![Date Badge](https://img.shields.io/badge/Date-October_21,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
-![Design Status Badge](https://img.shields.io/badge/Design%20Status-Draft-orange)
+![Design Status Badge](https://img.shields.io/badge/Design%20Status-Shipped-blue)
 
 ---
 
@@ -480,8 +480,8 @@ numeric policy.
 | 2.0      | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5 | link is a fixed method name: resolve takes no method set, render_graph takes no configuration, and the link_methods configuration is removed.                                            |
 | 3.0      | October 20, 2026 | @MitchellDScott, Claude Opus 5.5   | Raised graph fill contrast; Mermaid vertices get a dark 2 px outline.                                                                                                                    |
 | 3.1      | October 20, 2026 | @MitchellDScott, Claude Opus 5.5   | Mermaid vertex colours are written as one style line per vertex instead of classDef classes.                                                                                             |
-| 4.0 | October 21, 2026 | Claude Opus 5.5 | cut_cycles replaces condense; derive returns condition and requirement statuses; linear evaluation order; usize indices and compressed sparse row adjacency |
-| 4.1 | October 21, 2026 | Claude Opus 5.5 | Cites Feder and Motwani as the primary source of the document vertex |
+| 4.0 | October 21, 2026 | @MitchellDScott, Claude Opus 5.5 | cut_cycles replaces condense; derive returns condition and requirement statuses; linear evaluation order; usize indices and compressed sparse row adjacency |
+| 4.1 | October 21, 2026 | @MitchellDScott, Claude Opus 5.5 | Cites Feder and Motwani as the primary source of the document vertex |
 
 ---
 
