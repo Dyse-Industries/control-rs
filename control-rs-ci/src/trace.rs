@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{GateError, GateResult};
 use crate::ui;
 
+pub mod link;
 pub mod reqs;
 pub mod select;
 pub mod status;
@@ -26,6 +27,9 @@ pub const CONDITION: &str = "condition";
 
 /// Row kind of a requirement definition.
 pub const DEFINITION: &str = "definition";
+
+/// Separates the document from the ID in a qualified ID, `<doc>#<id>`.
+pub const QUALIFIER: char = '#';
 
 /// Row and report format version, incremented on every incompatible change.
 pub const SCHEMA: u32 = 4;
@@ -38,6 +42,10 @@ pub type Defects = Vec<Defect>;
 
 /// Values of the required flags, in declared order.
 pub type FlagValues<const N: usize> = [PathBuf; N];
+
+/// Values of the required flags in declared order, and of the optional flags.
+pub type Flags<const N: usize, const M: usize> =
+    (FlagValues<N>, [Option<PathBuf>; M]);
 
 /// Rows of one artifact.
 pub type Rows = Vec<Row>;
@@ -256,15 +264,30 @@ pub fn parse_flags<const N: usize>(
     args: impl IntoIterator<Item = String>,
     flags: [&str; N],
 ) -> Result<FlagValues<N>, String> {
+    parse_flags_with(args, flags, []).map(|(required, _)| required)
+}
+
+/// Values of the `required` flags, in order, and of the `optional` flags,
+/// each absent when not given, from `--flag value` pairs.
+///
+/// # Errors
+/// A usage message for an unknown, repeated or missing required flag, or a
+/// flag without a value.
+pub fn parse_flags_with<const N: usize, const M: usize>(
+    args: impl IntoIterator<Item = String>,
+    required: [&str; N],
+    optional: [&str; M],
+) -> Result<Flags<N, M>, String> {
     use lexopt::prelude::*;
-    let mut values: [Slot; N] = std::array::from_fn(|_| None);
+    let names: Vec<&str> = required.iter().chain(&optional).copied().collect();
+    let mut values: Vec<Slot> = names.iter().map(|_| None).collect();
     let mut parser =
         lexopt::Parser::from_iter(std::iter::once(String::new()).chain(args));
     while let Some(arg) = parser.next().map_err(|e| e.to_string())? {
         match arg {
             Long(name) => {
                 let full = format!("--{name}");
-                let slot = flags
+                let slot = names
                     .iter()
                     .position(|flag| *flag == full)
                     .and_then(|idx| values.get_mut(idx))
@@ -286,12 +309,18 @@ pub fn parse_flags<const N: usize>(
             }
         }
     }
-    if let Some((flag, _)) =
-        flags.iter().zip(&values).find(|(_, value)| value.is_none())
+    if let Some((flag, _)) = required
+        .iter()
+        .zip(&values)
+        .find(|(_, value)| value.is_none())
     {
         return Err(format!("missing `{flag} <path>`"));
     }
-    Ok(values.map(Option::unwrap_or_default))
+    let mut taken = values.into_iter();
+    let required_values =
+        std::array::from_fn(|_| taken.next().flatten().unwrap_or_default());
+    let optional_values = std::array::from_fn(|_| taken.next().flatten());
+    Ok((required_values, optional_values))
 }
 
 /// Parses the required `flags` from the process arguments.
@@ -305,12 +334,27 @@ pub fn cli_args<const N: usize>(
     usage: &str,
     flags: [&str; N],
 ) -> Result<FlagValues<N>, ExitCode> {
+    cli_args_with(usage, flags, []).map(|(required, _)| required)
+}
+
+/// Parses the `required` and `optional` flags from the process arguments.
+///
+/// `-h` or `--help` prints `usage` to stdout.
+///
+/// # Errors
+/// The exit code `main` returns instead of running: success after help,
+/// [`USAGE_ERROR`] after a usage error, which is printed with `usage`.
+pub fn cli_args_with<const N: usize, const M: usize>(
+    usage: &str,
+    required: [&str; N],
+    optional: [&str; M],
+) -> Result<Flags<N, M>, ExitCode> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|arg| arg == "-h" || arg == "--help") {
         anstream::println!("usage: {usage}");
         return Err(ExitCode::SUCCESS);
     }
-    parse_flags(args, flags).map_err(|message| {
+    parse_flags_with(args, required, optional).map_err(|message| {
         ui::error(message);
         anstream::eprintln!("usage: {usage}");
         ExitCode::from(USAGE_ERROR)

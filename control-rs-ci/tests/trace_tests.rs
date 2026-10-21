@@ -11,6 +11,17 @@ mod cli {
     use regex::Regex;
     use serde_json::Value;
 
+    /// A requirement whose link names its own parent and an undefined item.
+    const CIRCULAR: &str = "\
+# Gadget (gadget)
+
+- **FR-1 — Rests**: The gadget rests on itself.
+
+| Condition | Requirement | Method | Target                       | Criterion |
+|:----------|:------------|:-------|:-----------------------------|:----------|
+| VC-1.1    | FR-1        | `link` | `gadget#FR-1`, `widget#FR-9` | Circular  |
+";
+
     /// A document without defects: one requirement and one `libtest` condition.
     const CLEAN: &str = "\
 # Widget (widget)
@@ -33,6 +44,17 @@ mod cli {
 | Condition | Requirement | Method    | Target | Criterion |
 |:----------|:------------|:----------|:-------|:----------|
 | VC-7.1    | FR-7        | `libtest` | `a::t` | Other     |
+";
+
+    /// A document whose requirement rests on the `widget` document.
+    const GADGET: &str = "\
+# Gadget (gadget)
+
+- **FR-1 — Rests**: The gadget rests on the widget.
+
+| Condition | Requirement | Method | Target   | Criterion        |
+|:----------|:------------|:-------|:---------|:-----------------|
+| VC-1.1    | FR-1        | `link` | `widget` | The widget holds |
 ";
 
     /// Three requirements: one `libtest` condition each for FR-1 and FR-2 and
@@ -62,8 +84,6 @@ mod cli {
          doc_id = '^#\\s+.*\\((?P<doc>[a-z0-9-]+)\\)'\n\
          definition = '^- \\*\\*(?:FR|NFR|C)-'\n\
          verification = '^\\| *(?:[a-z0-9-]+#)?VC-'\n\
-         methods = [\"libtest\", \"analysis\", \"inspection\", \"review\"]\n\
-         automated_methods = [\"libtest\"]\n\
          retired = []\n\n\
          [method.libtest]\n\
          result_artifact = \"out/test.log\"\n"
@@ -414,5 +434,132 @@ mod cli {
             ["docs/widget-design.md:7: condition widget#VC-1.1 target \
                  'widget::tests::size' failed in test.log"]
         );
+    }
+
+    /// `trace-check` with `--graph <graph>`.
+    fn trace_check_graph(dir: &Path, graph: &str) -> Output {
+        run(
+            env!("CARGO_BIN_EXE_trace-check"),
+            dir,
+            &[
+                "--config",
+                "trace.toml",
+                "--reqs",
+                "out/reqs.jsonl",
+                "--out",
+                "out/trace-report.json",
+                "--graph",
+                graph,
+            ],
+        )
+    }
+
+    /// The report entry of requirement `id`.
+    fn requirement<'a>(report: &'a Value, id: &str) -> Option<&'a Value> {
+        report
+            .get("requirements")?
+            .as_array()?
+            .iter()
+            .find(|r| r.get("id").and_then(Value::as_str) == Some(id))
+    }
+
+    fn linked_fixtures(log: &str) -> [Fixture<'_>; 3] {
+        [
+            ("docs/widget-design.md", CLEAN),
+            ("docs/gadget-design.md", GADGET),
+            ("out/test.log", log),
+        ]
+    }
+
+    #[test]
+    fn a_failing_linked_document_fails_the_linking_document() {
+        let dir = workdir(
+            "link_fail",
+            &linked_fixtures("test widget::tests::size ... FAILED\n"),
+        );
+        assert!(trace_reqs(&dir).status.success());
+        let output = trace_check(&dir);
+        assert_eq!(output.status.code(), Some(1));
+        let report =
+            fs::read_to_string(dir.join("out/trace-report.json")).unwrap();
+        let report: Value = serde_json::from_str(&report).unwrap();
+        let gadget = requirement(&report, "gadget#FR-1").unwrap();
+        assert_eq!(text(gadget, "/status"), Some("Fail"));
+
+        let ok = workdir(
+            "link_pass",
+            &linked_fixtures("test widget::tests::size ... ok\n"),
+        );
+        assert!(trace_reqs(&ok).status.success());
+        assert_eq!(trace_check(&ok).status.code(), Some(0));
+    }
+
+    #[test]
+    fn trace_reqs_and_trace_check_report_the_same_link_defects() {
+        let dir = workdir(
+            "link_defects",
+            &[
+                ("docs/widget-design.md", CLEAN),
+                ("docs/gadget-design.md", CIRCULAR),
+                ("out/test.log", "test widget::tests::size ... ok\n"),
+            ],
+        );
+        let reqs = trace_reqs(&dir);
+        let check = trace_check(&dir);
+        let link_lines = |output: &Output| -> Vec<String> {
+            stdout_lines(output)
+                .into_iter()
+                .filter(|l| l.contains("link") || l.contains("names no"))
+                .collect()
+        };
+        assert_eq!(reqs.status.code(), Some(1));
+        assert_eq!(check.status.code(), Some(1));
+        let from_reqs = link_lines(&reqs);
+        assert_eq!(from_reqs.len(), 2, "{from_reqs:?}");
+        assert_eq!(from_reqs, link_lines(&check));
+    }
+
+    #[test]
+    fn graph_flag_writes_mermaid_or_dot_by_extension() {
+        let dir = workdir(
+            "link_graph",
+            &linked_fixtures("test widget::tests::size ... ok\n"),
+        );
+        assert!(trace_reqs(&dir).status.success());
+        assert!(trace_check_graph(&dir, "out/links.mmd").status.success());
+        assert!(trace_check_graph(&dir, "out/links.dot").status.success());
+        let mermaid = fs::read_to_string(dir.join("out/links.mmd")).unwrap();
+        let dot = fs::read_to_string(dir.join("out/links.dot")).unwrap();
+        assert!(mermaid.starts_with("flowchart TD\n"), "{mermaid}");
+        assert!(mermaid.contains("gadget#VC-1.1 (Pass)"), "{mermaid}");
+        assert!(dot.starts_with("digraph links {\n"), "{dot}");
+        assert!(dot.contains("gadget#VC-1.1 (Pass)"), "{dot}");
+    }
+
+    #[test]
+    fn graph_flag_with_another_extension_is_a_usage_error() {
+        let dir = workdir(
+            "link_graph_ext",
+            &linked_fixtures("test widget::tests::size ... ok\n"),
+        );
+        assert!(trace_reqs(&dir).status.success());
+        let output = trace_check_graph(&dir, "out/links.svg");
+        assert_eq!(output.status.code(), Some(2));
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(stderr.contains("`.mmd` or `.dot`"), "{stderr}");
+        assert!(!dir.join("out/links.svg").exists());
+    }
+
+    #[test]
+    fn a_failing_gate_still_writes_the_graph() {
+        let dir = workdir(
+            "link_graph_fail",
+            &linked_fixtures("test widget::tests::size ... FAILED\n"),
+        );
+        assert!(trace_reqs(&dir).status.success());
+        let output = trace_check_graph(&dir, "out/links.mmd");
+        assert_eq!(output.status.code(), Some(1));
+        let mermaid = fs::read_to_string(dir.join("out/links.mmd")).unwrap();
+        assert!(mermaid.contains("gadget#VC-1.1 (Fail)"), "{mermaid}");
     }
 }

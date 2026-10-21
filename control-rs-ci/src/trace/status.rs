@@ -1,11 +1,11 @@
 //! Requirement and condition status derivation.
 //!
 //! Each condition takes a status:
-//! - `Pass`: method in `automated_methods`, every target recorded as passed.
-//! - `Fail`: method in `automated_methods`, any target recorded as failed (fails gate).
-//! - `Unrun`: method in `automated_methods`, any target absent from its result log (fails gate).
-//! - `Uncovered`: method in `automated_methods` and no target named (fails gate).
-//! - `Review`: method outside `automated_methods`; awaits sign-off.
+//! - `Pass`: automated method, every target recorded as passed.
+//! - `Fail`: automated method, any target recorded as failed (fails gate).
+//! - `Unrun`: automated method, any target absent from its result log (fails gate).
+//! - `Uncovered`: automated method and no target named (fails gate).
+//! - `Review`: method outside the automated methods; awaits sign-off.
 //! - `Deferred`: method `deferred`; verification is planned for a later phase.
 //!
 //! A requirement takes the worst status among its conditions in order:
@@ -17,14 +17,14 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::reqs::TraceConfig;
+use super::link::{GraphFormat, LinkGraph, LinkStatuses, RequirementMap};
+use super::reqs::{
+    AUTOMATED_METHODS, DEFERRED_METHOD as DEFERRED, LINK_METHOD, TraceConfig,
+};
 use super::{
     CONDITION, DEFINITION, Defect, Defects, Row, SCHEMA, read_text, write_file,
 };
 use crate::error::GateResult;
-
-/// The method whose conditions are planned but not yet verifiable.
-const DEFERRED: &str = "deferred";
 
 /// A report and its defects.
 pub type Derived = (TraceReport, Defects);
@@ -47,11 +47,16 @@ type TestResultMap = HashMap<String, bool>;
 /// Map from method name to its parsed result log.
 type MethodResultMap = HashMap<String, ResultLog>;
 
-/// Evaluated conditions, pending reviews and deferred conditions.
-type ConditionEvalResult = (
+/// Evaluated conditions by parent requirement ID.
+type ByParent<'a> = HashMap<&'a str, Vec<ConditionStatus>>;
+
+/// Evaluated conditions, pending reviews, deferred conditions and the
+/// requirement statuses of the link graph.
+type ConditionEvalResult<'a> = (
     Vec<ConditionStatus>,
     Vec<ReviewCondition>,
     Vec<ReviewCondition>,
+    RequirementMap<'a>,
 );
 
 /// What a result log says about one target.
@@ -79,7 +84,7 @@ enum Lookup {
 pub enum Status {
     /// All targets passed verification.
     Pass,
-    /// Method outside `automated_methods`; awaits sign-off.
+    /// Method outside the automated methods; awaits sign-off.
     Review,
     /// Method `deferred`; verification is planned for a later phase.
     Deferred,
@@ -619,7 +624,7 @@ fn condition_status(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
     if method == DEFERRED {
         return status(Status::Deferred, Vec::new());
     }
-    if !ctx.config.automated_methods.contains(&method) {
+    if !AUTOMATED_METHODS.contains(&method.as_str()) {
         return status(Status::Review, Vec::new());
     }
     if row.targets.is_empty() {
@@ -657,23 +662,33 @@ fn worst(conditions: &[ConditionStatus]) -> Status {
 }
 
 /// One entry per requirement in `order`, each with its conditions sorted by
-/// ID and the worst of their statuses.
+/// ID and its status from `rolled`, the link graph's rollup. A requirement the
+/// graph has no vertex for takes the worst status of its conditions.
 fn requirement_statuses(
     order: &[&str],
     evaluated: &[ConditionStatus],
+    rolled: &RequirementMap<'_>,
 ) -> Vec<RequirementStatus> {
+    let mut by_parent = ByParent::new();
+    for condition in evaluated {
+        for parent in &condition.parents {
+            by_parent
+                .entry(parent.as_str())
+                .or_default()
+                .push(condition.clone());
+        }
+    }
     order
         .iter()
         .map(|&id| {
-            let mut children: Vec<ConditionStatus> = evaluated
-                .iter()
-                .filter(|c| c.parents.iter().any(|p| p == id))
-                .cloned()
-                .collect();
+            let mut children = by_parent.remove(id).unwrap_or_default();
             children.sort_by(|a, b| a.id.cmp(&b.id));
             RequirementStatus {
                 id: id.to_string(),
-                status: worst(&children),
+                status: rolled
+                    .get(id)
+                    .copied()
+                    .unwrap_or_else(|| worst(&children)),
                 conditions: children,
             }
         })
@@ -692,7 +707,7 @@ fn parse_artifact(method: &str, text: &str) -> Option<ResultLog> {
 
 fn load_method_artifacts(config: &TraceConfig, base: &Path) -> MethodResultMap {
     let mut result_cache = HashMap::new();
-    for method in &config.automated_methods {
+    for method in AUTOMATED_METHODS {
         let Some(artifact_rel) = config
             .method
             .get(method)
@@ -704,7 +719,7 @@ fn load_method_artifacts(config: &TraceConfig, base: &Path) -> MethodResultMap {
             continue;
         };
         if let Some(results) = parse_artifact(method, &text) {
-            result_cache.insert(method.clone(), results);
+            result_cache.insert(method.to_string(), results);
         }
     }
     result_cache
@@ -732,7 +747,7 @@ fn check_staleness(
     let Some((doc_time, doc)) = newest else {
         return;
     };
-    for method in &config.automated_methods {
+    for method in AUTOMATED_METHODS {
         let Some(artifact) = config
             .method
             .get(method)
@@ -782,25 +797,38 @@ fn initial_status_counts() -> StatusCounts {
     .collect()
 }
 
-fn evaluate_all_conditions(
+fn evaluate_all_conditions<'a>(
+    reqs: &'a [Row],
     cond_idx: &Indexed<'_>,
     ctx: &mut StatusCtx<'_>,
     counts: &mut StatusCounts,
-) -> ConditionEvalResult {
+) -> ConditionEvalResult<'a> {
     let (conditions, condition_order) = cond_idx;
     let mut evaluated = Vec::new();
     let mut review = Vec::new();
     let mut deferred = Vec::new();
 
+    let (graph, resolution) = LinkGraph::resolve(reqs);
+    let (graph, cycles) = graph.cut_cycles();
+    ctx.defects.extend(resolution);
+    ctx.defects.extend(cycles);
+    let LinkStatuses {
+        conditions: mut derived,
+        requirements,
+    } = graph.derive(|row| condition_status(row, ctx));
+
     for row in condition_order.iter().filter_map(|id| conditions.get(id)) {
-        let status = condition_status(row, ctx);
+        let Some(status) = derived.remove(row.id.as_str()) else {
+            continue;
+        };
+        let is_link = status.method == LINK_METHOD;
 
         if let Some(count) = counts.get_mut(&status.status) {
             *count = count.saturating_add(1);
         }
         let pending = match status.status {
-            Status::Review => Some(&mut review),
-            Status::Deferred => Some(&mut deferred),
+            Status::Review if !is_link => Some(&mut review),
+            Status::Deferred if !is_link => Some(&mut deferred),
             _ => None,
         };
         if let Some(pending) = pending {
@@ -815,7 +843,26 @@ fn evaluate_all_conditions(
         evaluated.push(status);
     }
 
-    (evaluated, review, deferred)
+    (evaluated, review, deferred, requirements)
+}
+
+/// The link view of the rows `reqs` as text in `format`, with the condition
+/// statuses of `report`.
+#[must_use]
+pub fn render_graph(
+    reqs: &[Row],
+    report: &TraceReport,
+    format: GraphFormat,
+) -> String {
+    let (graph, _) = LinkGraph::resolve(reqs);
+    let (graph, _) = graph.cut_cycles();
+    let statuses = report
+        .requirements
+        .iter()
+        .flat_map(|r| &r.conditions)
+        .map(|c| (c.id.as_str(), c.clone()))
+        .collect();
+    graph.render(format, Some(&statuses))
 }
 
 /// Derives condition and requirement status from the rows of `trace-reqs`,
@@ -849,10 +896,10 @@ pub fn derive_with_base(
         warnings: &mut warnings,
     };
 
-    let (evaluated, review, deferred) =
-        evaluate_all_conditions(&cond_idx, &mut ctx, &mut counts);
+    let (evaluated, review, deferred, rolled) =
+        evaluate_all_conditions(reqs, &cond_idx, &mut ctx, &mut counts);
 
-    let requirements = requirement_statuses(&order, &evaluated);
+    let requirements = requirement_statuses(&order, &evaluated, &rolled);
     check_staleness(reqs, config, base, &mut warnings);
 
     defects.sort_by(|a, b| {
@@ -993,14 +1040,6 @@ mod tests {
             doc_id: r"^#\s+.*\((?P<doc>[a-z0-9-]+)\)".to_string(),
             definition: r"^- \*\*(?:FR|NFR|C)-".to_string(),
             verification: r"^\| *(?:[a-z0-9-]+#)?VC-".to_string(),
-            methods: [
-                "libtest", "kani", "pytest", "gtest", "review", "deferred",
-            ]
-            .map(String::from)
-            .to_vec(),
-            automated_methods: ["libtest", "kani", "pytest", "gtest"]
-                .map(String::from)
-                .to_vec(),
             method,
             retired: vec![],
             decisions: None,
@@ -1404,5 +1443,73 @@ mod tests {
         touch(&log, 2_000);
         let (equal, _) = derive_with_base(&rows, &default_config(), &dir);
         assert!(equal.warnings.iter().all(|w| w.code != "W-3"));
+    }
+
+    /// A definition of `id` in the document of `id`.
+    fn definition_of(id: &str) -> Row {
+        Row {
+            id: id.to_string(),
+            ..definition()
+        }
+    }
+
+    /// A condition `id` of `parent` with `method` naming `targets`.
+    fn condition_of(
+        id: &str,
+        parent: &str,
+        method: &str,
+        targets: &[&str],
+    ) -> Row {
+        Row {
+            id: id.to_string(),
+            parents: vec![parent.to_string()],
+            ..condition(method, targets)
+        }
+    }
+
+    fn condition_status_of<'a>(
+        derived: &'a Derived,
+        id: &str,
+    ) -> Option<&'a ConditionStatus> {
+        derived
+            .0
+            .requirements
+            .iter()
+            .flat_map(|r| &r.conditions)
+            .find(|c| c.id == id)
+    }
+
+    #[test]
+    fn link_takes_the_worst_status_of_the_named_documents() {
+        let dir = test_dir("link_worst");
+        write_log(&dir, "libtest.log", "test t::a ... FAILED\n");
+        let rows = [
+            definition_of("w#FR-1"),
+            condition_of("w#VC-1.1", "w#FR-1", "libtest", &["t::a"]),
+            definition_of("l#FR-1"),
+            condition_of("l#VC-1.1", "l#FR-1", "link", &["w"]),
+        ];
+        let derived = derive_with_base(&rows, &default_config(), &dir);
+        let linked = condition_status_of(&derived, "l#VC-1.1").unwrap();
+        assert_eq!(linked.status, Status::Fail);
+        assert_eq!(linked.items.len(), 1);
+        assert!(!derived.0.passes());
+    }
+
+    #[test]
+    fn link_conditions_are_not_listed_for_review() {
+        let dir = test_dir("link_review");
+        let rows = [
+            definition_of("w#FR-1"),
+            condition_of("w#VC-1.1", "w#FR-1", "review", &[]),
+            definition_of("l#FR-1"),
+            condition_of("l#VC-1.1", "l#FR-1", "link", &["w#FR-1"]),
+        ];
+        let derived = derive_with_base(&rows, &default_config(), &dir);
+        let linked = condition_status_of(&derived, "l#VC-1.1").unwrap();
+        assert_eq!(linked.status, Status::Review);
+        let listed: Vec<&str> =
+            derived.0.review.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(listed, ["w#VC-1.1"]);
     }
 }

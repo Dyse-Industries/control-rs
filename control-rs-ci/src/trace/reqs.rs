@@ -14,8 +14,39 @@ use std::path::Path;
 use regex::Regex;
 use serde::Deserialize;
 
-use super::{CONDITION, DEFINITION, Defect, Row, SCHEMA, normalize, read_text};
+use super::link::LinkGraph;
+use super::{
+    CONDITION, DEFINITION, Defect, QUALIFIER, Row, SCHEMA, normalize, read_text,
+};
 use crate::error::{GateError, GateResult};
+
+/// The methods whose conditions name targets that a result artifact must
+/// record as passed. `[method.<m>]` names the artifact of method `<m>`.
+pub const AUTOMATED_METHODS: [&str; 4] = ["libtest", "kani", "pytest", "gtest"];
+
+/// The method whose conditions are planned but not yet verifiable.
+pub const DEFERRED_METHOD: &str = "deferred";
+
+/// The method whose conditions name documents, requirements or conditions as
+/// targets.
+pub const LINK_METHOD: &str = "link";
+
+/// The verification methods a condition may name.
+///
+/// The automated methods, the sign-off methods `analysis`, `inspection` and
+/// `review`, `deferred` and `link`. The set is fixed; a configuration does
+/// not list it.
+pub const METHODS: [&str; 9] = [
+    "libtest",
+    "kani",
+    "pytest",
+    "gtest",
+    "analysis",
+    "inspection",
+    "review",
+    DEFERRED_METHOD,
+    LINK_METHOD,
+];
 
 /// A file and line.
 pub(super) type At<'a> = (&'a str, usize);
@@ -69,12 +100,7 @@ pub struct TraceConfig {
     pub definition: String,
     /// Pattern for a line that defines a verification condition.
     pub verification: String,
-    /// Verification methods a condition may name.
-    pub methods: Vec<String>,
-    /// The subset of methods whose conditions name targets that a result
-    /// artifact must record as passed.
-    pub automated_methods: Vec<String>,
-    /// Result artifact per method.
+    /// Result artifact per automated method.
     #[serde(default)]
     pub method: BTreeMap<String, MethodConfig>,
     /// Qualified IDs that must not be defined or referenced again.
@@ -127,8 +153,6 @@ pub struct Rules {
     definition: Regex,
     /// A verification condition line.
     verification: Regex,
-    /// Verification methods a condition may name.
-    methods: Vec<String>,
     /// Pattern matching the document ID declaration in Markdown.
     doc_id: Regex,
     /// IDs that must not appear.
@@ -202,21 +226,15 @@ impl TraceConfig {
                 error(format!("`{key}` is not a valid pattern: {e}"))
             })
         };
-        for m in &self.automated_methods {
-            if !self.methods.contains(m) {
-                return Err(error(format!(
-                    "automated method `{m}` is not in `methods`"
-                )));
-            }
-            let has_artifact = self
-                .method
-                .get(m)
-                .is_some_and(|c| c.result_artifact.is_some());
-            if !has_artifact {
-                return Err(error(format!(
-                    "automated method `{m}` has no `result_artifact`"
-                )));
-            }
+        if let Some(m) = self
+            .method
+            .keys()
+            .find(|m| !AUTOMATED_METHODS.contains(&m.as_str()))
+        {
+            return Err(error(format!(
+                "`method.{m}` names no automated method; expected one of {}",
+                AUTOMATED_METHODS.join(", ")
+            )));
         }
         compile("doc", &self.doc)?;
         compile("id", &self.id)?;
@@ -225,11 +243,11 @@ impl TraceConfig {
         let decisions =
             self.decisions.as_ref().map(|d| d.rules(path)).transpose()?;
         let occurrence = format!(
-            r"(?:(?P<trace_doc>{})#)?\b(?P<trace_id>{})\b",
+            r"(?:(?P<trace_doc>{})[{QUALIFIER}])?\b(?P<trace_id>{})\b",
             self.doc, self.id
         );
         let condition_occurrence = format!(
-            r"(?:(?P<trace_doc>{})#)?\b(?P<trace_id>{})\b",
+            r"(?:(?P<trace_doc>{})[{QUALIFIER}])?\b(?P<trace_id>{})\b",
             self.doc, self.condition
         );
         Ok(Rules {
@@ -237,7 +255,6 @@ impl TraceConfig {
             condition_occurrence: compile("condition", &condition_occurrence)?,
             definition: compile("definition", &self.definition)?,
             verification: compile("verification", &self.verification)?,
-            methods: self.methods.clone(),
             doc_id: compile("doc_id", &self.doc_id)?,
             retired: self.retired.iter().cloned().collect(),
             decisions,
@@ -284,15 +301,15 @@ impl Rules {
         self.occurrence.captures_iter(line).filter_map(move |caps| {
             let id = caps.name("trace_id")?.as_str();
             let owner = caps.name("trace_doc").map_or(doc, |m| m.as_str());
-            Some(format!("{owner}#{id}"))
+            Some(format!("{owner}{QUALIFIER}{id}"))
         })
     }
+}
 
-    /// Whether `name` is one of the configured verification methods.
-    #[must_use]
-    pub fn is_method(&self, name: &str) -> bool {
-        self.methods.iter().any(|m| m == name)
-    }
+/// Whether `name` is one of the verification [`METHODS`].
+#[must_use]
+pub fn is_method(name: &str) -> bool {
+    METHODS.contains(&name)
 }
 
 fn default_doc_id() -> String {
@@ -368,6 +385,20 @@ fn targets(line: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// `line` with the fourth cell of a table line of five or more cells emptied.
+fn without_target_cell(line: &str) -> String {
+    let trimmed = line.trim();
+    let inner = trimmed.strip_prefix('|').unwrap_or(trimmed);
+    let inner = inner.strip_suffix('|').unwrap_or(inner);
+    let mut cells: Vec<&str> = inner.split('|').collect();
+    if cells.len() >= 5
+        && let Some(cell) = cells.get_mut(3)
+    {
+        *cell = "";
+    }
+    cells.join("|")
+}
+
 fn scan_condition_line(
     line: &str,
     cell: &str,
@@ -377,29 +408,15 @@ fn scan_condition_line(
     let cond_caps = ctx.rules.condition_occurrence.captures(cell)?;
     let c_id = cond_caps.name("trace_id")?.as_str();
     let c_doc = cond_caps.name("trace_doc").map_or(ctx.doc, |m| m.as_str());
-    let cond_qualified = format!("{c_doc}#{c_id}");
+    let cond_qualified = format!("{c_doc}{QUALIFIER}{c_id}");
 
-    let mut parents: Vec<String> = ctx
-        .rules
-        .occurrence
-        .captures_iter(line)
-        .filter_map(|caps| {
-            let id = caps.name("trace_id")?.as_str();
-            let owner = caps.name("trace_doc").map_or(ctx.doc, |d| d.as_str());
-            Some(format!("{owner}#{id}"))
-        })
-        .collect();
-
-    let mut seen = BTreeSet::new();
-    parents.retain(|p| seen.insert(p.clone()));
-
-    // The method is the code span whose content is in `methods`; failing
+    // The method is the code span whose content is in `METHODS`; failing
     // that, the first code span that holds no ID, so that `check` reports it
-    // as outside `methods`.
+    // as an unknown method.
     let spans = super::code_spans(line);
     let method = spans
         .iter()
-        .find(|s| ctx.rules.is_method(s.content))
+        .find(|s| is_method(s.content))
         .or_else(|| {
             spans.iter().find(|s| {
                 !ctx.rules.occurrence.is_match(s.content)
@@ -407,6 +424,27 @@ fn scan_condition_line(
             })
         })
         .map(|s| s.content.to_string());
+
+    // The targets of a link condition are not its parents.
+    let is_link = method.as_deref().is_some_and(|m| m == LINK_METHOD);
+    let scanned = if is_link {
+        without_target_cell(line)
+    } else {
+        line.to_string()
+    };
+    let mut parents: Vec<String> = ctx
+        .rules
+        .occurrence
+        .captures_iter(&scanned)
+        .filter_map(|caps| {
+            let id = caps.name("trace_id")?.as_str();
+            let owner = caps.name("trace_doc").map_or(ctx.doc, |d| d.as_str());
+            Some(format!("{owner}{QUALIFIER}{id}"))
+        })
+        .collect();
+
+    let mut seen = BTreeSet::new();
+    parents.retain(|p| seen.insert(p.clone()));
 
     let mut condition = row(cond_qualified, CONDITION, at, line);
     condition.parents = parents;
@@ -574,13 +612,13 @@ fn check_condition_methods(
         }
         let methods = super::code_spans(&condition.text)
             .iter()
-            .filter(|s| rules.is_method(s.content))
+            .filter(|s| is_method(s.content))
             .count();
         let message = match &condition.method {
             None => {
                 Some(format!("condition {id} names no verification method"))
             }
-            Some(m) if !rules.is_method(m) => {
+            Some(m) if !is_method(m) => {
                 Some(format!("condition {id} names unknown method `{m}`"))
             }
             Some(_) if methods > 1 => {
@@ -598,7 +636,7 @@ fn check_duplicate_document_ids(rows: &[Row], defects: &mut Vec<Defect>) {
     let mut doc_first_file = DocFirstFile::new();
     let mut reported: BTreeSet<DocFilePair<'_>> = BTreeSet::new();
     for row in rows.iter().filter(|r| r.kind == DEFINITION) {
-        if let Some(doc) = row.id.split('#').next() {
+        if let Some(doc) = row.id.split(QUALIFIER).next() {
             if let Some(first) = doc_first_file.get(doc) {
                 if first.file != row.file
                     && reported.insert((doc, row.file.as_str()))
@@ -638,6 +676,7 @@ pub fn check(rows: &[Row], rules: &Rules) -> Vec<Defect> {
     check_condition_parents(&conditions, &definitions, &mut defects);
     check_condition_methods(&conditions, rules, &mut defects);
     check_duplicate_document_ids(rows, &mut defects);
+    check_links(rows, &mut defects);
 
     for row in rows {
         for id in std::iter::once(&row.id).chain(&row.parents) {
@@ -651,6 +690,15 @@ pub fn check(rows: &[Row], rules: &Rules) -> Vec<Defect> {
         (a.file.as_str(), a.line).cmp(&(b.file.as_str(), b.line))
     });
     defects
+}
+
+/// Adds the defects of the link conditions in `rows`: targets that resolve to
+/// nothing, and links on a cycle.
+fn check_links(rows: &[Row], defects: &mut Vec<Defect>) {
+    let (graph, resolution) = LinkGraph::resolve(rows);
+    let (_, cycles) = graph.cut_cycles();
+    defects.extend(resolution);
+    defects.extend(cycles);
 }
 
 /// The decision defects of the decision `records` and of the requirement
@@ -851,7 +899,7 @@ mod tests {
 
 | Condition | Requirement | Method | Criterion |
 |:----------|:------------|:-------|:----------|
-| VC-1.1    | FR-1        | `test` | Exact size match |
+| VC-1.1    | FR-1        | `libtest` | Exact size match |
 ";
 
     const DECISIONS: &str = r#"retired = []
@@ -873,9 +921,19 @@ files = ["docs/*-design.md"]
 doc_id = '^#\s+.*\((?P<doc>[a-z0-9-]+)\)'
 definition = '^- \*\*(?:FR|NFR|C)-'
 verification = '^\| *(?:[a-z0-9-]+#)?VC-'
-methods = ["test", "analysis", "inspection", "review"]
-automated_methods = []
 "#;
+
+    const LINKED: &str = "\
+# Widget (widget)
+
+- **FR-1 — Size**: The widget shall report its size.
+- **FR-2 — Mass**: The widget shall report its mass.
+
+| Condition | Requirement | Method    | Target                | Criterion |
+|:----------|:------------|:----------|:----------------------|:----------|
+| VC-1.1    | FR-1        | `review`  | —                     | Reviewed  |
+| VC-2.1    | FR-2        | `link`    | `widget#FR-1`         | Holds     |
+";
 
     /// A row's kind, ID and line.
     type Found = (String, String, usize);
@@ -937,7 +995,7 @@ automated_methods = []
 ```
 
    ```text
-   | VC-3.1 | FR-3 | `test` | indented fence |
+   | VC-3.1 | FR-3 | `libtest` | indented fence |
    ```
 
 ~~~
@@ -972,7 +1030,7 @@ automated_methods = []
 
     #[test]
     fn reference_lines_record_every_local_and_qualified_id() {
-        let source = "# Widget (widget)\n\n| VC-1.1 | FR-1, storage#FR-3 | `test` | Criterion FR-2 |\n";
+        let source = "# Widget (widget)\n\n| VC-1.1 | FR-1, storage#FR-3 | `libtest` | Criterion FR-2 |\n";
         let (rows, _) = scan_markdown(FILE, source, &rules());
         assert_eq!(rows.len(), 1);
         let cond = rows.first().unwrap();
@@ -981,19 +1039,22 @@ automated_methods = []
             cond.parents,
             ["widget#FR-1", "storage#FR-3", "widget#FR-2"]
         );
-        assert_eq!(cond.method, Some("test".to_string()));
+        assert_eq!(cond.method, Some("libtest".to_string()));
     }
 
     #[test]
     fn rows_carry_normalized_text() {
         let (rows, _) = scan_markdown(FILE, CLEAN, &rules());
         let plan = rows.get(1).unwrap();
-        assert_eq!(plan.text, "| VC-1.1 | FR-1 | `test` | Exact size match |");
+        assert_eq!(
+            plan.text,
+            "| VC-1.1 | FR-1 | `libtest` | Exact size match |"
+        );
     }
 
     #[test]
     fn doc_id_is_extracted_from_the_title_declaration() {
-        let source = "# Storage Backends (storage)\n\n- **FR-1**: Desc\n\n| VC-1.1 | FR-1 | `test` | C |\n";
+        let source = "# Storage Backends (storage)\n\n- **FR-1**: Desc\n\n| VC-1.1 | FR-1 | `libtest` | C |\n";
         let (rows, defects) =
             scan_markdown("docs/storage.md", source, &rules());
         assert!(defects.is_empty(), "{defects:?}");
@@ -1002,7 +1063,7 @@ automated_methods = []
 
     #[test]
     fn missing_doc_id_declaration_is_reported_as_defect() {
-        let source = "# Storage Backends\n\n- **FR-1**: Desc\n\n| VC-1.1 | FR-1 | `test` | C |\n";
+        let source = "# Storage Backends\n\n- **FR-1**: Desc\n\n| VC-1.1 | FR-1 | `libtest` | C |\n";
         let (rows, defects) =
             scan_markdown("docs/storage.md", source, &rules());
         assert_eq!(defects.len(), 1);
@@ -1018,12 +1079,12 @@ automated_methods = []
     fn duplicate_doc_id_across_files_is_reported() {
         let (rows1, _) = scan_markdown(
             "docs/a.md",
-            "# Doc A (widget)\n\n- **FR-1**: Desc\n\n| VC-1.1 | FR-1 | `test` | C |\n",
+            "# Doc A (widget)\n\n- **FR-1**: Desc\n\n| VC-1.1 | FR-1 | `libtest` | C |\n",
             &rules(),
         );
         let (rows2, _) = scan_markdown(
             "docs/b.md",
-            "# Doc B (widget)\n\n- **FR-2**: Desc\n\n| VC-2.1 | FR-2 | `test` | C |\n",
+            "# Doc B (widget)\n\n- **FR-2**: Desc\n\n| VC-2.1 | FR-2 | `libtest` | C |\n",
             &rules(),
         );
         let all_rows = [rows1, rows2].concat();
@@ -1082,12 +1143,12 @@ automated_methods = []
     fn only_definitions_make_a_document_id_shared_between_files() {
         let (defined, _) = scan_markdown(
             "docs/a.md",
-            "# Doc A (widget)\n\n- **FR-1**: Desc\n\n| VC-1.1 | FR-1 | `test` | C |\n",
+            "# Doc A (widget)\n\n- **FR-1**: Desc\n\n| VC-1.1 | FR-1 | `libtest` | C |\n",
             &rules(),
         );
         let (only_conditions, _) = scan_markdown(
             "docs/b.md",
-            "# Doc B (widget)\n\n| VC-2.1 | FR-1 | `test` | C |\n",
+            "# Doc B (widget)\n\n| VC-2.1 | FR-1 | `libtest` | C |\n",
             &rules(),
         );
         let rows = [defined, only_conditions].concat();
@@ -1121,7 +1182,7 @@ automated_methods = []
 
     #[test]
     fn reference_to_an_undefined_id_is_unresolved() {
-        let source = format!("{CLEAN}| VC-7.1 | FR-7 | `test` | Other |\n");
+        let source = format!("{CLEAN}| VC-7.1 | FR-7 | `libtest` | Other |\n");
         assert_eq!(
             messages(&source, &rules()),
             [
@@ -1182,7 +1243,7 @@ automated_methods = []
 
     #[test]
     fn scan_condition_finds_parents() {
-        let source = "# Widget (widget)\n\n| VC-1.1 | FR-1, FR-2 | `test` |";
+        let source = "# Widget (widget)\n\n| VC-1.1 | FR-1, FR-2 | `libtest` |";
         let (found, _) = scan_markdown(FILE, source, &rules());
         assert_eq!(found.len(), 1);
 
@@ -1192,12 +1253,12 @@ automated_methods = []
             first.parents,
             ["widget#FR-1".to_string(), "widget#FR-2".to_string()]
         );
-        assert_eq!(first.method, Some("test".to_string()));
+        assert_eq!(first.method, Some("libtest".to_string()));
     }
 
     #[test]
     fn condition_without_parents_is_an_orphan() {
-        let source = "| VC-1.1 | | `test` |";
+        let source = "| VC-1.1 | | `libtest` |";
         let (found, mut defects) = scan_markdown(FILE, source, &rules());
         defects.extend(check(&found, &rules()));
         assert!(defects.iter().any(|d| d.message.contains("has no parent")));
@@ -1205,7 +1266,7 @@ automated_methods = []
 
     #[test]
     fn ids_inside_longer_tokens_or_condition_ids_are_not_parents() {
-        let source = "# Widget (widget)\n\n| VC-1.1 | FR-1 | `test` | Per IEC-61508 and XFR-2 |\n";
+        let source = "# Widget (widget)\n\n| VC-1.1 | FR-1 | `libtest` | Per IEC-61508 and XFR-2 |\n";
         let (rows, _) = scan_markdown(FILE, source, &rules());
         assert_eq!(
             rows.first().map(|r| r.parents.as_slice()),
@@ -1217,7 +1278,7 @@ automated_methods = []
     fn row_and_method_defects_are_reported() {
         let cases = [
             (
-                "| VC-1.1 | VC-1.2 | FR-1 | `test` | Two |",
+                "| VC-1.1 | VC-1.2 | FR-1 | `libtest` | Two |",
                 "verification row of widget#VC-1.1 names more than one \
                  condition ID",
             ),
@@ -1230,7 +1291,7 @@ automated_methods = []
                 "condition widget#VC-1.1 names unknown method `demo`",
             ),
             (
-                "| VC-1.1 | FR-1 | `test` | `review` |",
+                "| VC-1.1 | FR-1 | `libtest` | `review` |",
                 "condition widget#VC-1.1 names more than one method",
             ),
         ];
@@ -1243,32 +1304,33 @@ automated_methods = []
     }
 
     #[test]
-    fn an_automated_method_needs_a_listed_name_and_a_result_artifact() {
-        let rejected = |method: &str, tail: &str| {
-            let text = format!("{KEYS}retired = []{tail}").replace(
-                "automated_methods = []",
-                &format!("automated_methods = [\"{method}\"]"),
-            );
+    fn a_method_table_names_an_automated_method() {
+        let accepted = |tail: &str| {
+            let text = format!("{KEYS}retired = []{tail}");
             let config: TraceConfig = toml::from_str(&text).unwrap();
-            matches!(
-                config.rules(Path::new("trace.toml")),
-                Err(GateError::Config { .. })
-            )
+            config.rules(Path::new("trace.toml")).is_ok()
         };
-        assert!(rejected("fuzz", ""));
-        assert!(rejected("test", ""));
-        assert!(!rejected(
-            "test",
-            "\n[method.test]\nresult_artifact = \"t.log\"\n"
+        assert!(accepted(""));
+        assert!(accepted(
+            "\n[method.libtest]\nresult_artifact = \"t.log\"\n"
         ));
+        assert!(!accepted(
+            "\n[method.review]\nresult_artifact = \"t.log\"\n"
+        ));
+    }
+
+    #[test]
+    fn methods_is_not_a_configuration_key() {
+        let text = format!("{KEYS}retired = []\nmethods = [\"libtest\"]\n");
+        assert!(toml::from_str::<TraceConfig>(&text).is_err());
     }
 
     #[test]
     fn targets_are_the_code_spans_of_the_fourth_cell() {
         let source = "# Widget (widget)\n\n\
-            | VC-1.1 | FR-1 | `test` | `a::t::x`, `a::t::y` | `z` Crit |\n\
+            | VC-1.1 | FR-1 | `libtest` | `a::t::x`, `a::t::y` | `z` Crit |\n\
             | VC-1.2 | FR-1 | `review` | — | Crit |\n\
-            | VC-1.3 | FR-1 | `test` | Crit |\n";
+            | VC-1.3 | FR-1 | `libtest` | Crit |\n";
         let (rows, _) = scan_markdown(FILE, source, &rules());
         let targets: Vec<_> = rows.iter().map(|r| r.targets.clone()).collect();
         assert_eq!(
@@ -1283,7 +1345,7 @@ automated_methods = []
 
     #[test]
     fn a_parent_named_twice_is_recorded_once() {
-        let source = "# Widget (widget)\n\n| VC-1.1 | FR-1 | `test` | FR-1 holds iff both hold |\n";
+        let source = "# Widget (widget)\n\n| VC-1.1 | FR-1 | `libtest` | FR-1 holds iff both hold |\n";
         let (rows, _) = scan_markdown(FILE, source, &rules());
         assert_eq!(
             rows.first().map(|r| r.parents.as_slice()),
@@ -1315,7 +1377,7 @@ automated_methods = []
     #[test]
     fn document_with_no_definitions_is_a_defect() {
         let source =
-            "# Widget (widget)\n\n| VC-1.1 | FR-1 | `test` | Orphan |\n";
+            "# Widget (widget)\n\n| VC-1.1 | FR-1 | `libtest` | Orphan |\n";
         let (rows, defects) = scan_markdown(FILE, source, &rules());
         assert_eq!(rows.len(), 1);
         assert_eq!(defects.len(), 1);
@@ -1328,7 +1390,7 @@ automated_methods = []
 
     #[test]
     fn verification_row_first_cell_validation() {
-        let bad = "# Widget (widget)\n\n- **FR-1 — Size**: shall report.\n\n| VC-X | FR-1 | `test` | see VC-9.1 |\n";
+        let bad = "# Widget (widget)\n\n- **FR-1 — Size**: shall report.\n\n| VC-X | FR-1 | `libtest` | see VC-9.1 |\n";
         let defects = messages(bad, &rules());
         assert!(
             defects
@@ -1336,7 +1398,7 @@ automated_methods = []
                 .any(|d| d == "verification row names no condition ID")
         );
 
-        let good = "# Widget (widget)\n\n- **FR-1 — Size**: shall report.\n\n| VC-1.1 | FR-1 | `test` | Valid |\n";
+        let good = "# Widget (widget)\n\n- **FR-1 — Size**: shall report.\n\n| VC-1.1 | FR-1 | `libtest` | Valid |\n";
         let (rows, defects) = scan_markdown(FILE, good, &rules());
         assert_eq!(rows.len(), 2);
         assert_eq!(rows.get(1).map(|r| r.id.as_str()), Some("widget#VC-1.1"));
@@ -1515,6 +1577,48 @@ automated_methods = []
         assert!(
             error.to_string().contains("has no `status` capture"),
             "{error}"
+        );
+    }
+
+    /// Rules with a `link` method.
+    fn link_rules() -> Rules {
+        let keys = KEYS.replace("\"review\"]", "\"review\", \"link\"]");
+        let text = format!("{keys}retired = []");
+        let config: TraceConfig = toml::from_str(&text).unwrap();
+        config.rules(Path::new("trace.toml")).unwrap()
+    }
+
+    #[test]
+    fn link_targets_are_not_parents() {
+        let (rows, defects) = scan_markdown(FILE, LINKED, &link_rules());
+        assert!(defects.is_empty(), "{defects:?}");
+        let link = rows.iter().find(|r| r.id == "widget#VC-2.1").unwrap();
+        assert_eq!(link.parents, ["widget#FR-2"]);
+        assert_eq!(link.targets, ["widget#FR-1"]);
+    }
+
+    #[test]
+    fn link_conditions_report_resolution_and_cycle_defects() {
+        let rules = link_rules();
+        assert!(
+            messages(LINKED, &rules).is_empty(),
+            "a resolvable link has no defect"
+        );
+        let empty = LINKED.replace("`widget#FR-1`", "—");
+        assert_eq!(
+            messages(&empty, &rules),
+            ["condition widget#VC-2.1 names no link target"]
+        );
+        let unknown = LINKED.replace("`widget#FR-1`", "`widget#FR-9`");
+        assert_eq!(
+            messages(&unknown, &rules),
+            ["condition widget#VC-2.1 target 'widget#FR-9' names no \
+                 selected document, requirement or condition"]
+        );
+        let cycle = LINKED.replace("`widget#FR-1`", "`widget#FR-2`");
+        assert_eq!(
+            messages(&cycle, &rules),
+            ["condition widget#VC-2.1 lies on a link cycle"]
         );
     }
 }
