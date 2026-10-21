@@ -4,7 +4,7 @@
 //! their status. [`LinkGraph`] has one vertex per document, requirement and
 //! condition, and an edge from each vertex to every vertex its status depends
 //! on. The graph passes through three steps, each producing the input of the
-//! next: [`LinkGraph::resolve`] builds it, [`LinkGraph::condense`] finds and
+//! next: [`LinkGraph::resolve`] builds it, [`LinkGraph::cut_cycles`] finds and
 //! removes link cycles and fixes the evaluation order, and
 //! [`LinkGraph::derive`] and [`LinkGraph::render`] read the acyclic result.
 
@@ -29,14 +29,21 @@ const FILL_PASS: &str = "#66bb6a";
 /// Fill of a vertex that awaits sign-off or is deferred.
 const FILL_PENDING: &str = "#bdbdbd";
 
-/// Out-edges per vertex: the vertices its status depends on.
-type Adjacency = Vec<Vec<usize>>;
+/// Number of [`VertexKind`] values; the width of one component's slot in the
+/// evaluation order.
+const KINDS: usize = 3;
 
 /// A graph in state `S` and the defects found producing it.
 pub type Built<'a, S> = (LinkGraph<'a, S>, Defects);
 
 /// Condition statuses by condition ID.
 pub type ConditionMap<'a> = BTreeMap<&'a str, ConditionStatus>;
+
+/// Requirement statuses by requirement ID.
+pub type RequirementMap<'a> = BTreeMap<&'a str, Status>;
+
+/// The component of every vertex and the number of components.
+type Components = (Vec<usize>, usize);
 
 /// A directed edge as `(from, to)` vertex indices.
 type Edge = (usize, usize);
@@ -50,8 +57,11 @@ type Resolution = (LinkTarget, Option<Defect>);
 /// Vertices by name.
 type Index<'a> = HashMap<&'a str, usize>;
 
-/// Targets of each link condition, by condition vertex.
-type Links = BTreeMap<usize, Vec<LinkTarget>>;
+/// Targets of each link condition, by vertex; `None` for every other vertex.
+type Links = Vec<Option<Vec<LinkTarget>>>;
+
+/// The targets of one link condition, or `None` for any other vertex.
+type TargetsOf<'t> = Option<&'t [LinkTarget]>;
 
 /// Output format of [`LinkGraph::render`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,21 +72,6 @@ pub enum GraphFormat {
     Dot,
 }
 
-/// The class of node a vertex stands for.
-///
-/// The derived order is the tie-break of [`LinkGraph::condense`]: within one
-/// strongly connected component a condition is evaluated before the
-/// requirement it verifies, and a requirement before its document.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum NodeClique {
-    /// A verification condition.
-    Condition,
-    /// A requirement definition.
-    Requirement,
-    /// A design document.
-    Document,
-}
-
 /// What one target of a link condition resolved to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LinkTarget {
@@ -84,6 +79,21 @@ enum LinkTarget {
     Resolved(usize),
     /// A target that names nothing defined.
     Unresolved,
+}
+
+/// The layer of the tripartite vertex set a vertex belongs to.
+///
+/// The declared order is the tie-break of [`LinkGraph::cut_cycles`]: within
+/// one strongly connected component a condition is evaluated before the
+/// requirement it verifies, and a requirement before its document.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum VertexKind {
+    /// A verification condition.
+    Condition,
+    /// A requirement definition.
+    Requirement,
+    /// A design document.
+    Document,
 }
 
 /// The link graph over `rows` in state `S`: one vertex per document,
@@ -102,11 +112,21 @@ pub struct LinkGraph<'a, S> {
     vertices: Vec<LinkVertex<'a>>,
 }
 
+/// The statuses [`LinkGraph::derive`] computes.
+#[derive(Debug, Clone, Default)]
+pub struct LinkStatuses<'a> {
+    /// The status of every condition row, by condition ID.
+    pub conditions: ConditionMap<'a>,
+    /// The status of every requirement, by requirement ID: the worst status
+    /// of its conditions, `Uncovered` when it has none.
+    pub requirements: RequirementMap<'a>,
+}
+
 /// No cycle remains, and every vertex has a place in the evaluation order.
 #[derive(Debug, Clone)]
 pub struct Acyclic {
-    /// Link conditions that lie on a cycle.
-    cyclic: BTreeSet<usize>,
+    /// Whether each vertex is a link condition on a cycle.
+    cyclic: Vec<bool>,
     /// Vertices, each after every vertex its status depends on.
     order: Vec<usize>,
     /// Link edges removed as cyclic.
@@ -118,6 +138,16 @@ pub struct Acyclic {
 #[derive(Debug, Clone, Copy)]
 pub struct Resolved;
 
+/// Out-edges of every vertex in compressed sparse row form: the targets of
+/// vertex `v` are `targets[offsets[v]..offsets[v + 1]]`.
+#[derive(Debug, Clone, Default)]
+struct Adjacency {
+    /// Start of the targets of each vertex, then the end of the last.
+    offsets: Vec<usize>,
+    /// Targets of every vertex, grouped by vertex.
+    targets: Vec<usize>,
+}
+
 /// Accumulates the vertices and edges while rows are read, in the order
 /// [`LinkGraphBuilder::scan`], [`LinkGraphBuilder::parents`],
 /// [`LinkGraphBuilder::links`].
@@ -125,10 +155,12 @@ pub struct Resolved;
 struct LinkGraphBuilder<'a> {
     /// Document vertices by name.
     docs: Index<'a>,
-    /// Out-edges per vertex.
-    edges: Adjacency,
+    /// Edges in insertion order.
+    edges: Vec<Edge>,
     /// Requirement and condition vertices by qualified ID.
     ids: Index<'a>,
+    /// Number of out-edges per vertex.
+    out_degree: Vec<usize>,
     /// Vertices in interning order.
     vertices: Vec<LinkVertex<'a>>,
 }
@@ -163,7 +195,7 @@ struct SccSearch<'g> {
 #[derive(Debug, Clone, Copy)]
 struct LinkVertex<'a> {
     /// What the vertex stands for.
-    clique: NodeClique,
+    kind: VertexKind,
     /// Qualified ID, or the document name of a document.
     name: &'a str,
     /// Index of the first row that introduces the vertex.
@@ -182,36 +214,87 @@ struct RenderView<'v> {
     status: Rolled,
 }
 
+impl Adjacency {
+    /// Every edge `(v, w)`, by `v`, then in the order `v`'s edges were added.
+    fn edges(&self) -> impl Iterator<Item = Edge> + '_ {
+        (0..self.len())
+            .flat_map(move |v| self.out(v).iter().map(move |&w| (v, w)))
+    }
+
+    /// Number of vertices.
+    const fn len(&self) -> usize {
+        self.offsets.len().saturating_sub(1)
+    }
+
+    /// The out-edges of `n` vertices, each vertex keeping the order in which
+    /// its edges appear in `edges`. An edge with an end outside the `n`
+    /// vertices is dropped, so every stored index names a vertex.
+    fn new(n: usize, edges: &[Edge]) -> Self {
+        let valid = |e: &&Edge| e.0 < n && e.1 < n;
+        // Count the edges of each vertex one slot to the right, then sum, so
+        // `offsets[v]` is the number of edges of the vertices before `v`.
+        let mut offsets = vec![0_usize; n.saturating_add(1)];
+        for &(u, _) in edges.iter().filter(valid) {
+            if let Some(slot) = offsets.get_mut(u.saturating_add(1)) {
+                *slot = slot.saturating_add(1);
+            }
+        }
+        let mut sum = 0_usize;
+        for slot in &mut offsets {
+            sum = sum.saturating_add(*slot);
+            *slot = sum;
+        }
+        let mut next = offsets.clone();
+        let mut targets = vec![0_usize; sum];
+        for &(u, w) in edges.iter().filter(valid) {
+            if let Some(pos) = next.get_mut(u) {
+                if let Some(slot) = targets.get_mut(*pos) {
+                    *slot = w;
+                }
+                *pos = pos.saturating_add(1);
+            }
+        }
+        Self { offsets, targets }
+    }
+
+    /// The vertices that vertex `v` depends on.
+    fn out(&self, v: usize) -> &[usize] {
+        let start = self.offsets.get(v).copied().unwrap_or(0);
+        let end = self
+            .offsets
+            .get(v.saturating_add(1))
+            .copied()
+            .unwrap_or(start);
+        self.targets.get(start..end).unwrap_or_default()
+    }
+}
+
 impl<'a> LinkGraphBuilder<'a> {
     /// Adds the edge `from -> to`.
     fn connect(&mut self, from: usize, to: usize) {
-        if let Some(out) = self.edges.get_mut(from) {
-            out.push(to);
+        self.edges.push((from, to));
+        if let Some(degree) = self.out_degree.get_mut(from) {
+            *degree = degree.saturating_add(1);
         }
     }
 
-    /// Adds a vertex and its empty edge list, and returns its index.
-    fn intern(
-        &mut self,
-        clique: NodeClique,
-        name: &'a str,
-        row: usize,
-    ) -> usize {
-        self.vertices.push(LinkVertex { clique, name, row });
-        self.edges.push(Vec::new());
+    /// Adds a vertex and returns its index.
+    fn intern(&mut self, kind: VertexKind, name: &'a str, row: usize) -> usize {
+        self.vertices.push(LinkVertex { kind, name, row });
+        self.out_degree.push(0);
         self.vertices.len().saturating_sub(1)
     }
 
-    /// The clique of vertex `v`.
-    fn clique(&self, v: usize) -> Option<NodeClique> {
-        self.vertices.get(v).map(|x| x.clique)
+    /// The kind of vertex `v`.
+    fn kind(&self, v: usize) -> Option<VertexKind> {
+        kind_at(&self.vertices, v)
     }
 
     /// The vertex that row `i` introduces as a condition, if any.
     fn condition_of(&self, row: &Row, i: usize) -> Option<usize> {
         let v = *self.ids.get(row.id.as_str())?;
         let x = self.vertices.get(v)?;
-        (x.clique == NodeClique::Condition && x.row == i).then_some(v)
+        (x.kind == VertexKind::Condition && x.row == i).then_some(v)
     }
 
     /// Adds the edges from each requirement to its conditions.
@@ -225,9 +308,9 @@ impl<'a> LinkGraphBuilder<'a> {
             // to it, so a requirement depends on the conditions that verify it.
             for parent in &row.parents {
                 let r = self.ids.get(parent.as_str()).copied();
-                if let Some(r) = r.filter(|&r| {
-                    self.clique(r) == Some(NodeClique::Requirement)
-                }) {
+                if let Some(r) =
+                    r.filter(|&r| self.kind(r) == Some(VertexKind::Requirement))
+                {
                     self.connect(r, v);
                 }
             }
@@ -236,7 +319,7 @@ impl<'a> LinkGraphBuilder<'a> {
 
     /// Resolves the targets of every link condition and adds its edges.
     fn links(&mut self, rows: &[Row]) -> (Links, Defects) {
-        let mut links = Links::new();
+        let mut links: Links = vec![None; self.vertices.len()];
         let mut defects = Defects::new();
         for (i, row) in rows.iter().enumerate() {
             // Only the first definition of a condition whose method is `link`
@@ -259,7 +342,9 @@ impl<'a> LinkGraphBuilder<'a> {
                 targets.push(target);
                 defects.extend(defect);
             }
-            links.insert(v, targets);
+            if let Some(slot) = links.get_mut(v) {
+                *slot = Some(targets);
+            }
         }
         (links, defects)
     }
@@ -273,16 +358,16 @@ impl<'a> LinkGraphBuilder<'a> {
             let Some((doc, _)) = row.id.split_once(QUALIFIER) else {
                 continue;
             };
-            let clique = match row.kind.as_str() {
-                DEFINITION => NodeClique::Requirement,
-                CONDITION => NodeClique::Condition,
+            let kind = match row.kind.as_str() {
+                DEFINITION => VertexKind::Requirement,
+                CONDITION => VertexKind::Condition,
                 _ => continue,
             };
             // Intern the row's document on first sight.
             let d = if let Some(&d) = self.docs.get(doc) {
                 d
             } else {
-                let d = self.intern(NodeClique::Document, doc, i);
+                let d = self.intern(VertexKind::Document, doc, i);
                 self.docs.insert(doc, d);
                 d
             };
@@ -290,11 +375,11 @@ impl<'a> LinkGraphBuilder<'a> {
             if self.ids.contains_key(row.id.as_str()) {
                 continue;
             }
-            let v = self.intern(clique, &row.id, i);
+            let v = self.intern(kind, &row.id, i);
             self.ids.insert(&row.id, v);
             // A document depends on the requirements it defines; a condition
             // is reached from its requirement in `parents` instead.
-            if clique == NodeClique::Requirement {
+            if kind == VertexKind::Requirement {
                 self.connect(d, v);
             }
         }
@@ -318,8 +403,8 @@ impl<'a> LinkGraphBuilder<'a> {
             return (LinkTarget::Unresolved, Some(Defect::at(row, message)));
         };
         self.connect(v, w);
-        let empty = self.clique(w) == Some(NodeClique::Document)
-            && self.edges.get(w).is_none_or(Vec::is_empty);
+        let empty = self.kind(w) == Some(VertexKind::Document)
+            && self.out_degree.get(w).is_none_or(|&d| d == 0);
         let defect = empty.then(|| {
             let message = format!(
                 "condition {} target '{name}' defines no requirement",
@@ -367,9 +452,9 @@ impl<'g> SccSearch<'g> {
         put(&mut self.low, v, low);
     }
 
-    /// The component of every vertex; a component gets a lower number than
-    /// every component that reaches it.
-    fn run(adj: &'g Adjacency) -> Vec<usize> {
+    /// The component of every vertex and the number of components; a
+    /// component gets a lower number than every component that reaches it.
+    fn run(adj: &'g Adjacency) -> Components {
         let n = adj.len();
         let mut search = Self {
             adj,
@@ -386,7 +471,7 @@ impl<'g> SccSearch<'g> {
                 search.visit(v);
             }
         }
-        search.comp
+        (search.comp, search.count)
     }
 
     /// Depth-first visit from `root` with an explicit stack of
@@ -400,7 +485,7 @@ impl<'g> SccSearch<'g> {
             if let Some(frame) = frames.last_mut() {
                 frame.1 = pos.saturating_add(1);
             }
-            match self.adj.get(v).and_then(|out| out.get(pos)).copied() {
+            match self.adj.out(v).get(pos).copied() {
                 // Tree edge to an unvisited vertex: descend into it.
                 Some(w) if at(&self.number, w) == 0 => {
                     self.discover(w);
@@ -440,40 +525,48 @@ impl<'a> LinkGraph<'a, Resolved> {
     /// fixes the evaluation order. Reports one defect per cyclic condition,
     /// in row order.
     #[must_use]
-    pub fn condense(self) -> Built<'a, Acyclic> {
+    pub fn cut_cycles(self) -> Built<'a, Acyclic> {
         let Self {
-            mut edges,
+            edges,
             links,
             rows,
             state: Resolved,
             vertices,
         } = self;
-        let comp = SccSearch::run(&edges);
+        let n = vertices.len();
+        let (comp, count) = SccSearch::run(&edges);
+        // Both ends must be known vertices; an index outside `comp` never
+        // counts as one component.
+        let same = |v: usize, w: usize| matches!((comp.get(v), comp.get(w)), (Some(a), Some(b)) if a == b);
 
         // An edge is cyclic when both ends are in the same component. Only
         // link conditions own such edges: structural edges between documents,
         // requirements and conditions always point down the hierarchy.
-        let mut cyclic = BTreeSet::new();
+        let mut cyclic = vec![false; n];
         let mut removed = Vec::new();
-        for &v in links.keys() {
-            let home = at(&comp, v);
-            if let Some(out) = edges.get_mut(v) {
-                out.retain(|&w| {
-                    let inside = at(&comp, w) == home;
-                    if inside {
-                        cyclic.insert(v);
-                        removed.push((v, w));
-                    }
-                    !inside
-                });
+        let mut kept = Vec::with_capacity(edges.targets.len());
+        // `last[w]` is the last link condition that recorded a removed edge
+        // to `w`; conditions are visited in order, so it drops repeats.
+        let mut last = vec![usize::MAX; n];
+        for (v, w) in edges.edges() {
+            let is_link = links.get(v).is_some_and(Option::is_some);
+            if !(is_link && same(v, w)) {
+                kept.push((v, w));
+                continue;
+            }
+            if let Some(flag) = cyclic.get_mut(v) {
+                *flag = true;
+            }
+            if let Some(seen) = last.get_mut(w).filter(|seen| **seen != v) {
+                *seen = v;
+                removed.push((v, w));
             }
         }
-        removed.sort_unstable();
-        removed.dedup();
+        let edges = Adjacency::new(n, &kept);
 
-        let defects = cyclic
-            .iter()
-            .filter_map(|&v| vertices.get(v).and_then(|x| rows.get(x.row)))
+        let defects = (0..n)
+            .filter(|&v| cyclic.get(v).copied().unwrap_or(false))
+            .filter_map(|v| vertices.get(v).and_then(|x| rows.get(x.row)))
             .map(|row| {
                 let message =
                     format!("condition {} lies on a link cycle", row.id);
@@ -481,17 +574,9 @@ impl<'a> LinkGraph<'a, Resolved> {
             })
             .collect();
 
-        // Components are numbered dependencies-first, so sorting by component
-        // puts every vertex after the vertices it depends on. With the cyclic
-        // edges removed, the remaining ties are broken by class, then index.
-        let mut order: Vec<usize> = (0..vertices.len()).collect();
-        order.sort_by_key(|&v| {
-            (at(&comp, v), vertices.get(v).map(|x| x.clique), v)
-        });
-
         let state = Acyclic {
             cyclic,
-            order,
+            order: evaluation_order(&comp, count, &vertices),
             removed,
         };
         let graph = LinkGraph {
@@ -515,7 +600,7 @@ impl<'a> LinkGraph<'a, Resolved> {
         builder.parents(rows);
         let (links, defects) = builder.links(rows);
         let graph = Self {
-            edges: builder.edges,
+            edges: Adjacency::new(builder.vertices.len(), &builder.edges),
             links,
             rows,
             state: Resolved,
@@ -526,8 +611,9 @@ impl<'a> LinkGraph<'a, Resolved> {
 }
 
 impl<'a> LinkGraph<'a, Acyclic> {
-    /// Derives the status of every condition row, keyed by condition ID.
-    /// `leaf` supplies the status of a row whose method is not `link`.
+    /// Derives the status of every condition row and every requirement,
+    /// keyed by ID. `leaf` supplies the status of a row whose method is not
+    /// `link`.
     ///
     /// A link condition on a cycle is `Fail` and one with no target is
     /// `Uncovered`. Any other takes the worst status of its targets, a target
@@ -538,9 +624,9 @@ impl<'a> LinkGraph<'a, Acyclic> {
     pub fn derive(
         &self,
         mut leaf: impl FnMut(&Row) -> ConditionStatus,
-    ) -> ConditionMap<'a> {
-        let mut derived = ConditionMap::new();
-        self.fold(|v, status| {
+    ) -> LinkStatuses<'a> {
+        let mut conditions = ConditionMap::new();
+        let status = self.fold(|v, status| {
             let Some(row) = self.row_of(v) else {
                 return Status::Uncovered;
             };
@@ -548,15 +634,25 @@ impl<'a> LinkGraph<'a, Acyclic> {
                 .link_status(v, row, status)
                 .unwrap_or_else(|| leaf(row));
             let result = condition.status;
-            derived.insert(row.id.as_str(), condition);
+            conditions.insert(row.id.as_str(), condition);
             result
         });
-        derived
+        let requirements = self
+            .vertices
+            .iter()
+            .zip(&status)
+            .filter(|(x, _)| x.kind == VertexKind::Requirement)
+            .map(|(x, &s)| (x.name, s))
+            .collect();
+        LinkStatuses {
+            conditions,
+            requirements,
+        }
     }
 
     /// Renders the link view of the graph as text in `format`. `statuses`
-    /// is the result of [`LinkGraph::derive`]; without it the vertices carry
-    /// no status.
+    /// is the condition map of [`LinkGraph::derive`]; without it the vertices
+    /// carry no status.
     ///
     /// The link view holds the link conditions, their parent requirements, the
     /// documents defining those requirements and every vertex a link names.
@@ -580,7 +676,7 @@ impl<'a> LinkGraph<'a, Acyclic> {
         let kept: Vec<Edge> = shown
             .iter()
             .flat_map(|&u| {
-                let out = self.edges.get(u).into_iter().flatten();
+                let out = self.edges.out(u).iter();
                 out.filter(|w| shown.contains(w)).map(move |&w| (u, w))
             })
             .collect();
@@ -608,10 +704,10 @@ impl<'a> LinkGraph<'a, Acyclic> {
                 continue;
             };
             let status = view.status_of(v);
-            let (shape, rounded) = match vertex.clique {
-                NodeClique::Document => ("ellipse", false),
-                NodeClique::Requirement => ("box", false),
-                NodeClique::Condition => ("box", true),
+            let (shape, rounded) = match vertex.kind {
+                VertexKind::Document => ("ellipse", false),
+                VertexKind::Requirement => ("box", false),
+                VertexKind::Condition => ("box", true),
             };
             let style = match (rounded, status) {
                 (false, None) => String::new(),
@@ -656,17 +752,17 @@ impl<'a> LinkGraph<'a, Acyclic> {
             let Some(vertex) = self.vertices.get(v) else {
                 continue;
             };
-            let value = match vertex.clique {
+            let value = match vertex.kind {
                 // A condition decides its own status from its dependencies.
-                NodeClique::Condition => condition(v, &status),
+                VertexKind::Condition => condition(v, &status),
                 // A requirement or document is as bad as its worst
                 // dependency, and uncovered when it has none.
-                NodeClique::Requirement | NodeClique::Document => self
+                VertexKind::Requirement | VertexKind::Document => self
                     .edges
-                    .get(v)
-                    .and_then(|out| {
-                        out.iter().filter_map(|&w| status.get(w).copied()).max()
-                    })
+                    .out(v)
+                    .iter()
+                    .filter_map(|&w| status.get(w).copied())
+                    .max()
                     .unwrap_or(Status::Uncovered),
             };
             put_status(&mut status, v, value);
@@ -676,10 +772,14 @@ impl<'a> LinkGraph<'a, Acyclic> {
 
     /// The vertices of the link view.
     fn link_view(&self) -> BTreeSet<usize> {
+        let n = self.vertices.len();
         // Link conditions and the vertices they name.
         let mut shown = BTreeSet::new();
-        for (&condition, targets) in &self.links {
-            shown.insert(condition);
+        for v in 0..n {
+            let Some(targets) = self.targets_of(v) else {
+                continue;
+            };
+            shown.insert(v);
             shown.extend(targets.iter().filter_map(|t| match t {
                 LinkTarget::Resolved(w) => Some(*w),
                 LinkTarget::Unresolved => None,
@@ -687,25 +787,25 @@ impl<'a> LinkGraph<'a, Acyclic> {
         }
         // Requirements that have a link condition, then the documents that
         // define those requirements.
-        let parents: Vec<usize> = (0..self.vertices.len())
-            .filter(|&v| {
-                clique_at(&self.vertices, v) == Some(NodeClique::Requirement)
+        let is_kind = |v: usize, kind| kind_at(&self.vertices, v) == Some(kind);
+        let parents: Vec<bool> = (0..n)
+            .map(|v| {
+                is_kind(v, VertexKind::Requirement)
+                    && self.depends_on(v, |c| self.targets_of(c).is_some())
             })
-            .filter(|&v| self.depends_on(v, |c| self.links.contains_key(c)))
             .collect();
-        let documents = (0..self.vertices.len())
-            .filter(|&v| {
-                clique_at(&self.vertices, v) == Some(NodeClique::Document)
-            })
-            .filter(|&v| self.depends_on(v, |r| parents.contains(r)));
+        let is_parent = |r: usize| parents.get(r).copied().unwrap_or(false);
+        let documents = (0..n)
+            .filter(|&v| is_kind(v, VertexKind::Document))
+            .filter(|&v| self.depends_on(v, is_parent));
         shown.extend(documents);
-        shown.extend(parents.iter().copied());
+        shown.extend((0..n).filter(|&v| is_parent(v)));
         shown
     }
 
     /// Whether vertex `v` depends on a vertex that satisfies `pred`.
-    fn depends_on(&self, v: usize, pred: impl Fn(&usize) -> bool) -> bool {
-        self.edges.get(v).is_some_and(|out| out.iter().any(pred))
+    fn depends_on(&self, v: usize, pred: impl Fn(usize) -> bool) -> bool {
+        self.edges.out(v).iter().any(|&w| pred(w))
     }
 
     /// The status of link condition `v` of `row`, given the statuses of the
@@ -716,9 +816,9 @@ impl<'a> LinkGraph<'a, Acyclic> {
         row: &Row,
         status: &[Status],
     ) -> Option<ConditionStatus> {
-        let targets = self.links.get(&v)?;
+        let targets = self.targets_of(v)?;
         let mut items = Vec::new();
-        let result = if self.state.cyclic.contains(&v) {
+        let result = if self.state.cyclic.get(v).copied().unwrap_or(false) {
             Status::Fail
         } else if targets.is_empty() {
             Status::Uncovered
@@ -760,10 +860,10 @@ impl<'a> LinkGraph<'a, Acyclic> {
             };
             let text =
                 label(vertex.name, view.status_of(v)).replace('"', "#quot;");
-            let node = match vertex.clique {
-                NodeClique::Document => format!("n{v}([\"{text}\"])"),
-                NodeClique::Requirement => format!("n{v}[\"{text}\"]"),
-                NodeClique::Condition => format!("n{v}(\"{text}\")"),
+            let node = match vertex.kind {
+                VertexKind::Document => format!("n{v}([\"{text}\"])"),
+                VertexKind::Requirement => format!("n{v}[\"{text}\"]"),
+                VertexKind::Condition => format!("n{v}(\"{text}\")"),
             };
             lines.push(format!("    {node}"));
         }
@@ -798,12 +898,55 @@ impl<'a> LinkGraph<'a, Acyclic> {
     fn row_of(&self, v: usize) -> Option<&'a Row> {
         self.vertices.get(v).and_then(|x| self.rows.get(x.row))
     }
+
+    /// The targets of link condition `v`, or `None` when `v` is not one.
+    fn targets_of(&self, v: usize) -> TargetsOf<'_> {
+        self.links.get(v)?.as_deref()
+    }
 }
 
 /// `values[i]`, or 0 outside the slice; every index comes from a vertex of the
 /// graph the slice was sized for.
 fn at(values: &[usize], i: usize) -> usize {
     values.get(i).copied().unwrap_or(0)
+}
+
+/// The vertices sorted by component, then by kind, then by index, in linear
+/// time: a counting sort over the `count` components times the [`KINDS`]
+/// kinds. Components are numbered dependencies-first, so every vertex follows
+/// the vertices it depends on; with the cyclic edges removed, a component
+/// holds only structural edges, which the kind order respects.
+fn evaluation_order(
+    comp: &[usize],
+    count: usize,
+    vertices: &[LinkVertex<'_>],
+) -> Vec<usize> {
+    let key = |v: usize| {
+        let rank = vertices.get(v).map_or(0, |x| kind_rank(x.kind));
+        at(comp, v).saturating_mul(KINDS).saturating_add(rank)
+    };
+    let mut start =
+        vec![0_usize; count.saturating_mul(KINDS).saturating_add(1)];
+    for v in 0..vertices.len() {
+        if let Some(slot) = start.get_mut(key(v).saturating_add(1)) {
+            *slot = slot.saturating_add(1);
+        }
+    }
+    let mut sum = 0_usize;
+    for slot in &mut start {
+        sum = sum.saturating_add(*slot);
+        *slot = sum;
+    }
+    let mut order = vec![0_usize; vertices.len()];
+    for v in 0..vertices.len() {
+        if let Some(pos) = start.get_mut(key(v)) {
+            if let Some(slot) = order.get_mut(*pos) {
+                *slot = v;
+            }
+            *pos = pos.saturating_add(1);
+        }
+    }
+    order
 }
 
 /// Whether a status fails the gate.
@@ -821,9 +964,18 @@ const fn fill_of(status: Status) -> &'static str {
     }
 }
 
-/// The clique of vertex `v`.
-fn clique_at(vertices: &[LinkVertex<'_>], v: usize) -> Option<NodeClique> {
-    vertices.get(v).map(|x| x.clique)
+/// The kind of vertex `v`.
+fn kind_at(vertices: &[LinkVertex<'_>], v: usize) -> Option<VertexKind> {
+    vertices.get(v).map(|x| x.kind)
+}
+
+/// The position of `kind` in the evaluation order of one component.
+const fn kind_rank(kind: VertexKind) -> usize {
+    match kind {
+        VertexKind::Condition => 0,
+        VertexKind::Requirement => 1,
+        VertexKind::Document => 2,
+    }
 }
 
 /// The label of a vertex: its name and, with a status, the status name.
@@ -900,7 +1052,7 @@ mod tests {
 
     fn acyclic(rows: &[Row]) -> Built<'_, Acyclic> {
         let (graph, mut defects) = LinkGraph::resolve(rows);
-        let (graph, cycles) = graph.condense();
+        let (graph, cycles) = graph.cut_cycles();
         defects.extend(cycles);
         (graph, defects)
     }
@@ -924,6 +1076,7 @@ mod tests {
         let (graph, _) = acyclic(rows);
         graph
             .derive(|row| leaf_status(leaf_table, row))
+            .conditions
             .get(id)
             .map(|c| c.status)
             .unwrap()
@@ -932,7 +1085,7 @@ mod tests {
     fn out_degree(rows: &[Row], name: &str) -> usize {
         let (graph, _) = LinkGraph::resolve(rows);
         let v = graph.vertices.iter().position(|x| x.name == name).unwrap();
-        graph.edges.get(v).map_or(0, Vec::len)
+        graph.edges.out(v).len()
     }
 
     #[test]
@@ -1079,7 +1232,7 @@ mod tests {
         ];
         let (graph, _) = acyclic(&rows);
         let table = [("c#VC-1.1", Status::Unrun)];
-        let derived = graph.derive(|row| leaf_status(&table, row));
+        let derived = graph.derive(|row| leaf_status(&table, row)).conditions;
         let linked = derived.get("a#VC-1.1").unwrap();
         assert_eq!(linked.status, Status::Unrun);
         let outcomes: Vec<Outcome<'_>> = linked
@@ -1177,6 +1330,28 @@ mod tests {
     }
 
     #[test]
+    fn derive_gives_each_requirement_the_worst_status_of_its_conditions() {
+        let rows = [
+            def("a#FR-1", 1),
+            cond(["a#VC-1.1", "a#FR-1"], "libtest", &["t"], 3),
+            cond(["a#VC-1.2", "a#FR-1"], "libtest", &["t"], 4),
+            def("a#FR-2", 5),
+            link("a#VC-2.1", "a#FR-2", &["a#FR-1"], 7),
+            def("a#FR-3", 9),
+        ];
+        let (graph, _) = acyclic(&rows);
+        let table = [("a#VC-1.2", Status::Unrun)];
+        let requirements =
+            graph.derive(|row| leaf_status(&table, row)).requirements;
+        let expected = [
+            ("a#FR-1", Status::Unrun),
+            ("a#FR-2", Status::Unrun),
+            ("a#FR-3", Status::Uncovered),
+        ];
+        assert_eq!(requirements.into_iter().collect::<Vec<_>>(), expected);
+    }
+
+    #[test]
     fn a_document_target_adds_one_edge_per_link() {
         let (m, n) = (4, 3);
         let mut rows = vec![def("a#FR-1", 1)];
@@ -1217,7 +1392,7 @@ mod tests {
         }
         let (graph, defects) = acyclic(&rows);
         assert!(defects.is_empty(), "{defects:?}");
-        let derived = graph.derive(|row| leaf_status(&[], row));
+        let derived = graph.derive(|row| leaf_status(&[], row)).conditions;
         assert_eq!(derived.len(), docs);
         assert!(derived.values().all(|c| c.status == Status::Pass));
     }
@@ -1239,7 +1414,7 @@ mod tests {
 
     fn rendered(rows: &[Row], format: GraphFormat) -> String {
         let (graph, _) = acyclic(rows);
-        let derived = graph.derive(|row| leaf_status(&[], row));
+        let derived = graph.derive(|row| leaf_status(&[], row)).conditions;
         graph.render(format, Some(&derived))
     }
 

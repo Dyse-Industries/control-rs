@@ -1,8 +1,8 @@
 # Tracer Link Graph (tracer-link-graph)
 
-![Date Badge](https://img.shields.io/badge/Date-October_20,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_21,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
-![Design Status Badge](https://img.shields.io/badge/Design%20Status-Ready-brightgreen)
+![Design Status Badge](https://img.shields.io/badge/Design%20Status-Draft-orange)
 
 ---
 
@@ -80,13 +80,14 @@ run in a fixed
 order, each producing the input of the next. Cycle detection is the single-pass
 depth-first strongly connected component search of Tarjan [2], which also yields
 the evaluation order. A document is a vertex of its own, so a link to a
-document costs one edge rather than one per requirement of that document [3].
+document costs one edge rather than one per requirement of that document [3],
+[10].
 
 ```mermaid
 flowchart LR
     R[rows] --> A[resolve]
     A -->|link defects| D1[trace-reqs output]
-    A --> B[condense]
+    A --> B[cut cycles]
     B -->|cycle defects| D1
     B --> C[derive]
     C -->|condition statuses| D2[trace-check report]
@@ -94,7 +95,7 @@ flowchart LR
     E -->|Mermaid or DOT| D3[graph file]
 ```
 
-`trace-reqs` runs `resolve` and `condense` and prints their defects.
+`trace-reqs` runs `resolve` and `cut_cycles` and prints their defects.
 `trace-check` runs all three and supplies the status of non-link conditions.
 With `--graph`, it also renders the resolved link structure and the derived
 statuses as a Mermaid or Graphviz DOT file.
@@ -155,7 +156,7 @@ prefix. An edge points from a vertex to each vertex whose status it depends on:
 A bare `<doc>` target gives one edge to the document vertex instead of one
 edge to each requirement of that document. This factors a complete bipartite
 subgraph through an intermediate vertex: the paths are kept and the product of
-the two sides becomes their sum [3].
+the two sides becomes their sum [3], [10].
 
 `resolve` reports `condition <id> names no link target` for a link condition
 without a target; `condition <id> target '<target>' names no selected
@@ -167,25 +168,25 @@ defines its vertex and a later duplicate adds none. A row whose ID has no
 `<doc>#` prefix, or whose kind is neither a definition nor a condition, adds no
 vertex, and a parent that is not a defined requirement adds no edge.
 
-#### 4.2 Cycle Condensation
+#### 4.2 Cycle Removal
 
 Serves: FR-2, FR-4, NFR-1, NFR-2
 
 ```rust
 /// No cycle remains, and every vertex has a place in the evaluation order.
 pub struct Acyclic {
-    /* order: Vec<u32>, cyclic: Vec<u32> */
+    /* cyclic: Vec<bool>, order: Vec<usize>, removed: Vec<(usize, usize)> */
 }
 
 impl<'a> LinkGraph<'a, Resolved> {
     /// Finds the link conditions on a cycle, removes their cyclic edges and
     /// fixes the evaluation order. Reports one defect per cyclic condition,
     /// in row order.
-    pub fn condense(self) -> Built<'a, Acyclic>;
+    pub fn cut_cycles(self) -> Built<'a, Acyclic>;
 }
 ```
 
-`condense` consumes the resolved graph and runs one Tarjan pass [2] with an
+`cut_cycles` consumes the resolved graph and runs one Tarjan pass [2] with an
 explicit stack of `(vertex, next edge)` frames, so the call stack does not grow
 with the chain. Tarjan's algorithm identifies the strongly connected components
 in time and space linear in vertices and edges [2]. The components of the
@@ -206,21 +207,31 @@ edge that returns to no ancestor and is not.
 `order` lists the vertices by component number. Within a component, which holds
 only structural edges once the cycle edges are gone, it puts conditions before
 requirements and requirements before documents. Each vertex then follows every
-vertex its status depends on.
+vertex its status depends on. The order is a counting sort on component and
+kind, linear in the number of vertices.
 
 #### 4.3 Status Derivation
 
 Serves: FR-3, FR-4, NFR-1, NFR-2
 
 ```rust
+/// Requirement statuses by requirement ID.
+pub type RequirementMap<'a> = BTreeMap<&'a str, Status>;
+
+/// The statuses `derive` computes.
+pub struct LinkStatuses<'a> {
+    pub conditions: ConditionMap<'a>,
+    pub requirements: RequirementMap<'a>,
+}
+
 impl<'a> LinkGraph<'a, Acyclic> {
-    /// Derives the status of every condition row, keyed by condition ID.
-    /// `leaf` supplies the status of a row whose method is not in
+    /// Derives the status of every condition row and every requirement,
+    /// keyed by ID. `leaf` supplies the status of a row whose method is not
     /// `link`.
     pub fn derive(
         &self,
         leaf: impl FnMut(&Row) -> ConditionStatus,
-    ) -> ConditionMap<'a>;
+    ) -> LinkStatuses<'a>;
 }
 ```
 
@@ -244,7 +255,9 @@ Status is the maximum of `Status`, in the existing order `Pass`, `Review`,
   document with no requirements are `Uncovered`. A document that many links name
   is computed once.
 
-`trace-check` passes the existing result-log evaluation as `leaf`. It does not
+`trace-check` passes the existing result-log evaluation as `leaf` and takes
+each requirement's status from `requirements`, so the report and the graph
+share one rollup. It does not
 list a link condition among the `Review` conditions awaiting sign-off, since
 the document it names lists its own.
 
@@ -264,8 +277,8 @@ pub enum GraphFormat {
 
 impl<'a> LinkGraph<'a, Acyclic> {
     /// Renders the link view of the graph as text in `format`. `statuses`
-    /// is the result of [`LinkGraph::derive`]; without it the vertices carry
-    /// no status.
+    /// is the condition map of [`LinkGraph::derive`]; without it the vertices
+    /// carry no status.
     pub fn render(
         &self,
         format: GraphFormat,
@@ -311,7 +324,7 @@ Serves: FR-3, FR-4, FR-5
 
 `control_rs_ci::trace::reqs` gains the constant `LINK_METHOD`, the method name
 `link`. `trace-reqs` calls `resolve` and
-`condense` from its checks and reports both defect lists. `trace-check` calls
+`cut_cycles` from its checks and reports both defect lists. `trace-check` calls
 the same two functions, reports the same defects, then calls `derive` with its
 result-log evaluation of a condition as `leaf` and reports the derived statuses
 in `trace-report.json`. With `--graph <path>` it calls `render` on the derived
@@ -369,7 +382,7 @@ is an I/O error of the binary, reported as its other write errors are.
 |:----------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------|
 | `petgraph` strongly connected components                  | Its manifest requires `fixedbitset` ^0.5.7 and `hashbrown` ^0.15, and pulls `indexmap` and `equivalent`. The workspace locks `fixedbitset` 0.4.2 and `hashbrown` 0.16.1 and 0.17.1, so adoption adds duplicate crate versions and violates C-1. | [5]       |
 | One reachability search per link edge                     | Testing whether a link's target reaches the link by a separate search costs $O(E (V + E))$ time; one Tarjan pass finds every cyclic edge in $O(V + E)$ and yields the evaluation order.                                                         | [2]       |
-| Expanding a document target into one edge per requirement | Forms a complete bipartite subgraph of $m \times n$ edges and repeats the document rollup for each link; a document vertex needs $m + n$ edges (NFR-1).                                                                                         | [3]       |
+| Expanding a document target into one edge per requirement | Forms a complete bipartite subgraph of $m \times n$ edges and repeats the document rollup for each link; a document vertex needs $m + n$ edges (NFR-1).                                                                                         | [3], [10] |
 | Recursive Tarjan search                                   | Depth of the call stack follows the longest link chain and overflows on a long one (NFR-2).                                                                                                                                                     | [2]       |
 | Collapsing each component into one vertex                 | Merges the members of a cycle into a single status, so no row carries the defect (FR-2); detection followed by removal of the cyclic edges keeps one defect per condition.                                                                      | [7]       |
 | Evaluating a cycle to a fixed point                       | Gives a cycle member a status from its own assumption and can pass; a cycle is a defect, not a value [1].                                                                                                                                       | [1]       |
@@ -384,23 +397,23 @@ is an I/O error of the binary, reported as its other write errors are.
 
 #### 6.1 Verification
 
-| Condition | Requirement | Method       | Target                                                                                                                                                                                                                                                                                                                                                                                                                                                               | Criterion                                                                                                                                                                                                                                                                                  |
-|:----------|:------------|:-------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| VC-1.1    | FR-1        | `libtest`    | `control_rs_ci::trace::link::tests::link_without_a_target_is_reported`, `control_rs_ci::trace::link::tests::link_to_an_undefined_item_is_reported`, `control_rs_ci::trace::link::tests::link_to_a_document_without_requirements_is_reported`, `control_rs_ci::trace::link::tests::targets_naming_a_document_requirement_or_condition_resolve`                                                                                                                        | `resolve` reports a link with no target, a target naming nothing defined and a target document that defines no requirement as one defect each at the condition row, and reports none for a target naming a defined document, requirement or condition; FR-1 holds iff this condition holds |
-| VC-2.1    | FR-2        | `libtest`    | `control_rs_ci::trace::link::tests::a_self_link_is_a_cycle`, `control_rs_ci::trace::link::tests::a_link_to_the_parent_requirement_is_a_cycle`, `control_rs_ci::trace::link::tests::a_link_to_the_own_document_is_a_cycle`, `control_rs_ci::trace::link::tests::a_two_document_cycle_reports_both_conditions`, `control_rs_ci::trace::link::tests::a_link_to_a_sibling_requirement_is_no_cycle`, `control_rs_ci::trace::link::tests::an_acyclic_graph_has_no_defects` | `condense` reports a defect at exactly the link conditions that lie on a cycle, none for a link to a sibling requirement or for an acyclic graph; FR-2 holds iff this condition holds                                                                                                      |
-| VC-3.1    | FR-3        | `libtest`    | `control_rs_ci::trace::link::tests::derive_takes_the_worst_status_of_the_targets`, `control_rs_ci::trace::link::tests::derive_gives_a_requirement_or_condition_target_its_status`, `control_rs_ci::trace::link::tests::derive_gives_a_document_the_worst_status_of_its_requirements`, `control_rs_ci::trace::link::tests::derive_evaluates_a_chain_of_links_dependencies_first`                                                                                      | `derive` gives a link the worst status of the items it names with one item per target, and a status passes along a chain of two links; FR-3 holds iff both conditions hold                                                                                                                 |
-| VC-3.2    | FR-3        | `libtest`    | `control_rs_ci::trace::link::tests::derive_fails_a_link_on_a_cycle`, `control_rs_ci::trace::link::tests::derive_marks_a_link_without_a_target_uncovered`, `control_rs_ci::trace::link::tests::derive_marks_an_unresolved_target_unrun`, `control_rs_ci::trace::link::tests::derive_marks_an_empty_document_uncovered`                                                                                                                                                | `derive` gives `Fail` to a link on a cycle, `Uncovered` to a link with no target or naming an empty document, and `Unrun` to a target that resolved to nothing                                                                                                                             |
-| VC-4.1    | FR-4        | `libtest`    | `trace_tests::cli::trace_reqs_and_trace_check_report_the_same_link_defects`                                                                                                                                                                                                                                                                                                                                                                                          | The link defect lines printed by `trace-reqs` and `trace-check` for one set of rows are identical                                                                                                                                                                                          |
-| VC-5.1    | NFR-1       | `libtest`    | `control_rs_ci::trace::link::tests::a_document_target_adds_one_edge_per_link`                                                                                                                                                                                                                                                                                                                                                                                        | Resolving $m$ link conditions that name one document of $n$ requirements adds $m + n$ edges, not $m \times n$; NFR-1 holds iff both conditions hold                                                                                                                                        |
-| VC-5.2    | NFR-1       | `analysis`   | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `resolve` visits each row and target once, `condense` is one Tarjan pass and `derive` visits each vertex and edge once, so time and space are $O(V + E)$                                                                                                                                   |
-| VC-6.1    | NFR-2       | `libtest`    | `control_rs_ci::trace::link::tests::a_long_link_chain_is_processed_on_the_default_stack`                                                                                                                                                                                                                                                                                                                                                                             | `condense` and `derive` process a chain of 100 000 linked documents on the default test stack without overflow                                                                                                                                                                             |
-| VC-7.1    | C-1         | `review`     | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `cargo tree` for `control-rs-ci` shows no dependency beyond the dependency budget of the inherited constraint                                                                                                                                                                              |
-| VC-8.1    | C-2         | `inspection` | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | The diff adds no field to `Row` or to the `trace-report.json` structures                                                                                                                                                                                                                   |
-| VC-9.1    | C-3         | `inspection` | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | `link.rs` contains no `unwrap`, `expect` or `panic!` outside `#[cfg(test)]`                                                                                                                                                                                                                |
-| VC-10.1   | FR-5        | `libtest`    | `control_rs_ci::trace::link::tests::render_mermaid_shows_status_and_marks_cycle_edges`, `control_rs_ci::trace::link::tests::render_dot_shows_status_and_marks_cycle_edges`, `control_rs_ci::trace::link::tests::render_draws_only_the_link_view`                                                                                                                                                                                                                     | Each format shows every link vertex with its status, draws a removed cyclic edge dashed and red, and omits requirements and conditions that no link touches; FR-5 holds iff both conditions hold                                                                                           |
-| VC-10.2   | FR-5        | `libtest`    | `trace_tests::cli::graph_flag_writes_mermaid_or_dot_by_extension`, `trace_tests::cli::graph_flag_with_another_extension_is_a_usage_error`, `trace_tests::cli::a_failing_gate_still_writes_the_graph`                                                                                                                                                                                                                                                                 | `trace-check --graph` writes a Mermaid file for `.mmd` and a DOT file for `.dot`, exits 2 for another extension, and writes the file when the gate fails                                                                                                                                   |
-| VC-11.1   | NFR-3       | `libtest`    | `control_rs_ci::trace::link::tests::render_is_byte_identical_across_runs`                                                                                                                                                                                                                                                                                                                                                                                            | Rendering the same rows and statuses twice gives identical bytes in both formats                                                                                                                                                                                                           |
-| VC-12.1   | C-4         | `inspection` | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                    | No binary or module reads a graph file                                                                                                                                                                                                                                                     |
+| Condition | Requirement | Method       | Target                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | Criterion                                                                                                                                                                                                                                                                                  |
+|:----------|:------------|:-------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| VC-1.1    | FR-1        | `libtest`    | `control_rs_ci::trace::link::tests::link_without_a_target_is_reported`, `control_rs_ci::trace::link::tests::link_to_an_undefined_item_is_reported`, `control_rs_ci::trace::link::tests::link_to_a_document_without_requirements_is_reported`, `control_rs_ci::trace::link::tests::targets_naming_a_document_requirement_or_condition_resolve`                                                                                                                                          | `resolve` reports a link with no target, a target naming nothing defined and a target document that defines no requirement as one defect each at the condition row, and reports none for a target naming a defined document, requirement or condition; FR-1 holds iff this condition holds |
+| VC-2.1    | FR-2        | `libtest`    | `control_rs_ci::trace::link::tests::a_self_link_is_a_cycle`, `control_rs_ci::trace::link::tests::a_link_to_the_parent_requirement_is_a_cycle`, `control_rs_ci::trace::link::tests::a_link_to_the_own_document_is_a_cycle`, `control_rs_ci::trace::link::tests::a_two_document_cycle_reports_both_conditions`, `control_rs_ci::trace::link::tests::a_link_to_a_sibling_requirement_is_no_cycle`, `control_rs_ci::trace::link::tests::an_acyclic_graph_has_no_defects`                   | `cut_cycles` reports a defect at exactly the link conditions that lie on a cycle, none for a link to a sibling requirement or for an acyclic graph; FR-2 holds iff this condition holds                                                                                                    |
+| VC-3.1    | FR-3        | `libtest`    | `control_rs_ci::trace::link::tests::derive_takes_the_worst_status_of_the_targets`, `control_rs_ci::trace::link::tests::derive_gives_a_requirement_or_condition_target_its_status`, `control_rs_ci::trace::link::tests::derive_gives_a_document_the_worst_status_of_its_requirements`, `control_rs_ci::trace::link::tests::derive_evaluates_a_chain_of_links_dependencies_first`, `control_rs_ci::trace::link::tests::derive_gives_each_requirement_the_worst_status_of_its_conditions` | `derive` gives a link the worst status of the items it names with one item per target, a requirement the worst status of its conditions, and a status passes along a chain of two links; FR-3 holds iff both conditions hold                                                               |
+| VC-3.2    | FR-3        | `libtest`    | `control_rs_ci::trace::link::tests::derive_fails_a_link_on_a_cycle`, `control_rs_ci::trace::link::tests::derive_marks_a_link_without_a_target_uncovered`, `control_rs_ci::trace::link::tests::derive_marks_an_unresolved_target_unrun`, `control_rs_ci::trace::link::tests::derive_marks_an_empty_document_uncovered`                                                                                                                                                                  | `derive` gives `Fail` to a link on a cycle, `Uncovered` to a link with no target or naming an empty document, and `Unrun` to a target that resolved to nothing                                                                                                                             |
+| VC-4.1    | FR-4        | `libtest`    | `trace_tests::cli::trace_reqs_and_trace_check_report_the_same_link_defects`                                                                                                                                                                                                                                                                                                                                                                                                            | The link defect lines printed by `trace-reqs` and `trace-check` for one set of rows are identical                                                                                                                                                                                          |
+| VC-5.1    | NFR-1       | `libtest`    | `control_rs_ci::trace::link::tests::a_document_target_adds_one_edge_per_link`                                                                                                                                                                                                                                                                                                                                                                                                          | Resolving $m$ link conditions that name one document of $n$ requirements adds $m + n$ edges, not $m \times n$; NFR-1 holds iff both conditions hold                                                                                                                                        |
+| VC-5.2    | NFR-1       | `analysis`   | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `resolve` visits each row and target once, `cut_cycles` is one Tarjan pass and a counting sort and `derive` visits each vertex and edge once, so time and space are $O(V + E)$; the ID-keyed maps `derive` returns add $O(V \log V)$                                                       |
+| VC-6.1    | NFR-2       | `libtest`    | `control_rs_ci::trace::link::tests::a_long_link_chain_is_processed_on_the_default_stack`                                                                                                                                                                                                                                                                                                                                                                                               | `cut_cycles` and `derive` process a chain of 100 000 linked documents on the default test stack without overflow                                                                                                                                                                           |
+| VC-7.1    | C-1         | `review`     | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `cargo tree` for `control-rs-ci` shows no dependency beyond the dependency budget of the inherited constraint                                                                                                                                                                              |
+| VC-8.1    | C-2         | `inspection` | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | The diff adds no field to `Row` or to the `trace-report.json` structures                                                                                                                                                                                                                   |
+| VC-9.1    | C-3         | `inspection` | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `link.rs` contains no `unwrap`, `expect` or `panic!` outside `#[cfg(test)]`                                                                                                                                                                                                                |
+| VC-10.1   | FR-5        | `libtest`    | `control_rs_ci::trace::link::tests::render_mermaid_shows_status_and_marks_cycle_edges`, `control_rs_ci::trace::link::tests::render_dot_shows_status_and_marks_cycle_edges`, `control_rs_ci::trace::link::tests::render_draws_only_the_link_view`                                                                                                                                                                                                                                       | Each format shows every link vertex with its status, draws a removed cyclic edge dashed and red, and omits requirements and conditions that no link touches; FR-5 holds iff both conditions hold                                                                                           |
+| VC-10.2   | FR-5        | `libtest`    | `trace_tests::cli::graph_flag_writes_mermaid_or_dot_by_extension`, `trace_tests::cli::graph_flag_with_another_extension_is_a_usage_error`, `trace_tests::cli::a_failing_gate_still_writes_the_graph`                                                                                                                                                                                                                                                                                   | `trace-check --graph` writes a Mermaid file for `.mmd` and a DOT file for `.dot`, exits 2 for another extension, and writes the file when the gate fails                                                                                                                                   |
+| VC-11.1   | NFR-3       | `libtest`    | `control_rs_ci::trace::link::tests::render_is_byte_identical_across_runs`                                                                                                                                                                                                                                                                                                                                                                                                              | Rendering the same rows and statuses twice gives identical bytes in both formats                                                                                                                                                                                                           |
+| VC-12.1   | C-4         | `inspection` | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | No binary or module reads a graph file                                                                                                                                                                                                                                                     |
 
 #### 6.3 Limits
 
@@ -419,7 +432,8 @@ is an I/O error of the binary, reported as its other write errors are.
 ### 7. Performance & Resource Considerations
 
 The graph is host tooling, so `std` and the heap are available. Vertices are
-interned as `u32` indices; adjacency, the component stack and `order` are
+interned as `usize` indices; adjacency is compressed sparse row, one offset per
+vertex and one target per edge, and the component stack and `order` are
 arrays of at most $V + E$ entries, and the tracer's existing 1 s budget is
 unchanged. The explicit search stack holds one frame per vertex on the current
 path, on the heap. Status values are the existing `Status` enum; there is no
@@ -448,7 +462,7 @@ numeric policy.
 | Phase                    | Delivers                                                     | Requirements        | Effort   | Status   |
 |:-------------------------|:-------------------------------------------------------------|:--------------------|:---------|:---------|
 | 1. Resolution            | `LinkGraph<Resolved>`, `resolve` and its defects             | FR-1, C-1, C-2, C-3 | 1.5 days | Complete |
-| 2. Condensation          | Iterative Tarjan pass, cyclic edge removal, evaluation order | FR-2, NFR-1, NFR-2  | 2 days   | Complete |
+| 2. Cycle removal         | Iterative Tarjan pass, cyclic edge removal, evaluation order | FR-2, NFR-1, NFR-2  | 2 days   | Complete |
 | 3. Derivation and wiring | `derive`, calls from `trace-reqs` and `trace-check`          | FR-3, FR-4          | 2 days   | Complete |
 | 4. Graph export          | `render`, `--graph` for `trace-check`                        | FR-5, NFR-3, C-4    | 1.5 days | Complete |
 
@@ -466,6 +480,8 @@ numeric policy.
 | 2.0      | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5 | link is a fixed method name: resolve takes no method set, render_graph takes no configuration, and the link_methods configuration is removed.                                            |
 | 3.0      | October 20, 2026 | @MitchellDScott, Claude Opus 5.5   | Raised graph fill contrast; Mermaid vertices get a dark 2 px outline.                                                                                                                    |
 | 3.1      | October 20, 2026 | @MitchellDScott, Claude Opus 5.5   | Mermaid vertex colours are written as one style line per vertex instead of classDef classes.                                                                                             |
+| 4.0 | October 21, 2026 | Claude Opus 5.5 | cut_cycles replaces condense; derive returns condition and requirement statuses; linear evaluation order; usize indices and compressed sparse row adjacency |
+| 4.1 | October 21, 2026 | Claude Opus 5.5 | Cites Feder and Motwani as the primary source of the document vertex |
 
 ---
 
@@ -508,3 +524,7 @@ https://mermaid.js.org/syntax/flowchart.html. Accessed: Oct. 20, 2026.
 
 [9] Graphviz Authors, "The DOT Language," *Graphviz documentation*. [Online].
 Available: https://graphviz.org/doc/info/lang.html. Accessed: Oct. 20, 2026.
+
+[10] T. Feder and R. Motwani, "Clique partitions, graph compression and
+speeding-up algorithms," *J. Comput. Syst. Sci.*, vol. 51, no. 2, pp. 261–272,
+Oct. 1995, doi: 10.1006/jcss.1995.1065.

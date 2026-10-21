@@ -696,7 +696,7 @@ pub fn check(rows: &[Row], rules: &Rules) -> Vec<Defect> {
 /// nothing, and links on a cycle.
 fn check_links(rows: &[Row], defects: &mut Vec<Defect>) {
     let (graph, resolution) = LinkGraph::resolve(rows);
-    let (_, cycles) = graph.condense();
+    let (_, cycles) = graph.cut_cycles();
     defects.extend(resolution);
     defects.extend(cycles);
 }

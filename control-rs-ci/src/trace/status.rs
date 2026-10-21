@@ -17,7 +17,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::link::{GraphFormat, LinkGraph};
+use super::link::{GraphFormat, LinkGraph, LinkStatuses, RequirementMap};
 use super::reqs::{
     AUTOMATED_METHODS, DEFERRED_METHOD as DEFERRED, LINK_METHOD, TraceConfig,
 };
@@ -47,11 +47,16 @@ type TestResultMap = HashMap<String, bool>;
 /// Map from method name to its parsed result log.
 type MethodResultMap = HashMap<String, ResultLog>;
 
-/// Evaluated conditions, pending reviews and deferred conditions.
-type ConditionEvalResult = (
+/// Evaluated conditions by parent requirement ID.
+type ByParent<'a> = HashMap<&'a str, Vec<ConditionStatus>>;
+
+/// Evaluated conditions, pending reviews, deferred conditions and the
+/// requirement statuses of the link graph.
+type ConditionEvalResult<'a> = (
     Vec<ConditionStatus>,
     Vec<ReviewCondition>,
     Vec<ReviewCondition>,
+    RequirementMap<'a>,
 );
 
 /// What a result log says about one target.
@@ -657,23 +662,33 @@ fn worst(conditions: &[ConditionStatus]) -> Status {
 }
 
 /// One entry per requirement in `order`, each with its conditions sorted by
-/// ID and the worst of their statuses.
+/// ID and its status from `rolled`, the link graph's rollup. A requirement the
+/// graph has no vertex for takes the worst status of its conditions.
 fn requirement_statuses(
     order: &[&str],
     evaluated: &[ConditionStatus],
+    rolled: &RequirementMap<'_>,
 ) -> Vec<RequirementStatus> {
+    let mut by_parent = ByParent::new();
+    for condition in evaluated {
+        for parent in &condition.parents {
+            by_parent
+                .entry(parent.as_str())
+                .or_default()
+                .push(condition.clone());
+        }
+    }
     order
         .iter()
         .map(|&id| {
-            let mut children: Vec<ConditionStatus> = evaluated
-                .iter()
-                .filter(|c| c.parents.iter().any(|p| p == id))
-                .cloned()
-                .collect();
+            let mut children = by_parent.remove(id).unwrap_or_default();
             children.sort_by(|a, b| a.id.cmp(&b.id));
             RequirementStatus {
                 id: id.to_string(),
-                status: worst(&children),
+                status: rolled
+                    .get(id)
+                    .copied()
+                    .unwrap_or_else(|| worst(&children)),
                 conditions: children,
             }
         })
@@ -782,22 +797,25 @@ fn initial_status_counts() -> StatusCounts {
     .collect()
 }
 
-fn evaluate_all_conditions(
-    reqs: &[Row],
+fn evaluate_all_conditions<'a>(
+    reqs: &'a [Row],
     cond_idx: &Indexed<'_>,
     ctx: &mut StatusCtx<'_>,
     counts: &mut StatusCounts,
-) -> ConditionEvalResult {
+) -> ConditionEvalResult<'a> {
     let (conditions, condition_order) = cond_idx;
     let mut evaluated = Vec::new();
     let mut review = Vec::new();
     let mut deferred = Vec::new();
 
     let (graph, resolution) = LinkGraph::resolve(reqs);
-    let (graph, cycles) = graph.condense();
+    let (graph, cycles) = graph.cut_cycles();
     ctx.defects.extend(resolution);
     ctx.defects.extend(cycles);
-    let mut derived = graph.derive(|row| condition_status(row, ctx));
+    let LinkStatuses {
+        conditions: mut derived,
+        requirements,
+    } = graph.derive(|row| condition_status(row, ctx));
 
     for row in condition_order.iter().filter_map(|id| conditions.get(id)) {
         let Some(status) = derived.remove(row.id.as_str()) else {
@@ -825,7 +843,7 @@ fn evaluate_all_conditions(
         evaluated.push(status);
     }
 
-    (evaluated, review, deferred)
+    (evaluated, review, deferred, requirements)
 }
 
 /// The link view of the rows `reqs` as text in `format`, with the condition
@@ -837,7 +855,7 @@ pub fn render_graph(
     format: GraphFormat,
 ) -> String {
     let (graph, _) = LinkGraph::resolve(reqs);
-    let (graph, _) = graph.condense();
+    let (graph, _) = graph.cut_cycles();
     let statuses = report
         .requirements
         .iter()
@@ -878,10 +896,10 @@ pub fn derive_with_base(
         warnings: &mut warnings,
     };
 
-    let (evaluated, review, deferred) =
+    let (evaluated, review, deferred, rolled) =
         evaluate_all_conditions(reqs, &cond_idx, &mut ctx, &mut counts);
 
-    let requirements = requirement_statuses(&order, &evaluated);
+    let requirements = requirement_statuses(&order, &evaluated, &rolled);
     check_staleness(reqs, config, base, &mut warnings);
 
     defects.sort_by(|a, b| {

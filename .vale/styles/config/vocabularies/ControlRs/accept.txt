@@ -920,7 +920,6 @@ Seeed
 Hurwitz
 Hadamard
 Tarjan
-Tarjan's
 Graphviz
 subgraph
 rollup
@@ -935,5 +934,7 @@ petgraph
 Mokhov
 Peyton
 Hardekopf
+Feder
+Motwani
 classDef
 px
