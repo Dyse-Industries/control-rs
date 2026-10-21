@@ -24,8 +24,9 @@ use crate::error::{GateError, GateResult};
 /// record as passed. `[method.<m>]` names the artifact of method `<m>`.
 pub const AUTOMATED_METHODS: [&str; 4] = ["libtest", "kani", "pytest", "gtest"];
 
-/// The method whose conditions are planned but not yet verifiable.
-pub const DEFERRED_METHOD: &str = "deferred";
+/// The method whose conditions verify against the status of an ADR, design document
+/// or roadmap item.
+pub const DOC_STATUS_METHOD: &str = "doc-status";
 
 /// The method whose conditions name documents, requirements or conditions as
 /// targets.
@@ -33,19 +34,15 @@ pub const LINK_METHOD: &str = "link";
 
 /// The verification methods a condition may name.
 ///
-/// The automated methods, the sign-off methods `analysis`, `inspection` and
-/// `review`, `deferred` and `link`. The set is fixed; a configuration does
-/// not list it.
-pub const METHODS: [&str; 9] = [
+/// The automated methods, `link` and `doc-status`. The set is fixed; a configuration
+/// does not list it.
+pub const METHODS: [&str; 6] = [
     "libtest",
     "kani",
     "pytest",
     "gtest",
-    "analysis",
-    "inspection",
-    "review",
-    DEFERRED_METHOD,
     LINK_METHOD,
+    DOC_STATUS_METHOD,
 ];
 
 /// A file and line.
@@ -624,6 +621,11 @@ fn check_condition_methods(
             Some(_) if methods > 1 => {
                 Some(format!("condition {id} names more than one method"))
             }
+            Some(m)
+                if m == DOC_STATUS_METHOD && condition.targets.is_empty() =>
+            {
+                Some(format!("condition {id} names no target"))
+            }
             Some(_) => None,
         };
         if let Some(message) = message {
@@ -931,7 +933,7 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
 
 | Condition | Requirement | Method    | Target                | Criterion |
 |:----------|:------------|:----------|:----------------------|:----------|
-| VC-1.1    | FR-1        | `review`  | —                     | Reviewed  |
+| VC-1.1    | FR-1        | `doc-status` | `ADR-0001`           | Reviewed  |
 | VC-2.1    | FR-2        | `link`    | `widget#FR-1`         | Holds     |
 ";
 
@@ -1291,8 +1293,20 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
                 "condition widget#VC-1.1 names unknown method `demo`",
             ),
             (
-                "| VC-1.1 | FR-1 | `libtest` | `review` |",
+                "| VC-1.1 | FR-1 | `review` | — | Other |",
+                "condition widget#VC-1.1 names unknown method `review`",
+            ),
+            (
+                "| VC-1.1 | FR-1 | `deferred` | — | Other |",
+                "condition widget#VC-1.1 names unknown method `deferred`",
+            ),
+            (
+                "| VC-1.1 | FR-1 | `libtest` | `doc-status` |",
                 "condition widget#VC-1.1 names more than one method",
+            ),
+            (
+                "| VC-1.1 | FR-1 | `doc-status` | — | Other |",
+                "condition widget#VC-1.1 names no target",
             ),
         ];
         for (line, message) in cases {
@@ -1315,7 +1329,7 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
             "\n[method.libtest]\nresult_artifact = \"t.log\"\n"
         ));
         assert!(!accepted(
-            "\n[method.review]\nresult_artifact = \"t.log\"\n"
+            "\n[method.doc-status]\nresult_artifact = \"t.log\"\n"
         ));
     }
 
@@ -1582,10 +1596,7 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
 
     /// Rules with a `link` method.
     fn link_rules() -> Rules {
-        let keys = KEYS.replace("\"review\"]", "\"review\", \"link\"]");
-        let text = format!("{keys}retired = []");
-        let config: TraceConfig = toml::from_str(&text).unwrap();
-        config.rules(Path::new("trace.toml")).unwrap()
+        rules()
     }
 
     #[test]

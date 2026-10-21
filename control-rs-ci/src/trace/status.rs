@@ -19,8 +19,9 @@ use serde::{Deserialize, Serialize};
 
 use super::link::{GraphFormat, LinkGraph, LinkStatuses, RequirementMap};
 use super::reqs::{
-    AUTOMATED_METHODS, DEFERRED_METHOD as DEFERRED, LINK_METHOD, TraceConfig,
+    AUTOMATED_METHODS, DOC_STATUS_METHOD, LINK_METHOD, TraceConfig,
 };
+use super::select::select;
 use super::{
     CONDITION, DEFINITION, Defect, Defects, Row, SCHEMA, read_text, write_file,
 };
@@ -58,6 +59,21 @@ type ConditionEvalResult<'a> = (
     Vec<ReviewCondition>,
     RequirementMap<'a>,
 );
+
+/// Map from document or decision identifier to its status string.
+type DocStatusMap = HashMap<String, Option<String>>;
+
+/// Internal classification of a document target during status derivation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TargetDocStatus {
+    Passed,
+    Deferred,
+    Fail,
+    Unrun,
+}
+
+/// Evaluation outcome and document status classification for a single target.
+type SingleDocEval = (ItemOutcome, TargetDocStatus);
 
 /// What a result log says about one target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -178,11 +194,31 @@ pub struct ResultLog {
     binaries: BTreeSet<String>,
 }
 
+/// Compiled regexes for scanning design document headers.
+struct DesignDocPatterns {
+    status: Option<regex::Regex>,
+    doc_id: Option<regex::Regex>,
+}
+
+/// Indexed status information of decisions, design documents and roadmap items.
+#[derive(Debug, Default, Clone)]
+pub struct DocIndex {
+    /// Decision ID -> `Option<status>`
+    pub decisions: DocStatusMap,
+    /// Decision accepted statuses
+    pub accepted_decisions: Vec<String>,
+    /// Design doc identifier (slug, filename, path) -> `Option<Design Status>`
+    pub design_docs: DocStatusMap,
+    /// Roadmap PR identifiers (for example "PR1", "PR10")
+    pub roadmap_items: BTreeSet<String>,
+}
+
 /// Context for condition status derivation across a trace run.
 struct StatusCtx<'a> {
     config: &'a TraceConfig,
     result_cache: &'a MethodResultMap,
     interpreter_results: Option<&'a ResultLog>,
+    doc_index: &'a DocIndex,
     defects: &'a mut Defects,
     warnings: &'a mut Vec<InterpreterWarning>,
 }
@@ -263,6 +299,155 @@ impl TraceReport {
         let mut json = serde_json::to_vec_pretty(self)?;
         json.push(b'\n');
         write_file(path, &json)
+    }
+}
+
+impl DocIndex {
+    /// Builds a [`DocIndex`] by scanning relative to `base`.
+    #[must_use]
+    pub fn build(base: &Path, config: &TraceConfig) -> Self {
+        let mut index = Self::default();
+        index.load_decisions(base, config);
+        index.load_design_docs(base, config);
+        index.load_roadmap(base);
+        index
+    }
+
+    fn load_decisions(&mut self, base: &Path, config: &TraceConfig) {
+        let (files, accepted) = config.decisions.as_ref().map_or_else(
+            || {
+                let files = select(
+                    base,
+                    &[String::from("documentation/adr")],
+                    &[".md".to_string()],
+                )
+                .unwrap_or_default();
+                (files, vec!["Accepted".to_string()])
+            },
+            |dec| {
+                let files = select(base, &dec.files, &[".md".to_string()])
+                    .unwrap_or_default();
+                (files, dec.accepted.clone())
+            },
+        );
+        self.accepted_decisions = accepted;
+        let status_re =
+            regex::Regex::new(r"ADR%20Status-(?P<status>[A-Za-z]+)-").ok();
+        let id_re = regex::Regex::new(r"ADR-[0-9]{4}").ok();
+        for file in files {
+            let Ok(text) = read_text(&base.join(&file)) else {
+                continue;
+            };
+            let Some(id) = id_re
+                .as_ref()
+                .and_then(|re| re.find(&text))
+                .map(|m| m.as_str().to_string())
+            else {
+                continue;
+            };
+            let status = status_re.as_ref().and_then(|re| {
+                re.captures(&text)
+                    .and_then(|c| c.name("status"))
+                    .map(|m| m.as_str().to_string())
+            });
+            self.decisions.insert(id, status);
+        }
+    }
+
+    fn index_design_doc(
+        &mut self,
+        base: &Path,
+        file: &str,
+        patterns: &DesignDocPatterns,
+    ) {
+        let Ok(text) = read_text(&base.join(file)) else {
+            return;
+        };
+        let status = patterns.status.as_ref().and_then(|re| {
+            re.captures(&text)
+                .and_then(|c| c.name("status"))
+                .map(|m| m.as_str().to_string())
+        });
+        let path = Path::new(file);
+        let filename = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or_default()
+            .to_string();
+        let slug = stem
+            .strip_suffix("-design")
+            .or_else(|| stem.strip_suffix("-design-doc"))
+            .unwrap_or(&stem)
+            .to_string();
+
+        self.design_docs.insert(file.to_string(), status.clone());
+        self.design_docs.insert(filename, status.clone());
+        self.design_docs.insert(stem, status.clone());
+        self.design_docs.insert(slug, status.clone());
+
+        for line in text.lines().take(20) {
+            if let Some(caps) =
+                patterns.doc_id.as_ref().and_then(|re| re.captures(line))
+                && let Some(doc) =
+                    caps.name("doc").map(|m| m.as_str().to_string())
+            {
+                self.design_docs.insert(doc, status.clone());
+            }
+        }
+    }
+
+    fn load_design_docs(&mut self, base: &Path, config: &TraceConfig) {
+        let mut roots =
+            vec![String::from("documentation"), String::from("docs")];
+        for f in &config.files {
+            if !roots.contains(f) {
+                roots.push(f.clone());
+            }
+        }
+        let suffixes = [String::from(".md")];
+        let mut found = Vec::new();
+        for root in &roots {
+            if base.join(root).exists()
+                && let Ok(files) =
+                    select(base, std::slice::from_ref(root), &suffixes)
+            {
+                found.extend(files);
+            }
+        }
+        let patterns = DesignDocPatterns {
+            status: regex::Regex::new(
+                r"(?:Design|Doc)%20Status-(?P<status>[A-Za-z_]+)-",
+            )
+            .ok(),
+            doc_id: regex::Regex::new(r"^#\s+.*\((?P<doc>[a-z0-9-]+)\)").ok(),
+        };
+        for file in found {
+            self.index_design_doc(base, &file, &patterns);
+        }
+    }
+
+    fn load_roadmap(&mut self, base: &Path) {
+        let paths =
+            ["documentation/roadmap.md", "docs/roadmap.md", "roadmap.md"];
+        let pr_re =
+            regex::Regex::new(r"\*\*(?P<pr>PR[0-9]+(?:-[0-9]+)?)\*\*").ok();
+        for p in paths {
+            let full = base.join(p);
+            if let Ok(text) = read_text(&full)
+                && let Some(re) = &pr_re
+            {
+                for caps in re.captures_iter(&text) {
+                    if let Some(pr) = caps.name("pr") {
+                        self.roadmap_items.insert(pr.as_str().to_string());
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -612,6 +797,207 @@ fn evaluate_target(
     }
 }
 
+fn eval_adr_target(
+    target: &str,
+    row: &Row,
+    ctx: &mut StatusCtx<'_>,
+) -> SingleDocEval {
+    let outcome = |passed: bool, msg: Option<String>| ItemOutcome {
+        target: target.to_string(),
+        passed,
+        message: msg,
+    };
+    if let Some(opt_status) = ctx.doc_index.decisions.get(target) {
+        match opt_status.as_deref() {
+            Some(s)
+                if ctx
+                    .doc_index
+                    .accepted_decisions
+                    .iter()
+                    .any(|acc| acc == s) =>
+            {
+                (outcome(true, None), TargetDocStatus::Passed)
+            }
+            Some(s) => {
+                let msg = format!(
+                    "decision {target} has status {s}; expected Accepted"
+                );
+                ctx.defects.push(Defect::at(
+                    row,
+                    format!(
+                        "condition {} target '{target}' has status {s}; expected Accepted",
+                        row.id
+                    ),
+                ));
+                (outcome(false, Some(msg)), TargetDocStatus::Fail)
+            }
+            None => {
+                let msg = format!("decision {target} has no status");
+                ctx.defects.push(Defect::at(
+                    row,
+                    format!(
+                        "condition {} target '{target}' has no status",
+                        row.id
+                    ),
+                ));
+                (outcome(false, Some(msg)), TargetDocStatus::Fail)
+            }
+        }
+    } else {
+        let msg = format!("decision {target} has no decision record");
+        ctx.defects.push(Defect::at(
+            row,
+            format!(
+                "condition {} target '{target}' not found: no decision record",
+                row.id
+            ),
+        ));
+        (outcome(false, Some(msg)), TargetDocStatus::Unrun)
+    }
+}
+
+fn eval_roadmap_target(
+    target: &str,
+    doc_index: &DocIndex,
+) -> Option<SingleDocEval> {
+    let roadmap_target = target.strip_prefix("roadmap#").unwrap_or(target);
+    if (roadmap_target.starts_with("PR") || target.starts_with("roadmap#"))
+        && doc_index.roadmap_items.contains(roadmap_target)
+    {
+        Some((
+            ItemOutcome {
+                target: target.to_string(),
+                passed: true,
+                message: None,
+            },
+            TargetDocStatus::Deferred,
+        ))
+    } else {
+        None
+    }
+}
+
+fn eval_design_doc_target(
+    target: &str,
+    row: &Row,
+    ctx: &mut StatusCtx<'_>,
+) -> Option<SingleDocEval> {
+    let normalized = target.strip_suffix(".md").unwrap_or(target);
+    let opt_status = ctx
+        .doc_index
+        .design_docs
+        .get(target)
+        .or_else(|| ctx.doc_index.design_docs.get(normalized))?;
+
+    if opt_status.is_some() {
+        Some((
+            ItemOutcome {
+                target: target.to_string(),
+                passed: true,
+                message: None,
+            },
+            TargetDocStatus::Deferred,
+        ))
+    } else {
+        let msg =
+            format!("design document {target} has no Design Status badge");
+        ctx.defects.push(Defect::at(
+            row,
+            format!(
+                "condition {} target '{target}' has no Design Status badge",
+                row.id
+            ),
+        ));
+        Some((
+            ItemOutcome {
+                target: target.to_string(),
+                passed: false,
+                message: Some(msg),
+            },
+            TargetDocStatus::Fail,
+        ))
+    }
+}
+
+fn eval_single_doc_target(
+    target: &str,
+    row: &Row,
+    ctx: &mut StatusCtx<'_>,
+) -> SingleDocEval {
+    if target.starts_with("ADR-") {
+        eval_adr_target(target, row, ctx)
+    } else if let Some(res) = eval_roadmap_target(target, ctx.doc_index) {
+        res
+    } else if let Some(res) = eval_design_doc_target(target, row, ctx) {
+        res
+    } else {
+        let msg = format!(
+            "target '{target}' is no known ADR, design document or roadmap item"
+        );
+        ctx.defects.push(Defect::at(
+            row,
+            format!(
+                "condition {} target '{target}' not found: no known ADR, design document or roadmap item",
+                row.id
+            ),
+        ));
+        (
+            ItemOutcome {
+                target: target.to_string(),
+                passed: false,
+                message: Some(msg),
+            },
+            TargetDocStatus::Unrun,
+        )
+    }
+}
+
+fn evaluate_doc_status(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
+    let method = DOC_STATUS_METHOD.to_string();
+    let status_fn = |status: Status, items: Vec<ItemOutcome>| ConditionStatus {
+        id: row.id.clone(),
+        parents: row.parents.clone(),
+        method: method.clone(),
+        status,
+        items,
+    };
+    if row.targets.is_empty() {
+        ctx.defects.push(Defect::at(
+            row,
+            format!("condition {} names no target", row.id),
+        ));
+        return status_fn(Status::Uncovered, Vec::new());
+    }
+
+    let mut outcomes = Vec::new();
+    let mut any_deferred = false;
+    let mut has_unrun = false;
+    let mut has_fail = false;
+
+    for target in &row.targets {
+        let (outcome, target_status) = eval_single_doc_target(target, row, ctx);
+        match target_status {
+            TargetDocStatus::Passed => {}
+            TargetDocStatus::Deferred => any_deferred = true,
+            TargetDocStatus::Fail => has_fail = true,
+            TargetDocStatus::Unrun => has_unrun = true,
+        }
+        outcomes.push(outcome);
+    }
+
+    let derived = if has_unrun {
+        Status::Unrun
+    } else if has_fail {
+        Status::Fail
+    } else if any_deferred {
+        Status::Deferred
+    } else {
+        Status::Pass
+    };
+
+    status_fn(derived, outcomes)
+}
+
 fn condition_status(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
     let method = row.method.clone().unwrap_or_default();
     let status = |status: Status, items: Vec<ItemOutcome>| ConditionStatus {
@@ -621,11 +1007,15 @@ fn condition_status(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
         status,
         items,
     };
-    if method == DEFERRED {
-        return status(Status::Deferred, Vec::new());
+    if method == DOC_STATUS_METHOD {
+        return evaluate_doc_status(row, ctx);
     }
     if !AUTOMATED_METHODS.contains(&method.as_str()) {
-        return status(Status::Review, Vec::new());
+        ctx.defects.push(Defect::at(
+            row,
+            format!("condition {} names unknown method `{method}`", row.id),
+        ));
+        return status(Status::Fail, Vec::new());
     }
     if row.targets.is_empty() {
         ctx.defects
@@ -888,10 +1278,12 @@ pub fn derive_with_base(
     let interpreter_results = load_interpreter_log(config, base);
     let mut counts = initial_status_counts();
 
+    let doc_index = DocIndex::build(base, config);
     let mut ctx = StatusCtx {
         config,
         result_cache: &result_cache,
         interpreter_results: interpreter_results.as_ref(),
+        doc_index: &doc_index,
         defects: &mut defects,
         warnings: &mut warnings,
     };
@@ -1193,15 +1585,22 @@ mod tests {
     }
 
     #[test]
-    fn review_condition_takes_review_status() {
-        let derived = derive(
-            &[definition(), condition("review", &[])],
+    fn doc_status_condition_with_accepted_adr_passes() {
+        let dir = test_dir("doc_status_adr");
+        let adr_dir = dir.join("documentation/adr");
+        fs::create_dir_all(&adr_dir).unwrap();
+        fs::write(
+            adr_dir.join("0001.md"),
+            "# ADR-0001: Size\n\n![Status](https://img.shields.io/badge/ADR%20Status-Accepted-brightgreen)\n",
+        ).unwrap();
+        let derived = derive_with_base(
+            &[definition(), condition("doc-status", &["ADR-0001"])],
             &default_config(),
+            &dir,
         );
-        assert_eq!(status(&derived), Some(Status::Review));
+        assert_eq!(status(&derived), Some(Status::Pass));
         assert!(derived.0.passes());
         assert!(derived.1.is_empty(), "{:?}", derived.1);
-        assert_eq!(derived.0.review.len(), 1);
     }
 
     #[test]
@@ -1389,9 +1788,17 @@ mod tests {
 
     #[test]
     fn deferred_condition_is_listed_and_does_not_fail() {
-        let derived = derive(
-            &[definition(), condition("deferred", &[])],
+        let dir = test_dir("deferred_doc");
+        let doc_dir = dir.join("documentation");
+        fs::create_dir_all(&doc_dir).unwrap();
+        fs::write(
+            doc_dir.join("storage-design.md"),
+            "# Storage (storage)\n\n![Design Status Badge](https://img.shields.io/badge/Design%20Status-Draft-blue)\n",
+        ).unwrap();
+        let derived = derive_with_base(
+            &[definition(), condition("doc-status", &["storage-design"])],
             &default_config(),
+            &dir,
         );
         assert_eq!(status(&derived), Some(Status::Deferred));
         assert!(derived.0.passes());
@@ -1399,7 +1806,6 @@ mod tests {
         assert_eq!(derived.0.deferred.len(), 1);
         assert!(derived.0.review.is_empty(), "{:?}", derived.0.review);
         assert_eq!(derived.0.counts.get(&Status::Deferred), Some(&1));
-        assert_eq!(derived.0.counts.get(&Status::Review), Some(&0));
     }
 
     /// Sets the modification time of `path` to `secs` after the epoch.
@@ -1497,19 +1903,30 @@ mod tests {
     }
 
     #[test]
-    fn link_conditions_are_not_listed_for_review() {
-        let dir = test_dir("link_review");
+    fn link_conditions_are_not_listed_for_deferred() {
+        let dir = test_dir("link_deferred");
+        let doc_dir = dir.join("documentation");
+        fs::create_dir_all(&doc_dir).unwrap();
+        fs::write(
+            doc_dir.join("widget-design.md"),
+            "# Widget (widget)\n\n![Design Status Badge](https://img.shields.io/badge/Design%20Status-Draft-blue)\n",
+        ).unwrap();
         let rows = [
             definition_of("w#FR-1"),
-            condition_of("w#VC-1.1", "w#FR-1", "review", &[]),
+            condition_of(
+                "w#VC-1.1",
+                "w#FR-1",
+                "doc-status",
+                &["widget-design"],
+            ),
             definition_of("l#FR-1"),
             condition_of("l#VC-1.1", "l#FR-1", "link", &["w#FR-1"]),
         ];
         let derived = derive_with_base(&rows, &default_config(), &dir);
         let linked = condition_status_of(&derived, "l#VC-1.1").unwrap();
-        assert_eq!(linked.status, Status::Review);
+        assert_eq!(linked.status, Status::Deferred);
         let listed: Vec<&str> =
-            derived.0.review.iter().map(|c| c.id.as_str()).collect();
+            derived.0.deferred.iter().map(|c| c.id.as_str()).collect();
         assert_eq!(listed, ["w#VC-1.1"]);
     }
 }
