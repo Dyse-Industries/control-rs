@@ -27,6 +27,30 @@ post = [
     "trace",
     "regression",
     "mutants",
+    "mutants-storage-0",
+    "mutants-storage-1",
+    "mutants-storage-2",
+    "mutants-storage-3",
+    "mutants-storage-4",
+    "mutants-subprograms-0",
+    "mutants-subprograms-1",
+    "mutants-subprograms-2",
+    "mutants-subprograms-3",
+    "mutants-math-0",
+    "mutants-math-1",
+    "mutants-matrix",
+    "mutants-tensor",
+    "mutants-tf-ss",
+    "mutants-polynomial-0",
+    "mutants-polynomial-1",
+    "mutants-rest",
+    "mutants-ci-0",
+    "mutants-ci-1",
+    "mutants-compare",
+    "mutants-ets-host",
+    "mutants-ets",
+    "mutants-macros",
+    "mutants-tui",
 ]
 
 # Concurrent groups:
@@ -264,24 +288,273 @@ args = ["--package", "control-rs-ci", "--bin", "trace-check", "--", "--config", 
 timeout_secs = 900
 description = "Derives condition verification status from reqs and the libtest, kani, pytest and gtest result logs"
 
-# Mutation testing over the whole workspace. The caller selects the scenario
-# with passthrough arguments (`cargo gate --only mutants -- <args>`):
-#   CI             --shard <k>/<n> --sharding round-robin
-#                                          one slice of the whole mutant list
-#   local          any `cargo mutants` option, or none for everything
-#                  (`--in-diff <diff file>` limits a run to the changed code;
-#                  it does not bound what a change affects, so CI does not use it)
-# Exclusions live in .cargo/mutants.toml. CI runs this gate in one job event
-# at a time, so the report does not require its result.
+# Monolithic mutation testing for local runs (`cargo gate mutants`). CI runs the
+# mutants-* chunks instead, so the report does not require this result.
 [mutants]
 mode = "fail"
 default = false
 required = false
 command = "cargo mutants"
-args = ["--workspace", "--json", "--output", "target/ci-artifacts/mutants.out"]
-diff-trigger = ["src/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-tui/", ".cargo/mutants.toml"]
+args = ["--json", "--output", "target/ci-artifacts/mutants.out"]
+timeout_secs = 43200
+description = "Mutates ASTs to verify test fault-injection rigor using cargo-mutants"
+
+# Mutation chunks. Each gate is one CI job: fail-closed, and outside an
+# unfiltered `cargo ci` (`default = false`). The file filters partition the
+# root package: every mutant belongs to exactly one gate, and mutants-rest
+# claims any file outside the listed directories. Chunk sizes target at most
+# about 400 mutants per gate (measured 2026-09-24, 4937 mutants in total).
+# Chunks of one file share identical filter arguments, so `--shard k/n`
+# partitions the same mutant list.
+
+[mutants-storage-0]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "-f", "src/math/storage.rs", "--shard", "0/5", "--output", "target/ci-artifacts/mutants-storage-0.out"]
+diff-trigger = ["src/math/storage.rs", ".cargo/mutants.toml"]
 timeout_secs = 19800
-description = "Mutation testing with cargo-mutants over the workspace"
+description = "Mutation testing: src/math/storage.rs, chunk 1 of 5"
+
+[mutants-storage-1]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "-f", "src/math/storage.rs", "--shard", "1/5", "--output", "target/ci-artifacts/mutants-storage-1.out"]
+diff-trigger = ["src/math/storage.rs", ".cargo/mutants.toml"]
+timeout_secs = 19800
+description = "Mutation testing: src/math/storage.rs, chunk 2 of 5"
+
+[mutants-storage-2]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "-f", "src/math/storage.rs", "--shard", "2/5", "--output", "target/ci-artifacts/mutants-storage-2.out"]
+diff-trigger = ["src/math/storage.rs", ".cargo/mutants.toml"]
+timeout_secs = 19800
+description = "Mutation testing: src/math/storage.rs, chunk 3 of 5"
+
+[mutants-storage-3]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "-f", "src/math/storage.rs", "--shard", "3/5", "--output", "target/ci-artifacts/mutants-storage-3.out"]
+diff-trigger = ["src/math/storage.rs", ".cargo/mutants.toml"]
+timeout_secs = 19800
+description = "Mutation testing: src/math/storage.rs, chunk 4 of 5"
+
+[mutants-storage-4]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "-f", "src/math/storage.rs", "--shard", "4/5", "--output", "target/ci-artifacts/mutants-storage-4.out"]
+diff-trigger = ["src/math/storage.rs", ".cargo/mutants.toml"]
+timeout_secs = 19800
+description = "Mutation testing: src/math/storage.rs, chunk 5 of 5"
+
+[mutants-subprograms-0]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "-f", "src/math/subprograms.rs", "--shard", "0/4", "--output", "target/ci-artifacts/mutants-subprograms-0.out"]
+diff-trigger = ["src/math/subprograms.rs", ".cargo/mutants.toml"]
+timeout_secs = 19800
+description = "Mutation testing: src/math/subprograms.rs, chunk 1 of 4"
+
+[mutants-subprograms-1]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "-f", "src/math/subprograms.rs", "--shard", "1/4", "--output", "target/ci-artifacts/mutants-subprograms-1.out"]
+diff-trigger = ["src/math/subprograms.rs", ".cargo/mutants.toml"]
+timeout_secs = 19800
+description = "Mutation testing: src/math/subprograms.rs, chunk 2 of 4"
+
+[mutants-subprograms-2]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "-f", "src/math/subprograms.rs", "--shard", "2/4", "--output", "target/ci-artifacts/mutants-subprograms-2.out"]
+diff-trigger = ["src/math/subprograms.rs", ".cargo/mutants.toml"]
+timeout_secs = 19800
+description = "Mutation testing: src/math/subprograms.rs, chunk 3 of 4"
+
+[mutants-subprograms-3]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "-f", "src/math/subprograms.rs", "--shard", "3/4", "--output", "target/ci-artifacts/mutants-subprograms-3.out"]
+diff-trigger = ["src/math/subprograms.rs", ".cargo/mutants.toml"]
+timeout_secs = 19800
+description = "Mutation testing: src/math/subprograms.rs, chunk 4 of 4"
+
+[mutants-math-0]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "-f", "src/math/**", "-e", "src/math/storage.rs", "-e", "src/math/subprograms.rs", "--shard", "0/2", "--output", "target/ci-artifacts/mutants-math-0.out"]
+diff-trigger = ["src/math/", ".cargo/mutants.toml"]
+timeout_secs = 19800
+description = "Mutation testing: src/math except storage.rs and subprograms.rs, chunk 1 of 2"
+
+[mutants-math-1]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "-f", "src/math/**", "-e", "src/math/storage.rs", "-e", "src/math/subprograms.rs", "--shard", "1/2", "--output", "target/ci-artifacts/mutants-math-1.out"]
+diff-trigger = ["src/math/", ".cargo/mutants.toml"]
+timeout_secs = 19800
+description = "Mutation testing: src/math except storage.rs and subprograms.rs, chunk 2 of 2"
+
+[mutants-matrix]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "-f", "src/matrix/**", "--output", "target/ci-artifacts/mutants-matrix.out"]
+diff-trigger = ["src/matrix/", ".cargo/mutants.toml"]
+timeout_secs = 19800
+description = "Mutation testing: src/matrix"
+
+[mutants-tensor]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "-f", "src/tensor/**", "--output", "target/ci-artifacts/mutants-tensor.out"]
+diff-trigger = ["src/tensor/", ".cargo/mutants.toml"]
+timeout_secs = 19800
+description = "Mutation testing: src/tensor"
+
+[mutants-tf-ss]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "-f", "src/transfer_function/**", "-f", "src/state_space/**", "--output", "target/ci-artifacts/mutants-tf-ss.out"]
+diff-trigger = ["src/transfer_function/", "src/state_space/", ".cargo/mutants.toml"]
+timeout_secs = 19800
+description = "Mutation testing: src/transfer_function and src/state_space"
+
+[mutants-polynomial-0]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "-f", "src/polynomial/**", "--shard", "0/2", "--output", "target/ci-artifacts/mutants-polynomial-0.out"]
+diff-trigger = ["src/polynomial/", ".cargo/mutants.toml"]
+timeout_secs = 19800
+description = "Mutation testing: src/polynomial, chunk 1 of 2"
+
+[mutants-polynomial-1]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "-f", "src/polynomial/**", "--shard", "1/2", "--output", "target/ci-artifacts/mutants-polynomial-1.out"]
+diff-trigger = ["src/polynomial/", ".cargo/mutants.toml"]
+timeout_secs = 19800
+description = "Mutation testing: src/polynomial, chunk 2 of 2"
+
+[mutants-rest]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "-e", "src/math/**", "-e", "src/matrix/**", "-e", "src/tensor/**", "-e", "src/transfer_function/**", "-e", "src/state_space/**", "-e", "src/polynomial/**", "--output", "target/ci-artifacts/mutants-rest.out"]
+diff-trigger = ["src/", ".cargo/mutants.toml"]
+timeout_secs = 19800
+description = "Mutation testing: every file not claimed by another mutants-* gate"
+
+
+# Workspace tool crates (measured 2026-09-24: ci 489, compare 202, ets-host 288,
+# ets 180, macros 42, tui 113 mutants). `--no-config` drops .cargo/mutants.toml,
+# whose `--lib` test filter and `src/**/tests/**` exclusion apply only to the
+# root package: these crates keep their tests in `tests/` and inline modules.
+# control-rs-verification is an oracle emitter validated by cross-compare and
+# is not mutated.
+
+# control-rs-ci exclusions (`--exclude-re`) are behaviorally equivalent mutants:
+# `>=` where equality of two instants or byte counts cannot occur or changes
+# nothing, `match guard ... with true` where the guarded arm is a no-op for
+# other inputs, and the `cfg(not(unix))` `terminate_tree`, which is not
+# compiled on the CI platform (`terminate_child_only`). The same list is on
+# both shards so `--shard` partitions one mutant list.
+
+[mutants-ci-0]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "replace terminate_child_only with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--shard", "0/2", "--output", "target/ci-artifacts/mutants-ci-0.out"]
+diff-trigger = ["control-rs-ci/"]
+timeout_secs = 19800
+description = "Mutation testing: control-rs-ci, chunk 1 of 2"
+
+[mutants-ci-1]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "replace terminate_child_only with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--shard", "1/2", "--output", "target/ci-artifacts/mutants-ci-1.out"]
+diff-trigger = ["control-rs-ci/"]
+timeout_secs = 19800
+description = "Mutation testing: control-rs-ci, chunk 2 of 2"
+
+# control-rs-compare exclusions are behaviorally equivalent mutants: `>=` where
+# the comparison only decides whether to re-assign an equal maximum or whether
+# two instants are equal, and `<=` at the chunk threshold, where one chunk gives
+# the same result as the sequential path.
+
+# control-rs-compare exclusions are behaviorally equivalent mutants: `>=` on a
+# running maximum re-assigns an equal value, the serial and parallel array
+# comparisons return the same result on either side of the chunk threshold, and
+# the run-time limit only moves by one clock tick.
+[mutants-compare]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "--no-config", "--package", "control-rs-compare", "--exclude-re", "replace > with >= in compute_chunk_stats", "--exclude-re", "replace < with <= in compare_float_arrays_parallel", "--exclude-re", "replace > with >= in execute_variant", "--output", "target/ci-artifacts/mutants-compare.out"]
+diff-trigger = ["control-rs-compare/"]
+timeout_secs = 19800
+description = "Mutation testing: control-rs-compare"
+
+# control-rs-ets-host exclusions are behaviorally equivalent mutants: `>=` on two
+# instants (a wall-clock comparison that cannot tie) and `RunEnd::drained`, which
+# already returns `Default::default()`.
+
+[mutants-ets-host]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "--no-config", "--package", "control-rs-ets-host", "--exclude-re", "replace RunEnd::drained -> Self with Default::default\\(\\)", "--exclude-re", "replace > with >= in HeadlessRun<'t>::(drive|retry_discovery)", "--output", "target/ci-artifacts/mutants-ets-host.out"]
+diff-trigger = ["control-rs-ets-host/"]
+timeout_secs = 19800
+description = "Mutation testing: control-rs-ets-host"
+
+# control-rs-ets exclusions: `|` versus `^` joins two bytes with disjoint bits;
+# a frame buffer shorter than six bytes cannot hold a payload either way; the
+# Cortex-M and RISC-V profilers only compile for their own targets; and the
+# default FPU flags are zero on the host that runs the mutation test.
+
+[mutants-ets]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "--no-config", "--package", "control-rs-ets", "--exclude-re", "replace \\| with \\^ in FrameReader::handle_byte", "--exclude-re", "replace < with (==|<=) in FrameEncoder::serialize_then_frame", "--exclude-re", "<impl CPUProfiler for (CortexMProfiler|RiscvProfiler)>", "--exclude-re", "replace CPUProfiler::fpu_flags -> u8 with 0", "--output", "target/ci-artifacts/mutants-ets.out"]
+diff-trigger = ["control-rs-ets/"]
+timeout_secs = 19800
+description = "Mutation testing: control-rs-ets"
+
+[mutants-macros]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "--no-config", "--package", "control-rs-macros", "--output", "target/ci-artifacts/mutants-macros.out"]
+diff-trigger = ["control-rs-macros/"]
+timeout_secs = 19800
+description = "Mutation testing: control-rs-macros"
+
+[mutants-tui]
+mode = "fail"
+default = false
+command = "cargo mutants"
+args = ["--json", "--no-config", "--package", "control-rs-tui", "--output", "target/ci-artifacts/mutants-tui.out"]
+diff-trigger = ["control-rs-tui/"]
+timeout_secs = 19800
+description = "Mutation testing: control-rs-tui"
 
 [regression]
 mode = "fail"
