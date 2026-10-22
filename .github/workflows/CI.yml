@@ -520,8 +520,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: cargo binstall -y cargo-mutants
 
+      - name: Install strace
+        run: sudo apt-get update -q && sudo apt-get install -y --no-install-recommends strace
+
       - name: Run Mutants Gate
-        run: cargo ci --verbose --diff --only ${{ matrix.gate }}
+        run: .github/scripts/track-gate.sh ${{ matrix.gate }} --verbose --diff
 
       - name: Upload Mutants Artifacts
         if: always()
