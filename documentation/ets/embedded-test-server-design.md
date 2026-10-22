@@ -407,18 +407,11 @@ statics, which are data.
 
 ### 10. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                            |
-|:---------|:----------------|:----------------|:-----------------------------------------------------------------------------------------------------------------------|
-| 1.0      | May 23, 2026    | @MitchellDScott | Initial specification for the embedded hardware-in-the-loop test harness.                                              |
-| 1.1      | July 18, 2026   | @MitchellDScott | Architecture & framing: integrated linker-section test discovery, watchdog multiplexing, and binary telemetry framing. |
-| 1.2      | August 6, 2026  | @MitchellDScott | Wire protocol: adopted sync-byte/CRC-16 framing with `postcard`-encoded payloads and zero-copy dispatch.               |
-| 1.3      | August 25, 2026 | @MitchellDScott | Module renaming: retitled Embedded Test Server (ETS) and renamed crate `control-rs-hil` → `control-rs-ets`.            |
-| 1.4      | September 9, 2026 | @MitchellDScott | Packaging split: restructured host architecture into `control-rs-ets-host`, `control-rs-tui`, and private `control-rs-xtask`. |
-| 1.5      | September 9, 2026 | @MitchellDScott | Project split: relocated to `documentation/ets/`; host frontends retargeted to `control-rs-ci` and `control-rs-tui`; research pair `embedded-test-server.json` + `.bib` restored. |
-| 1.6      | September 9, 2026 | @MitchellDScott | Citation pass: converted numeric cites to author-year, replaced the mid-document reference list with a full IEEE list at the end, grounded the watchdog, linker and stack-measurement claims, restructured §6 per `vv-standards.md`. |
-| 1.7      | September 9, 2026 | @MitchellDScott | Hardening pass: demoted status badge to Draft, rebuilt §6.4 traceability table (mapped FR-4/FR-5, eliminated phantom NFR-3), deferred watchdog to §6.7, removed TUI console from §9 Step 5, and standardized References. |
-| 1.8      | September 15, 2026 | @MitchellDScott | Locator-only §6.4; FR-5 is cooperative reset; NFR-1 and C-2 listed in 6.7 until measured. |
-| 1.9      | September 24, 2026 | @MitchellDScott | §6.3 cites `ci-design.md` C-6 (indicative emulation timing), renumbered from C-2 in its revision 1.26. No watchdog in diagrams or §4.4/§4.5 (reset is `SCB::sys_reset` after `TryReset`); §5.3 `linkme` decided (`no_std`, not adopted); Step 5 shipped as the `ets` gate; tooling crates `publish = false`; static-analyzer and `budget:` references removed. |
+| Revision | Date               | Author          | Description                                                                                               |
+|:---------|:-------------------|:----------------|:----------------------------------------------------------------------------------------------------------|
+| 1.0      | August 29, 2026    | @MitchellDScott | Embedded Test Server: linker-section discovery, CRC-16 `postcard` framing and the `control-rs-ets` crate. |
+| 2.0      | September 18, 2026 | @MitchellDScott | Host split into `control-rs-ets-host` and `control-rs-tui`; citation pass; cooperative reset (FR-5).      |
+| 3.0      | September 25, 2026 | @MitchellDScott | Reset is `SCB::sys_reset` after `TryReset`; `linkme` decided; Step 5 shipped as the `ets` gate.           |
 
 ---
 
