@@ -1,6 +1,6 @@
 # Fixed-Point Scalar Type (fixed-num)
 
-![Date Badge](https://img.shields.io/badge/Date-October_13,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_21,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 ![Design Status Badge](https://img.shields.io/badge/Design%20Status-Stale-lightgrey)
 
@@ -560,11 +560,11 @@ of method-level traits. This design inherits that decision.
 | VC-14.1 | FR-8 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_mac_chain_single_rounding` | A five-term `mac` chain equals the exact integer sum rounded once with ties to even, and a partial sum outside the representation range does not clamp the result |
 | VC-14.2 | FR-8 | `kani` | `control_rs::math::fixed_num::proofs::prove_fixed_mac_total` | For all `Fixed<i16, S>` operands at scales 0, 8 and 14, a two-term `mac` chain returns the once-rounded, saturated exact result without panic |
 | VC-8.1 | NFR-1 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_memory_footprint_and_alignment` | Size and alignment of `Fixed<Repr, SHIFT>` equal those of `Repr` with zero storage overhead for `SHIFT` |
-| VC-9.1 | NFR-2 | `review` | — | Arithmetic compiles to direct integer instructions without runtime scale bookkeeping or trampolines |
-| VC-10.1 | C-1 | `review` | — | Implementation uses `core` only without heap allocation or `std` dependencies |
-| VC-11.1 | C-2 | `review` | — | Module introduces zero new external crate dependencies |
+| VC-9.1 | NFR-2 | `doc-status` | `fixed-num-design` | Arithmetic compiles to direct integer instructions without runtime scale bookkeeping or trampolines |
+| VC-10.1 | C-1 | `doc-status` | `fixed-num-design` | Implementation uses `core` only without heap allocation or `std` dependencies |
+| VC-11.1 | C-2 | `doc-status` | `fixed-num-design` | Module introduces zero new external crate dependencies |
 | VC-12.1 | C-3 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_constants_and_constructors` | Scale parameter is bounded within `0..=BITS` via compile-time dimension assertions |
-| VC-13.1 | C-4 | `review` | — | Implementation performs no bare un-checked or un-saturating primitive arithmetic operations |
+| VC-13.1 | C-4 | `doc-status` | `fixed-num-design` | Implementation performs no bare un-checked or un-saturating primitive arithmetic operations |
 
 1. **Constant and Range Unit Tests** (`fixed_num_tests.rs`): `DELTA`
    equals `from_bits(1)` and its `f64` value equals `2^(−SHIFT)`; `MIN` and
@@ -729,6 +729,7 @@ sequence an integer core would otherwise run (ARM, 1996).
 | 1.5      | September 24, 2026 | @MitchellDScott | §8 rescale note: `i8` computation scales are `SHIFT <= 6` (`Scalar`) and `<= 5` (`SaturatingInteger`). |
 | 1.6 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. |
 | 1.7 | October 16, 2026 | Claude Sonnet 5.5 | Adds FR-8 (multiply accumulate), the `FixedRepr::Acc` table in §4.3, VC-14.1 and VC-14.2, §8 item 9 and Phase 6, which the `MulAcc` implementation and `num-traits-design.md` FR-7 already cite. |
+| 1.8 | October 21, 2026 | Antigravity | Migrated review condition rows to doc-status method. |
 
 ---
 
