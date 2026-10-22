@@ -250,9 +250,9 @@ representations.
 Same-scale values operate directly on underlying integers, saturating at
 representation bounds (FR-3):
 
-- $\text{Add}(a, b) = \text{saturating\_add}(a_{\text{raw}}, b_{\text{raw}})$
-- $\text{Sub}(a, b) = \text{saturating\_sub}(a_{\text{raw}}, b_{\text{raw}})$
-- $\text{Neg}(a) = \text{saturating\_neg}(a_{\text{raw}})$
+- $\text{Add} (a, b) = \text{saturating\_add} (a_{\text{raw}}, b_{\text{raw}})$
+- $\text{Sub} (a, b) = \text{saturating\_sub} (a_{\text{raw}}, b_{\text{raw}})$
+- $\text{Neg} (a) = \text{saturating\_neg} (a_{\text{raw}})$
 
 Because operands share identical scaling factors, no rescaling is required (ARM,
 1996).
@@ -283,13 +283,13 @@ precision before convergent rounding and saturating narrowing._
 Dividing two values of scale $2^{-\text{SHIFT}}$ cancels the scale, so the
 numerator is pre-shifted to keep $\text{SHIFT}$ fractional bits:
 
-$$q_{\text{raw}} = \operatorname{round}\left(\frac{a_{\text{raw}} \cdot 2^{\text{SHIFT}}}{b_{\text{raw}}}\right)$$
+$$q_{\text{raw}} = \operatorname{round}\left (\frac{a_{\text{raw}} \cdot 2^{\text{SHIFT}}}{b_{\text{raw}}}\right)$$
 
 The magnitudes are formed in `u128`: $|a_{\text{raw}}| < 2^{64}$ and
 $\text{SHIFT} \le 64$, so the shifted numerator is exact at every width.
 The quotient rounds ties to even, the same convergent rounding as `Mul`
-(§4.3, next subsection), then takes the sign $\operatorname{sgn}(a) \cdot
-\operatorname{sgn}(b)$ and narrows. `SaturatingDiv` (and `Div`) clamp an
+(§4.3, next subsection), then takes the sign $\operatorname{sgn} (a) \cdot
+\operatorname{sgn} (b)$ and narrows. `SaturatingDiv` (and `Div`) clamp an
 out-of-range quotient to the bound of its sign, including
 $\text{MIN} / (-1)$, and map $b = 0$ to `MAX`, `MIN` or zero by the sign of
 $a$ (FR-3). `TryDiv` returns `DivisionByZero` for $b = 0$ and `Overflow`
@@ -314,16 +314,16 @@ to ensure zero branching penalty in release MCU builds.
 `FixedRepr::Acc` is the integer that holds a sum of exact products at scale
 $2\,\text{SHIFT}$:
 
-| `Repr` | `Acc` | Guard bits above one full-scale product |
-|:-------|:------|:----------------------------------------|
-| `i8` | `i32` | 17 |
-| `u8` | `u32` | 16 |
-| `i16` | `i64` | 33 |
-| `u16` | `u64` | 32 |
-| `i32` | `i64` | 1 |
-| `u32` | `u64` | 0 |
-| `i64` | `i128` | 1 |
-| `u64` | `u128` | 0 |
+| `Repr` | `Acc`  | Guard bits above one full-scale product |
+|:-------|:-------|:----------------------------------------|
+| `i8`   | `i32`  | 17                                      |
+| `u8`   | `u32`  | 16                                      |
+| `i16`  | `i64`  | 33                                      |
+| `u16`  | `u64`  | 32                                      |
+| `i32`  | `i64`  | 1                                       |
+| `u32`  | `u64`  | 0                                       |
+| `i64`  | `i128` | 1                                       |
+| `u64`  | `u128` | 0                                       |
 
 `to_acc` lifts a value to scale $2\,\text{SHIFT}$ by multiplying by
 $2^{\text{SHIFT}}$. `mac` adds `a * b`, formed exactly in `Acc`, with a
@@ -351,7 +351,7 @@ Associated constants and trait bounds are gated as follows:
 
 ##### Gate Realization
 
-The scale bounds above ($A \le B \iff \max(A, B) = B$) are expressed using the
+The scale bounds above ($A \le B \iff \max (A, B) = B$) are expressed using the
 existing compile-time dimension maximum trait `DimMax` (
 `math::num_types::DimMax`),
 bridging `Const<SHIFT>` with representation limits without runtime overhead or
@@ -382,8 +382,8 @@ A scale outside the valid range does not satisfy the
 and has no marker impl, so the numeric trait has no impl, rejecting the type at
 the call site
 at compile time. This matches the dimension system where `Const<N>: Dim` holds
-for supported dimensions
-(`num-types-design.md` §6.1 item 6, "Out-of-bounds immediate failure").
+for supported dimensions (`num-types-design.md` §6.1 item 6, "Out-of-bounds
+immediate failure").
 
 Inherent constants (`ZERO`, `DELTA`, `MIN`, `MAX`) and constructors are gated by
 base scale
@@ -393,7 +393,8 @@ guaranteeing compile-time validity while removing panicking assertions.
 
 ##### DSP Interchange Formats vs. Computational Scalars
 
-Canonical DSP interchange formats (for example, Q15 with $n=16, \text{SHIFT}=15$) span
+Canonical DSP interchange formats (for example, Q15
+with $n=16, \text{SHIFT}=15$) span
 $[-1.0, 1.0)$, where the maximum representable value
 is $(2^{15}-1)/2^{15} \approx 0.999969$.
 Because $1.0$ cannot be represented, Q15 implements `Zero` and `Conjugate`, but
@@ -465,8 +466,8 @@ pub type UQ63 = Fixed<u64, 63>;
 1. **Depend on the reference `fixed` crate**:
     - _Considered_: Taking `FixedI8`…`FixedI128`/`FixedU8`…`FixedU128`
       directly (Spiteri, 2026a) instead of defining a type.
-    - _Rejected_: It pulls `az` and `typenum` as normal dependencies
-      (Spiteri, 2026a), against C-2, and `typenum` duplicates the type-level
+    - _Rejected_: It pulls `az` and `typenum` as normal dependencies (Spiteri,
+      2026a), against C-2, and `typenum` duplicates the type-level
       integer tower `num-types-design.md` already specifies. Its
       representation is also a family of twelve concrete types rather than
       one type generic over `Repr`, which does not compose with the crate's
@@ -481,7 +482,8 @@ pub type UQ63 = Fixed<u64, 63>;
     - _Rejected_: That bound encoding predates stable integer const generics
       and carries the scale itself as a type parameter, which appears on
       every signature that mentions the format. Const generics combined with
-      the `DimMax` trait (for example, `Const<SHIFT>: DimMax<Limit, Output = Limit>`)
+      the `DimMax` trait (for example,
+      `Const<SHIFT>: DimMax<Limit, Output = Limit>`)
       bridge the const generic directly to type-level dimension checking without
       requiring an extra type parameter or new traits.
 3. **Same-Width Multiply**:
@@ -546,25 +548,25 @@ of method-level traits. This design inherits that decision.
 
 #### 6.1 Verification
 
-| Condition | Requirement | Method | Target | Criterion |
-|:----------|:------------|:-------|:-------|:----------|
-| VC-1.1 | FR-1 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_gate_separation_boundary_pin` | `SHIFT` scale parameter is validated at compile time via `DimMax` dimension bounds |
-| VC-2.1 | FR-2 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_constants_and_constructors` | Fixed values equal $\text{raw} \cdot 2^{-\text{SHIFT}}$ with quantization step $\Delta = 2^{-\text{SHIFT}}$ |
-| VC-3.1 | FR-3 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_addition_subtraction_negation_saturating`, `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_division_saturating_and_fallible`, `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_unsigned_division_saturating` | Saturating arithmetic operators (`Add`, `Sub`, `Neg`, `Mul`, `Div`) saturate to min/max without panicking or wrapping |
-| VC-3.2 | FR-3 | `kani` | `control_rs::math::fixed_num::proofs::prove_fixed_saturating_div` | Bounded model checking proves `Fixed::saturating_div` produces bounded representation without panic |
-| VC-3.3 | FR-3 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_fallible_try_operations` | Fallible operations (`TryAdd`, `TrySub`, `TryMul`, `TryDiv`, `TryNeg`) return explicit error variants on overflow |
-| VC-4.1 | FR-4 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_widening_multiplication`, `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_signed_product_tie_rounds_to_even` | Widening multiplication forms exact double-width product with round-ties-to-even rescale |
-| VC-5.1 | FR-5 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_scale_rescaling`, `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_fixed_display_assign_and_rescale` | Scale conversion (`rescale`) shifts left or right and saturates destination overflow |
-| VC-6.1 | FR-6 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_numeric_trait_hierarchy`, `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_unsigned_fixed_point` | Type implements `Zero`, `One`, `Conjugate`, `Scalar`, and `SaturatingInteger` and excludes `Float`/`Trig` |
-| VC-7.1 | FR-7 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_gate_separation_boundary_pin` | Numeric traits are gated and withheld when unity or two cannot be represented in the fractional span |
-| VC-14.1 | FR-8 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_mac_chain_single_rounding` | A five-term `mac` chain equals the exact integer sum rounded once with ties to even, and a partial sum outside the representation range does not clamp the result |
-| VC-14.2 | FR-8 | `kani` | `control_rs::math::fixed_num::proofs::prove_fixed_mac_total` | For all `Fixed<i16, S>` operands at scales 0, 8 and 14, a two-term `mac` chain returns the once-rounded, saturated exact result without panic |
-| VC-8.1 | NFR-1 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_memory_footprint_and_alignment` | Size and alignment of `Fixed<Repr, SHIFT>` equal those of `Repr` with zero storage overhead for `SHIFT` |
-| VC-9.1 | NFR-2 | `review` | — | Arithmetic compiles to direct integer instructions without runtime scale bookkeeping or trampolines |
-| VC-10.1 | C-1 | `review` | — | Implementation uses `core` only without heap allocation or `std` dependencies |
-| VC-11.1 | C-2 | `review` | — | Module introduces zero new external crate dependencies |
-| VC-12.1 | C-3 | `libtest` | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_constants_and_constructors` | Scale parameter is bounded within `0..=BITS` via compile-time dimension assertions |
-| VC-13.1 | C-4 | `review` | — | Implementation performs no bare un-checked or un-saturating primitive arithmetic operations |
+| Condition | Requirement | Method       | Target                                                                                                                                                                                                                                                                                                                        | Criterion                                                                                                                                                         |
+|:----------|:------------|:-------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| VC-1.1    | FR-1        | `libtest`    | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_gate_separation_boundary_pin`                                                                                                                                                                                                                           | `SHIFT` scale parameter is validated at compile time via `DimMax` dimension bounds                                                                                |
+| VC-2.1    | FR-2        | `libtest`    | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_constants_and_constructors`                                                                                                                                                                                                                             | Fixed values equal $\text{raw} \cdot 2^{-\text{SHIFT}}$ with quantization step $\Delta = 2^{-\text{SHIFT}}$                                                       |
+| VC-3.1    | FR-3        | `libtest`    | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_addition_subtraction_negation_saturating`, `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_division_saturating_and_fallible`, `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_unsigned_division_saturating` | Saturating arithmetic operators (`Add`, `Sub`, `Neg`, `Mul`, `Div`) saturate to min/max without panicking or wrapping                                             |
+| VC-3.2    | FR-3        | `kani`       | `control_rs::math::fixed_num::proofs::prove_fixed_saturating_div`                                                                                                                                                                                                                                                             | Bounded model checking proves `Fixed::saturating_div` produces bounded representation without panic                                                               |
+| VC-3.3    | FR-3        | `libtest`    | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_fallible_try_operations`                                                                                                                                                                                                                                | Fallible operations (`TryAdd`, `TrySub`, `TryMul`, `TryDiv`, `TryNeg`) return explicit error variants on overflow                                                 |
+| VC-4.1    | FR-4        | `libtest`    | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_widening_multiplication`, `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_signed_product_tie_rounds_to_even`                                                                                                                      | Widening multiplication forms exact double-width product with round-ties-to-even rescale                                                                          |
+| VC-5.1    | FR-5        | `libtest`    | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_scale_rescaling`, `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_fixed_display_assign_and_rescale`                                                                                                                               | Scale conversion (`rescale`) shifts left or right and saturates destination overflow                                                                              |
+| VC-6.1    | FR-6        | `libtest`    | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_numeric_trait_hierarchy`, `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_unsigned_fixed_point`                                                                                                                                   | Type implements `Zero`, `One`, `Conjugate`, `Scalar`, and `SaturatingInteger` and excludes `Float`/`Trig`                                                         |
+| VC-7.1    | FR-7        | `libtest`    | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_gate_separation_boundary_pin`                                                                                                                                                                                                                           | Numeric traits are gated and withheld when unity or two cannot be represented in the fractional span                                                              |
+| VC-14.1   | FR-8        | `libtest`    | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_mac_chain_single_rounding`                                                                                                                                                                                                                              | A five-term `mac` chain equals the exact integer sum rounded once with ties to even, and a partial sum outside the representation range does not clamp the result |
+| VC-14.2   | FR-8        | `kani`       | `control_rs::math::fixed_num::proofs::prove_fixed_mac_total`                                                                                                                                                                                                                                                                  | For all `Fixed<i16, S>` operands at scales 0, 8 and 14, a two-term `mac` chain returns the once-rounded, saturated exact result without panic                     |
+| VC-8.1    | NFR-1       | `libtest`    | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_memory_footprint_and_alignment`                                                                                                                                                                                                                         | Size and alignment of `Fixed<Repr, SHIFT>` equal those of `Repr` with zero storage overhead for `SHIFT`                                                           |
+| VC-9.1    | NFR-2       | `doc-status` | `fixed-num-design`                                                                                                                                                                                                                                                                                                            | Arithmetic compiles to direct integer instructions without runtime scale bookkeeping or trampolines                                                               |
+| VC-10.1   | C-1         | `doc-status` | `fixed-num-design`                                                                                                                                                                                                                                                                                                            | Implementation uses `core` only without heap allocation or `std` dependencies                                                                                     |
+| VC-11.1   | C-2         | `doc-status` | `fixed-num-design`                                                                                                                                                                                                                                                                                                            | Module introduces zero new external crate dependencies                                                                                                            |
+| VC-12.1   | C-3         | `libtest`    | `control_rs::math::tests::fixed_num_tests::fixed_num_test_suite::test_constants_and_constructors`                                                                                                                                                                                                                             | Scale parameter is bounded within `0..=BITS` via compile-time dimension assertions                                                                                |
+| VC-13.1   | C-4         | `doc-status` | `fixed-num-design`                                                                                                                                                                                                                                                                                                            | Implementation performs no bare un-checked or un-saturating primitive arithmetic operations                                                                       |
 
 1. **Constant and Range Unit Tests** (`fixed_num_tests.rs`): `DELTA`
    equals `from_bits(1)` and its `f64` value equals `2^(−SHIFT)`; `MIN` and
@@ -616,12 +618,11 @@ A signed product tie (raw product $-3$, `SHIFT = 1`) rounds to $-2$
 (ties-to-even), not $-1$.
 
 6. **Footprint**: `size_of::<Fixed<Repr, SHIFT>>() ==
-   size_of::<Repr>()` and equal alignment, for every `FixedRepr` width
-   (NFR-1).
+   size_of::<Repr>()` and equal alignment, for every `FixedRepr` width (NFR-1).
 7. **ETS**: the §4.3 product and rescale paths are wrapped in
    `#[ets_suite]` and executed on an FPU-less target. Fixed-point exists
-   because integer cores simulate floating-point operations in software
-   (ARM, 1996); host execution cannot confirm that the emitted sequence is
+   because integer cores simulate floating-point operations in software (ARM,
+   1996); host execution cannot confirm that the emitted sequence is
    integer-only. The suite covers runtime arithmetic only, not the §6.1.5
    type-level gates.
 
@@ -709,7 +710,7 @@ sequence an integer core would otherwise run (ARM, 1996).
 | Phase                                    | Description                                                                                                                                                                                               | Estimated Effort |
 |:-----------------------------------------|:----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:----------------:|
 | **Phase 1: Representation & Core Type**  | Implement `Fixed<Repr, SHIFT>`, `Quantized` alias, sealed `FixedRepr` trait for `i8`–`i64` / `u8`–`u64`, `from_bits`/`to_bits`/`from_num`/`to_num`, and Q-format aliases.                                 |      Medium      |
-| **Phase 2: Total Saturating Arithmetic** | Implement saturating `Add`, `Sub`, `Neg`, widening `Mul` and pre-shifted `Div` with convergent rounding, `rescale`, and fallible `Try*` ops.                                                               |      Medium      |
+| **Phase 2: Total Saturating Arithmetic** | Implement saturating `Add`, `Sub`, `Neg`, widening `Mul` and pre-shifted `Div` with convergent rounding, `rescale`, and fallible `Try*` ops.                                                              |      Medium      |
 | **Phase 3: Numeric Trait Integration**   | Implement sealed `OneRepresentable` / `TwoRepresentable` markers and their macro enumeration (§4.4), then `Zero`, `One`, `Conjugate`, `Scalar`, `Signed`, and `SaturatingInteger` gated on those markers. |      Medium      |
 | **Phase 4: Verification Suite**          | Implement unit tests, proptest oracles, `compile_fail` doctests, memory footprint assertions, and `#[ets_suite]` verification.                                                                            |      Medium      |
 | **Phase 5: Downstream Model Validation** | Validate generic instantiation in matrix and tensor kernels across control toolboxes.                                                                                                                     |      Small       |
@@ -726,6 +727,7 @@ sequence an integer core would otherwise run (ARM, 1996).
 | 3.0      | September 24, 2026 | @MitchellDScott                    | Division (FR-3).                                                                            |
 | 4.0      | September 25, 2026 | @MitchellDScott                    | `i8` computation scale limits.                                                              |
 | 5.0      | October 19, 2026   | @MitchellDScott, Claude Sonnet 5.5 | Multiply accumulate (FR-8).                                                                 |
+| 6.0      | October 21, 2026   | Antigravity                        | Migrated review condition rows to doc-status method.                                        |
 
 ---
 

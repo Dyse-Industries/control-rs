@@ -28,11 +28,11 @@ interpreter_artifact = "target/ci-artifacts/miri.log"
 [method.kani]
 result_artifact = "target/ci-artifacts/kani.log"
 
-[method.pytest]
-result_artifact = "target/ci-artifacts/pytest.log"
+[method.compare]
+result_artifact = "target/ci-artifacts/cross-val-report.json"
 
-[method.gtest]
-result_artifact = "target/ci-artifacts/gtest.log"
+[method.junit]
+result_artifact = "target/ci-artifacts/junit.xml"
 
 [decisions]
 files = ["documentation/adr"]
