@@ -256,8 +256,9 @@ Status is the maximum of `Status`, in the existing order `Pass`, `Review`,
   is computed once.
 
 `trace-check` passes the existing result-log evaluation as `leaf` and takes
-each requirement's status from `requirements`, so the report and the graph
-share one rollup. It does not
+each requirement's status from the worse of `requirements` and its evaluated
+child conditions, so an omitted condition leaf cannot be understated by the
+graph rollup. It does not
 list a link condition among the `Review` conditions awaiting sign-off, since
 the document it names lists its own.
 
@@ -482,7 +483,7 @@ numeric policy.
 | 3.1      | October 20, 2026 | @MitchellDScott, Claude Opus 5.5   | Mermaid vertex colours are written as one style line per vertex instead of classDef classes.                                                                                             |
 | 4.0 | October 21, 2026 | @MitchellDScott, Claude Opus 5.5 | cut_cycles replaces condense; derive returns condition and requirement statuses; linear evaluation order; usize indices and compressed sparse row adjacency |
 | 4.1 | October 21, 2026 | @MitchellDScott, Claude Opus 5.5 | Cites Feder and Motwani as the primary source of the document vertex |
-| 4.2 | October 21, 2026 | Antigravity | Migrate condition rows to link and doc-status methods. |
+| 4.2 | October 21, 2026 | Antigravity | Migrate condition rows to link and doc-status methods; clamp requirement rollup to evaluated child leaves. |
 
 ---
 
