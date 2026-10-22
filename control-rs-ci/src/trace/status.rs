@@ -20,6 +20,7 @@ use serde::{Deserialize, Serialize};
 use super::link::{GraphFormat, LinkGraph, LinkStatuses, RequirementMap};
 use super::reqs::{
     AUTOMATED_METHODS, DOC_STATUS_METHOD, LINK_METHOD, TraceConfig,
+    decision_status_index, default_decision_config,
 };
 use super::select::select;
 use super::{
@@ -305,44 +306,19 @@ impl DocIndex {
     }
 
     fn load_decisions(&mut self, base: &Path, config: &TraceConfig) {
-        let (files, accepted) = config.decisions.as_ref().map_or_else(
-            || {
-                let files = select(
-                    base,
-                    &[String::from("documentation/adr")],
-                    &[".md".to_string()],
-                )
-                .unwrap_or_default();
-                (files, vec!["Accepted".to_string()])
-            },
-            |dec| {
-                let files = select(base, &dec.files, &[".md".to_string()])
-                    .unwrap_or_default();
-                (files, dec.accepted.clone())
-            },
-        );
-        self.accepted_decisions = accepted;
-        let status_re =
-            regex::Regex::new(r"ADR%20Status-(?P<status>[A-Za-z]+)-").ok();
-        let id_re = regex::Regex::new(r"ADR-[0-9]{4}").ok();
-        for file in files {
-            let Ok(text) = read_text(&base.join(&file)) else {
-                continue;
-            };
-            let Some(id) = id_re
-                .as_ref()
-                .and_then(|re| re.find(&text))
-                .map(|m| m.as_str().to_string())
-            else {
-                continue;
-            };
-            let status = status_re.as_ref().and_then(|re| {
-                re.captures(&text)
-                    .and_then(|c| c.name("status"))
-                    .map(|m| m.as_str().to_string())
-            });
-            self.decisions.insert(id, status);
-        }
+        // Matching Rule 6: only a `decisions.definition` line makes a record.
+        // Index/README/notes that merely cite ADR IDs must not overwrite status.
+        let decision_cfg = config
+            .decisions
+            .clone()
+            .unwrap_or_else(default_decision_config);
+        let files = select(base, &decision_cfg.files, &[".md".to_string()])
+            .unwrap_or_default();
+        self.accepted_decisions.clone_from(&decision_cfg.accepted);
+        let Ok(rules) = decision_cfg.rules(Path::new("trace.toml")) else {
+            return;
+        };
+        self.decisions = decision_status_index(base, &files, &rules);
     }
 
     fn index_design_doc(
@@ -1691,6 +1667,64 @@ mod tests {
         assert_eq!(status(&derived), Some(Status::Pass));
         assert!(derived.0.passes());
         assert!(derived.1.is_empty(), "{:?}", derived.1);
+    }
+
+    #[test]
+    fn adr_index_ignores_non_record_files_and_keeps_first_status() {
+        let dir = test_dir("adr_index_clobber");
+        let adr_dir = dir.join("documentation/adr");
+        fs::create_dir_all(&adr_dir).unwrap();
+        fs::write(
+            adr_dir.join("0001-adopt.md"),
+            "# ADR-0001: Adopt\n\n![Status](https://img.shields.io/badge/ADR%20Status-Accepted-brightgreen)\n",
+        )
+        .unwrap();
+        fs::write(
+            adr_dir.join("0003-proposed.md"),
+            "# ADR-0003: Proposed work\n\n![Status](https://img.shields.io/badge/ADR%20Status-Proposed-orange)\n",
+        )
+        .unwrap();
+        // Sorts after the records. Without Matching Rule 6, the first `ADR-NNNN`
+        // plus first status badge in this file last-write the index: ADR-0003
+        // becomes Accepted (false Pass) and a badge-less ADR-0001 cite becomes
+        // None (false Fail). Neither file is a decision record.
+        fs::write(
+            adr_dir.join("README.md"),
+            "# Index\n\nSee ADR-0003 and the template badge \
+             ![Status](https://img.shields.io/badge/ADR%20Status-Accepted-brightgreen).\n\n\
+             | [ADR-0001](0001-adopt.md) |\n",
+        )
+        .unwrap();
+        fs::write(
+            adr_dir.join("zzz-notes.md"),
+            "# Notes\n\nADR-0001 is listed here with no status badge.\n",
+        )
+        .unwrap();
+
+        let accepted = derive_with_base(
+            &[definition(), condition("doc-status", &["ADR-0001"])],
+            &default_config(),
+            &dir,
+        );
+        assert_eq!(status(&accepted), Some(Status::Pass));
+        assert!(accepted.0.passes());
+        assert!(accepted.1.is_empty(), "{:?}", accepted.1);
+
+        let proposed = derive_with_base(
+            &[definition(), condition("doc-status", &["ADR-0003"])],
+            &default_config(),
+            &dir,
+        );
+        assert_eq!(status(&proposed), Some(Status::Fail));
+        assert!(!proposed.0.passes());
+        assert!(
+            proposed
+                .1
+                .iter()
+                .any(|d| d.message.contains("has status Proposed")),
+            "{:?}",
+            proposed.1
+        );
     }
 
     #[test]

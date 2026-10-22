@@ -8,7 +8,7 @@
 //! names a method is its method and the code spans of the fourth cell are its
 //! targets.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
 
 use regex::Regex;
@@ -77,6 +77,9 @@ pub type Source<'a> = (&'a str, &'a str);
 
 /// Decision records by ID.
 type Decisions<'a> = BTreeMap<&'a str, &'a Decision>;
+
+/// Map from decision identifier to its captured status string.
+pub(crate) type DecisionStatusMap = HashMap<String, Option<String>>;
 
 /// A `trace.toml`: the patterns that find requirements in Markdown.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -792,6 +795,41 @@ fn captured_status(lines: &[Line<'_>], pattern: &Regex) -> Option<String> {
             .and_then(|caps| caps.name("status"))
             .map(|m| m.as_str().to_string())
     })
+}
+
+/// Default ADR decision patterns when `trace.toml` has no `[decisions]` table.
+#[must_use]
+pub(crate) fn default_decision_config() -> DecisionConfig {
+    DecisionConfig {
+        files: vec![String::from("documentation/adr")],
+        id: String::from(r"ADR-[0-9]{4}"),
+        definition: String::from(r"^#\s+ADR-[0-9]{4}:"),
+        status: String::from(r"ADR%20Status-(?P<status>[A-Za-z]+)-"),
+        accepted: vec![String::from("Accepted")],
+    }
+}
+
+/// Status by decision ID from selected files that match Matching Rule 6.
+///
+/// Only a line matching `rules.definition` creates a record. The first record
+/// for an ID is kept; later files do not overwrite it.
+#[must_use]
+pub(crate) fn decision_status_index(
+    base: &Path,
+    files: &[String],
+    rules: &DecisionRules,
+) -> DecisionStatusMap {
+    let mut index = DecisionStatusMap::new();
+    for file in files {
+        let Ok(text) = read_text(&base.join(file)) else {
+            continue;
+        };
+        let Some(decision) = decision_record(file, &text, rules) else {
+            continue;
+        };
+        index.entry(decision.id).or_insert(decision.status);
+    }
+    index
 }
 
 /// The decision record in `source`: the first decision ID on the first line
