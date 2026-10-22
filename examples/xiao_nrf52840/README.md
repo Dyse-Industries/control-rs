@@ -22,8 +22,8 @@ communicates over native Full-Speed USB 2.0 (12 Mbps) CDC-ACM serial.
 | Core Clock | 64 MHz |
 | Transport | Native Full-Speed USB 2.0 (12 Mbps) CDC-ACM via `nrf52840_hal::usbd::Usbd` |
 | Profiler | `CortexMProfiler` with 1 ms `SysTick` interrupt counter and 64 MHz clock |
-| Bootloader | Adafruit UF2 Bootloader compatible memory map (`ORIGIN = 0x1000`) |
-| Memory Mapping | Linker script `memory.x` (1020 KB Flash, 255 KB SRAM) |
+| Bootloader | Adafruit UF2 + SoftDevice S140 7.3.0 (`FLASH ORIGIN = 0x27000`) |
+| Memory Mapping | Linker script `memory.x` (app flash from `0x27000`, SRAM from `0x20006000`) |
 
 ---
 
