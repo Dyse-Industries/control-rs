@@ -400,15 +400,10 @@ products that exceed C-1 stay unnamed `UInt` trees (C-2).
 
 ### 10. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                                           |
-|:---------|:----------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 7, 2026  | @MitchellDScott | Initial specification for type-level dimensions (`num_types.rs`).                                                                     |
-| 1.1      | August 22, 2026 | @MitchellDScott | Binary encoding: transitioned from Peano integers to binary `UTerm`/`UInt` and macro-generated `Const<N>` aliases (`0..=1024`).        |
-| 1.2      | August 23, 2026 | @MitchellDScott | Type-level bitwise operations: added `DimBitAnd`, `DimBitOr`, and `DimBitXor` traits and verification tests.                          |
-| 1.3      | August 25, 2026 | @MitchellDScott | Operator forwarding: simplified dimension operator implementations across `DimAdd`, `DimSub`, and `DimMul`.                         |
-| 1.4      | August 25, 2026 | @MitchellDScott | Full test suite verification and compile-time dimension validation.                                                                   |
-| 1.5      | September 24, 2026 | @MitchellDScott | Dimensions are per axis; no shipped consumer bounds on a flattened product. §6.2 drops the rejected `as_array`; §8 item 2 restated. |
-| 1.6 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. |
+| Revision | Date               | Author          | Description                                                                                      |
+|:---------|:-------------------|:----------------|:-------------------------------------------------------------------------------------------------|
+| 1.0      | August 29, 2026    | @MitchellDScott | Type-level dimensions: binary `UTerm`/`UInt` encoding, `Const<N>` aliases and bitwise operators. |
+| 2.0      | September 25, 2026 | @MitchellDScott | Dimensions are per axis.                                                                         |
 
 ---
 
