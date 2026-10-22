@@ -308,7 +308,7 @@ to `Potrf` is a `matrix-design.md` change, not this module's.
   dimension, monic-ness, structural invariants, and singularity are
   correctness properties with no valid approximate answer.
 - **Fold `ConversionError` into `ArithmeticError` (considered, deferred;
-  carried over from rev 1.1)**: `ArithmeticError`'s existing variants
+  carried over from rev 1.0)**: `ArithmeticError`'s existing variants
   (`DivisionByZero`, `Overflow`, `DomainViolation`, `PrecisionLoss`,
   `Underflow`, `Saturation`) are scalar-arithmetic-shaped, not
   layout/value/storage-shaped.
@@ -433,15 +433,10 @@ add no allocation.
 
 ### 10. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                                                                |
-|:---------|:----------------|:----------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 2, 2026  | @MitchellDScott | Initial draft defining crate-wide error handling architecture and `ConversionError`.                                                                       |
-| 1.1      | August 18, 2026 | @MitchellDScott | Error type consolidation: introduced `LinAlgError` and `StorageError`, replacing ad-hoc errors across subprograms and storage modules.                     |
-| 1.2      | August 18, 2026 | @MitchellDScott | Infallible conversions: transitioned cross-model conversions (`Matrix`, `Polynomial`, `Tensor`) to compile-time layout bounds, eliminating runtime checks. |
-| 1.3      | August 22, 2026 | @MitchellDScott | Enum canonicalization: standardized error variants across `StorageError` and `LinAlgError` without cross-enum duplication.                                 |
-| 1.4      | August 26, 2026 | @MitchellDScott | Storage retarget: updated error semantics for inherent structured projection constructors (`from_dense_diagonal`, `from_dense_triangle`).                  |
-| 1.5      | September 24, 2026 | @MitchellDScott | NFR-1 convention is plain derive plus hand-written `Display` / `core::error::Error` (no `thiserror`). §4.2, §6 and §8 describe the shipped conversion surface: companion `Polynomial → Matrix` only, no tensor `From`. Cholesky mapping resolved (`NotPositiveDefinite`). `StorageError` producers and Step 6 recorded as shipped. |
-| 1.6 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. |
+| Revision | Date               | Author          | Description                                                                         |
+|:---------|:-------------------|:----------------|:------------------------------------------------------------------------------------|
+| 1.0      | August 29, 2026    | @MitchellDScott | Crate-wide error architecture: `ConversionError`, `LinAlgError` and `StorageError`. |
+| 2.0      | September 25, 2026 | @MitchellDScott | Hand-written `Display` and `Error` (NFR-1); shipped conversion surface.             |
 
 ---
 
