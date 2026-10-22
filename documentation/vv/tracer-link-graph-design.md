@@ -2,7 +2,7 @@
 
 ![Date Badge](https://img.shields.io/badge/Date-October_22,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
-![Design Status Badge](https://img.shields.io/badge/Design%20Status-Draft-orange)
+![Design Status Badge](https://img.shields.io/badge/Design%20Status-Ready-brightgreen)
 
 ---
 
@@ -536,7 +536,7 @@ process instead of two.
 | 4.0      | October 21, 2026 | @MitchellDScott, Claude Opus 5.5                    | cut_cycles replaces condense; derive returns condition and requirement statuses; linear evaluation order; usize indices and compressed sparse row adjacency                              |
 | 4.1      | October 21, 2026 | @MitchellDScott, Claude Opus 5.5                    | Cites Feder and Motwani as the primary source of the document vertex                                                                                                                     |
 | 6.0      | October 22, 2026 | @MitchellDScott, Claude Sonnet 5.5, Claude Opus 5.5 | One graph per process: FR-6 added; `link_graph` built once in `trace-check`; `render_graph` takes the graph `derive` read.                                                               |
-| 6.1      | October 22, 2026 | Claude Opus 5.5                                     | Binary wiring: `link_graph` in `trace::link`, `LinkGraph::rows`, `derive_with_graph` signature and link defect ownership; phase 5 complete. Affects FR-6.                                |
+| 6.1 | October 22, 2026 | @MitchellDScott, Claude Opus 5.5 | Binary wiring: `link_graph` in `trace::link`, `LinkGraph::rows`, `derive_with_graph` signature and link defect ownership; phase 5 complete. Affects FR-6. |
 
 ---
 
