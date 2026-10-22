@@ -682,29 +682,37 @@ impl SessionState {
 
     /// Attaches a metric report to its test and starts the next queued test.
     ///
-    /// A test already recorded as failed keeps that state; the report only adds its metrics.
-    /// The queue advances only while the session is running.
+    /// Wire settle is `Done(verdict)` then `RunStats`. A prior `Failed` keeps that state; a
+    /// prior `Passed` keeps a pass. Stats with no prior Done are recorded as failed (orphan
+    /// metrics), not as a pass. Reports outside [`SessionPhase::Running`] are ignored so a
+    /// late frame during recovery cannot overwrite a panic failure or invent a pass.
     ///
     /// `report` carries the metrics; its name fields are filled in here.
     fn on_metric_report(
         &mut self,
         mut report: TestOutcome,
     ) -> Vec<SessionAction> {
-        if let Some(test) = self.test_mut(report.suite_id, report.test_id) {
-            if test.state != TestState::Failed {
-                test.state = TestState::Passed;
-            }
-            report.state = test.state;
-            test.cycles = report.cycles;
-            test.time_us = report.time_us;
-            test.stack_peak = report.stack_peak;
-        }
-        (report.suite_name, report.test_name) =
-            self.case_names(report.suite_id, report.test_id);
-        self.record_outcome(report);
         if self.phase != SessionPhase::Running {
             return Vec::new();
         }
+        let Some(test) = self.test_mut(report.suite_id, report.test_id) else {
+            return self.start_next_or_exit().into_iter().collect();
+        };
+        match test.state {
+            TestState::Failed => report.state = TestState::Failed,
+            TestState::Passed => report.state = TestState::Passed,
+            TestState::Pending | TestState::Running => {
+                // RunStats without Done is silence, not a clean pass.
+                test.state = TestState::Failed;
+                report.state = TestState::Failed;
+            }
+        }
+        test.cycles = report.cycles;
+        test.time_us = report.time_us;
+        test.stack_peak = report.stack_peak;
+        (report.suite_name, report.test_name) =
+            self.case_names(report.suite_id, report.test_id);
+        self.record_outcome(report);
         self.start_next_or_exit().into_iter().collect()
     }
 
@@ -838,6 +846,17 @@ mod tests {
             suite_id,
             test_id,
             time_ns,
+        }
+    }
+
+    /// Wire settle's `Done(Pass)` before the companion `RunStats`.
+    fn done_pass(suite_id: u16, test_id: u16) -> OwnedTelemetry {
+        OwnedTelemetry::TestStateChange {
+            message: None,
+            suite_id,
+            test_id,
+            state: TestState::Passed,
+            verdict: Some(control_rs_ets::wire::Verdict::Pass),
         }
     }
 
@@ -1005,7 +1024,8 @@ mod tests {
         assert_eq!(actions.len(), 1);
         assert_eq!(state.current_running, Some((0, 0)));
 
-        // Test 0 completes with metrics
+        // Test 0 completes: Done(Pass) then metrics
+        let _ = state.handle_message(BridgeMessage::Telemetry(done_pass(0, 0)));
         let actions = state.handle_message(BridgeMessage::Telemetry(
             run_stats((0, 0), 1000, 50000, 256),
         ));
@@ -1089,11 +1109,51 @@ mod tests {
         ));
         assert_eq!(state.phase, SessionPhase::Recovering);
         assert_eq!(state.run_queue, []);
+        assert_eq!(
+            state.find_outcome(0, 0).map(|o| o.state),
+            Some(TestState::Failed)
+        );
+        let actions = state.handle_message(BridgeMessage::Telemetry(
+            run_stats((0, 0), 1, 1000, 1),
+        ));
+        assert!(actions.is_empty());
+        assert_eq!(state.current_running, None);
+        // Late stats must not rewrite the panic failure into a pass.
+        assert_eq!(
+            state.find_outcome(0, 0).map(|o| o.state),
+            Some(TestState::Failed)
+        );
+        // Nor invent a pass for a case that never ran.
         let actions = state.handle_message(BridgeMessage::Telemetry(
             run_stats((0, 1), 1, 1000, 1),
         ));
         assert!(actions.is_empty());
-        assert_eq!(state.current_running, None);
+        assert!(state.find_outcome(0, 1).is_none());
+    }
+
+    #[test]
+    fn orphan_run_stats_without_done_are_failed() {
+        let mut state = matched();
+        feed(&mut state, make_test_suite_telemetry(0, "S", 2, 0));
+        let _ = state.handle_message(BridgeMessage::Telemetry(
+            OwnedTelemetry::DiscoveryComplete,
+        ));
+        let _ = state.handle_message(BridgeMessage::Telemetry(
+            OwnedTelemetry::TestStateChange {
+                message: None,
+                suite_id: 0,
+                test_id: 0,
+                state: TestState::Running,
+                verdict: None,
+            },
+        ));
+        let actions = state.handle_message(BridgeMessage::Telemetry(
+            run_stats((0, 0), 1, 1000, 1),
+        ));
+        assert_eq!(actions.len(), 1, "the queue still advances");
+        let outcome = state.find_outcome(0, 0).unwrap();
+        assert_eq!(outcome.state, TestState::Failed);
+        assert_eq!(outcome.cycles, Some(1));
     }
 
     #[test]
@@ -1233,6 +1293,7 @@ mod tests {
         ));
 
         // Pass case 0
+        let _ = state.handle_message(BridgeMessage::Telemetry(done_pass(0, 0)));
         let _ = state.handle_message(BridgeMessage::Telemetry(run_stats(
             (0, 0),
             100,
@@ -1271,6 +1332,7 @@ mod tests {
         assert_eq!(state.current_running, Some((0, 2)));
 
         // Pass case 2
+        let _ = state.handle_message(BridgeMessage::Telemetry(done_pass(0, 2)));
         let _ = state.handle_message(BridgeMessage::Telemetry(run_stats(
             (0, 2),
             200,
