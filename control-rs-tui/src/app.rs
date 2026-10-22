@@ -506,7 +506,12 @@ impl App {
                 Some(Request::Quit)
             }
             Command::RunAll if self.idle() => {
-                for id in self.catalog.case_ids() {
+                // No cases: do not enqueue RunAll. An empty RunAll still ends with
+                // Update::Idle, which would clear Status::Running for a task started
+                // after `r` and re-arm a second run against a live HIL target.
+                let ids = self.catalog.case_ids();
+                let first = ids.first().copied()?;
+                for id in ids {
                     self.cases.insert(
                         id,
                         CaseRow {
@@ -516,9 +521,7 @@ impl App {
                     );
                 }
                 self.faults.clear();
-                if let Some(first) = self.catalog.case_ids().first() {
-                    self.status = Status::Running(*first);
-                }
+                self.status = Status::Running(first);
                 Some(Request::RunAll)
             }
             Command::Stop => Some(Request::Stop),
@@ -1147,6 +1150,37 @@ mod tests {
         assert_eq!(key(&mut app, KeyCode::Enter), None);
         app.on_update(Update::Idle);
         assert_eq!(app.status, Status::Idle);
+    }
+
+    #[test]
+    fn run_all_with_no_cases_does_not_enqueue_or_leave_idle() {
+        let mut app = App::new("QEMU".to_string(), "pipe".to_string());
+        app.on_update(Update::Catalog(
+            Box::new(Catalog {
+                suites: vec![SuiteEntry {
+                    description: String::new(),
+                    executables: vec![Some(exec("loop", 0b1_1111))],
+                    name: "hil".to_string(),
+                    settings: vec![],
+                }],
+            }),
+            details(false),
+        ));
+        assert_eq!(app.catalog.case_ids(), []);
+        assert_eq!(key(&mut app, KeyCode::Char('r')), None);
+        assert_eq!(app.status, Status::Idle);
+        // Enter on the task still starts it; no phantom Idle from an empty RunAll.
+        key(&mut app, KeyCode::Down);
+        assert_eq!(
+            key(&mut app, KeyCode::Enter),
+            Some(Request::RunTask {
+                id: (0, 0),
+                mode: ExecMode::FreeRunning,
+                period_ns: DEFAULT_PERIOD_NS,
+            })
+        );
+        assert_eq!(app.status, Status::Running((0, 0)));
+        assert_eq!(key(&mut app, KeyCode::Char('r')), None);
     }
 
     #[test]
