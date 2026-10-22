@@ -72,7 +72,7 @@ mod cli {
 |:----------|:------------|:-------------|:----------------------|:-----------------|
 | VC-1.1    | FR-1        | `libtest`    | `widget::tests::size` | Exact size match |
 | VC-2.1    | FR-2        | `libtest`    | `widget::tests::mass` | Exact mass match |
-| VC-3.1    | FR-3        | `doc-status` | `widget-design`       | Style review     |
+| VC-3.1    | FR-3        | `doc-status` | `widget`              | Style review     |
 ";
 
     /// A file to create: its path and contents.
@@ -384,7 +384,7 @@ mod cli {
     }
 
     #[test]
-    fn passed_unrun_and_deferred_conditions_take_their_status() {
+    fn passed_unrun_and_uncovered_conditions_take_their_status() {
         let log = "test widget::tests::size ... ok\n";
         let (code, report) = check("matrix", MATRIX, &[("out/test.log", log)]);
         assert_eq!(code, 1);
@@ -394,8 +394,8 @@ mod cli {
         };
         assert_eq!(status(0).as_deref(), Some("Pass"));
         assert_eq!(status(1).as_deref(), Some("Unrun"));
-        assert_eq!(status(2).as_deref(), Some("Deferred"));
-        for (key, count) in [("Pass", 1), ("Unrun", 1), ("Deferred", 1)] {
+        assert_eq!(status(2).as_deref(), Some("Pass"));
+        for (key, count) in [("Pass", 2), ("Unrun", 1), ("Uncovered", 0)] {
             assert_eq!(
                 report
                     .pointer(&format!("/counts/{key}"))
@@ -408,8 +408,8 @@ mod cli {
             text(&report, "/requirements/0/conditions/0/items/0/target"),
             Some("widget::tests::size")
         );
-        assert_eq!(text(&report, "/deferred/0/id"), Some("widget#VC-3.1"));
-        assert_eq!(text(&report, "/deferred/0/method"), Some("doc-status"));
+        assert_eq!(text(&report, "/warnings/0/code"), Some("W-4"));
+        assert_eq!(text(&report, "/warnings/0/item"), Some("widget"));
     }
 
     #[test]
@@ -418,7 +418,7 @@ mod cli {
                    test widget::tests::mass ... ok\n";
         let (code, report) = check("covered", MATRIX, &[("out/test.log", log)]);
         assert_eq!(code, 0);
-        assert_eq!(text(&report, "/requirements/2/status"), Some("Deferred"));
+        assert_eq!(text(&report, "/requirements/2/status"), Some("Pass"));
     }
 
     #[test]

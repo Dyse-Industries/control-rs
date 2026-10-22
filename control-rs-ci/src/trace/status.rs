@@ -4,12 +4,11 @@
 //! - `Pass`: automated method, every target recorded as passed.
 //! - `Fail`: automated method, any target recorded as failed (fails gate).
 //! - `Unrun`: automated method, any target absent from its result log (fails gate).
-//! - `Uncovered`: automated method and no target named (fails gate).
-//! - `Review`: method outside the automated methods; awaits sign-off.
-//! - `Deferred`: method `deferred`; verification is planned for a later phase.
+//! - `Uncovered`: no target named (fails gate).
 //!
-//! A requirement takes the worst status among its conditions in order:
-//! `Fail` > `Unrun` > `Uncovered` > `Deferred` > `Review` > `Pass`.
+//! `doc-status` and `link` conditions take the status of what they name. A
+//! requirement takes the worst status among its conditions in order:
+//! `Fail` > `Unrun` > `Uncovered` > `Pass`.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
@@ -17,17 +16,45 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::link::{
-    Acyclic, GraphFormat, LinkGraph, LinkStatuses, RequirementMap, link_graph,
-};
-use super::reqs::{
-    AUTOMATED_METHODS, DOC_STATUS_METHOD, LINK_METHOD, TraceConfig,
-};
+use super::link::{GraphFormat, LinkGraph, LinkStatuses, RequirementMap};
+use super::reqs::{DecisionRules, RecordStatus, TraceConfig};
 use super::select::select;
 use super::{
-    CONDITION, DEFINITION, Defect, Defects, Row, SCHEMA, read_text, write_file,
+    CONDITION, DEFINITION, Defect, Defects, QUALIFIER, Row, SCHEMA, read_text,
+    write_file,
 };
 use crate::error::GateResult;
+
+/// The method whose conditions take the status of the link graph.
+pub(crate) const LINK: TraceCheckMethod = TraceCheckMethod {
+    name: "link",
+    check: check_link,
+};
+
+/// Every verification method; no other list of method names exists.
+pub(crate) const METHODS: [TraceCheckMethod; 6] = [
+    TraceCheckMethod {
+        name: "libtest",
+        check: check_libtest,
+    },
+    TraceCheckMethod {
+        name: "kani",
+        check: check_kani,
+    },
+    TraceCheckMethod {
+        name: "compare",
+        check: check_compare,
+    },
+    TraceCheckMethod {
+        name: "junit",
+        check: check_junit,
+    },
+    LINK,
+    TraceCheckMethod {
+        name: "doc-status",
+        check: check_doc_status,
+    },
+];
 
 /// A report and its defects.
 pub type Derived = (TraceReport, Defects);
@@ -47,35 +74,30 @@ type CoverSummary = (usize, usize);
 /// Map of test/harness identifier to pass/fail.
 type TestResultMap = HashMap<String, bool>;
 
-/// Map from method name to its parsed result log.
-type MethodResultMap = HashMap<String, ResultLog>;
+/// Parsed result log of each method whose artifact was read; `None` when the
+/// artifact is missing.
+type ResultCache = HashMap<&'static str, Option<ResultLog>>;
+
+/// File of each traced document, by document name.
+type DocFiles<'a> = BTreeMap<&'a str, &'a str>;
 
 /// Evaluated conditions by parent requirement ID.
 type ByParent<'a> = HashMap<&'a str, Vec<ConditionStatus>>;
 
-/// Evaluated conditions, pending reviews, deferred conditions and the
-/// requirement statuses of the link graph.
-type ConditionEvalResult<'a> = (
-    Vec<ConditionStatus>,
-    Vec<ReviewCondition>,
-    Vec<ReviewCondition>,
-    RequirementMap<'a>,
-);
+/// Evaluated conditions and the requirement statuses of the link graph.
+type ConditionEvalResult<'a> = (Vec<ConditionStatus>, RequirementMap<'a>);
 
-/// Map from document or decision identifier to its status string.
-type DocStatusMap = HashMap<String, Option<String>>;
+/// Outcome and status of one `doc-status` target.
+type DocTargetEval = (ItemOutcome, Status);
 
-/// Internal classification of a document target during status derivation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum TargetDocStatus {
-    Passed,
-    Deferred,
-    Fail,
-    Unrun,
-}
+/// The status of a condition row of one method.
+type CheckFn = fn(&Row, &mut StatusCtx<'_>) -> ConditionStatus;
 
-/// Evaluation outcome and document status classification for a single target.
-type SingleDocEval = (ItemOutcome, TargetDocStatus);
+/// Parses the text of a result artifact.
+type ParseFn = fn(&str) -> ResultLog;
+
+/// Outcomes and statuses of the targets of one `doc-status` condition.
+type DocTargets = (Vec<ItemOutcome>, Vec<Status>);
 
 /// Internal parse result for a single `JUnit` test case content.
 type JunitCaseParseResult<'a> = (Option<bool>, &'a str);
@@ -113,11 +135,7 @@ enum Lookup {
 pub enum Status {
     /// All targets passed verification.
     Pass,
-    /// Method outside the automated methods; awaits sign-off.
-    Review,
-    /// Method `deferred`; verification is planned for a later phase.
-    Deferred,
-    /// Automated method and no target named; fails the gate.
+    /// No target named; fails the gate.
     Uncovered,
     /// Automated method and a target has no recorded result; fails the gate.
     Unrun,
@@ -165,25 +183,10 @@ pub struct RequirementStatus {
     pub conditions: Vec<ConditionStatus>,
 }
 
-/// A review condition awaiting sign-off, or a deferred condition.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReviewCondition {
-    /// Qualified condition ID.
-    pub id: String,
-    /// Parent requirement IDs.
-    pub parents: Vec<String>,
-    /// Verification method.
-    pub method: String,
-    /// Path of the defining document.
-    pub file: String,
-    /// 1-based line number of the condition row.
-    pub line: usize,
-}
-
-/// Interpreter warning emitted during test analysis.
+/// Non-fatal warning emitted during status derivation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InterpreterWarning {
-    /// Warning code (`W-2` or `W-3`).
+    /// Warning code (`W-2`, `W-3` or `W-4`).
     pub code: String,
     /// Path of the defining document.
     pub file: String,
@@ -207,31 +210,45 @@ pub struct ResultLog {
     binaries: BTreeSet<String>,
 }
 
-/// Compiled regexes for scanning design document headers.
-struct DesignDocPatterns {
-    status: Option<regex::Regex>,
-    doc_id: Option<regex::Regex>,
+/// The parsed artifact of a method, `None` when it is missing.
+#[derive(Clone, Copy)]
+struct Artifact<'m> {
+    method: &'m ArtifactMethod,
+    results: Option<&'m ResultLog>,
 }
 
-/// Indexed status information of decisions, design documents and roadmap items.
-#[derive(Debug, Default, Clone)]
-pub struct DocIndex {
-    /// Decision ID -> `Option<status>`
-    pub decisions: DocStatusMap,
-    /// Decision accepted statuses
-    pub accepted_decisions: Vec<String>,
-    /// Design doc identifier (slug, filename, path) -> `Option<Design Status>`
-    pub design_docs: DocStatusMap,
-    /// Roadmap PR identifiers (for example "PR1", "PR10")
-    pub roadmap_items: BTreeSet<String>,
+/// A method whose targets are identifiers in its result artifact.
+struct ArtifactMethod {
+    /// The method name, which keys `[method.<name>]`.
+    name: &'static str,
+    /// Parses the artifact.
+    parse: ParseFn,
+    /// Whether a target may match without its first `::` segment.
+    strip: bool,
+}
+
+/// The fixed pattern that reads a design document's status badge.
+struct DocumentMetaPatterns {
+    status: Option<regex::Regex>,
+}
+
+/// A verification method a condition row may name.
+pub(crate) struct TraceCheckMethod {
+    /// The method as a condition row writes it.
+    pub name: &'static str,
+    /// The status of a condition row of this method.
+    pub check: CheckFn,
 }
 
 /// Context for condition status derivation across a trace run.
-struct StatusCtx<'a> {
+pub(crate) struct StatusCtx<'a> {
     config: &'a TraceConfig,
-    result_cache: &'a MethodResultMap,
+    base: &'a Path,
+    results: ResultCache,
     interpreter_results: Option<&'a ResultLog>,
-    doc_index: &'a DocIndex,
+    documents: DocFiles<'a>,
+    decisions: Option<DecisionRules>,
+    patterns: DocumentMetaPatterns,
     defects: &'a mut Defects,
     warnings: &'a mut Vec<InterpreterWarning>,
 }
@@ -245,12 +262,6 @@ pub struct TraceReport {
     pub counts: StatusCounts,
     /// One entry per requirement, in the order of their first definition.
     pub requirements: Vec<RequirementStatus>,
-    /// Review conditions awaiting sign-off.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub review: Vec<ReviewCondition>,
-    /// Conditions whose verification is deferred.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub deferred: Vec<ReviewCondition>,
     /// Non-fatal interpreter warnings.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<InterpreterWarning>,
@@ -303,155 +314,6 @@ impl TraceReport {
         let mut json = serde_json::to_vec_pretty(self)?;
         json.push(b'\n');
         write_file(path, &json)
-    }
-}
-
-impl DocIndex {
-    /// Builds a [`DocIndex`] by scanning relative to `base`.
-    #[must_use]
-    pub fn build(base: &Path, config: &TraceConfig) -> Self {
-        let mut index = Self::default();
-        index.load_decisions(base, config);
-        index.load_design_docs(base, config);
-        index.load_roadmap(base);
-        index
-    }
-
-    fn load_decisions(&mut self, base: &Path, config: &TraceConfig) {
-        let (files, accepted) = config.decisions.as_ref().map_or_else(
-            || {
-                let files = select(
-                    base,
-                    &[String::from("documentation/adr")],
-                    &[".md".to_string()],
-                )
-                .unwrap_or_default();
-                (files, vec!["Accepted".to_string()])
-            },
-            |dec| {
-                let files = select(base, &dec.files, &[".md".to_string()])
-                    .unwrap_or_default();
-                (files, dec.accepted.clone())
-            },
-        );
-        self.accepted_decisions = accepted;
-        let status_re =
-            regex::Regex::new(r"ADR%20Status-(?P<status>[A-Za-z]+)-").ok();
-        let id_re = regex::Regex::new(r"ADR-[0-9]{4}").ok();
-        for file in files {
-            let Ok(text) = read_text(&base.join(&file)) else {
-                continue;
-            };
-            let Some(id) = id_re
-                .as_ref()
-                .and_then(|re| re.find(&text))
-                .map(|m| m.as_str().to_string())
-            else {
-                continue;
-            };
-            let status = status_re.as_ref().and_then(|re| {
-                re.captures(&text)
-                    .and_then(|c| c.name("status"))
-                    .map(|m| m.as_str().to_string())
-            });
-            self.decisions.insert(id, status);
-        }
-    }
-
-    fn index_design_doc(
-        &mut self,
-        base: &Path,
-        file: &str,
-        patterns: &DesignDocPatterns,
-    ) {
-        let Ok(text) = read_text(&base.join(file)) else {
-            return;
-        };
-        let status = patterns.status.as_ref().and_then(|re| {
-            re.captures(&text)
-                .and_then(|c| c.name("status"))
-                .map(|m| m.as_str().to_string())
-        });
-        let path = Path::new(file);
-        let filename = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or_default()
-            .to_string();
-        let stem = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or_default()
-            .to_string();
-        let slug = stem
-            .strip_suffix("-design")
-            .or_else(|| stem.strip_suffix("-design-doc"))
-            .unwrap_or(&stem)
-            .to_string();
-
-        self.design_docs.insert(file.to_string(), status.clone());
-        self.design_docs.insert(filename, status.clone());
-        self.design_docs.insert(stem, status.clone());
-        self.design_docs.insert(slug, status.clone());
-
-        for line in text.lines().take(20) {
-            if let Some(caps) =
-                patterns.doc_id.as_ref().and_then(|re| re.captures(line))
-                && let Some(doc) =
-                    caps.name("doc").map(|m| m.as_str().to_string())
-            {
-                self.design_docs.insert(doc, status.clone());
-            }
-        }
-    }
-
-    fn load_design_docs(&mut self, base: &Path, config: &TraceConfig) {
-        let mut roots =
-            vec![String::from("documentation"), String::from("docs")];
-        for f in &config.files {
-            if !roots.contains(f) {
-                roots.push(f.clone());
-            }
-        }
-        let suffixes = [String::from(".md")];
-        let mut found = Vec::new();
-        for root in &roots {
-            if base.join(root).exists()
-                && let Ok(files) =
-                    select(base, std::slice::from_ref(root), &suffixes)
-            {
-                found.extend(files);
-            }
-        }
-        let patterns = DesignDocPatterns {
-            status: regex::Regex::new(
-                r"(?:Design|Doc)%20Status-(?P<status>[A-Za-z_]+)-",
-            )
-            .ok(),
-            doc_id: regex::Regex::new(r"^#\s+.*\((?P<doc>[a-z0-9-]+)\)").ok(),
-        };
-        for file in found {
-            self.index_design_doc(base, &file, &patterns);
-        }
-    }
-
-    fn load_roadmap(&mut self, base: &Path) {
-        let paths =
-            ["documentation/roadmap.md", "docs/roadmap.md", "roadmap.md"];
-        let pr_re =
-            regex::Regex::new(r"\*\*(?P<pr>PR[0-9]+(?:-[0-9]+)?)\*\*").ok();
-        for p in paths {
-            let full = base.join(p);
-            if let Ok(text) = read_text(&full)
-                && let Some(re) = &pr_re
-            {
-                for caps in re.captures_iter(&text) {
-                    if let Some(pr) = caps.name("pr") {
-                        self.roadmap_items.insert(pr.as_str().to_string());
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -855,15 +717,21 @@ pub fn parse_junit_results(text: &str) -> ResultLog {
     log
 }
 
-/// What `log` records for `target`: an exact identifier, or the identifier
-/// without its leading crate segment, which only a log without binary
-/// headers records.
-fn lookup(log: &ResultLog, target: &str) -> Lookup {
+/// What `log` records for `target`: an exact identifier, or, when `strip`
+/// and the log has no binary headers, the identifier without its leading
+/// crate segment.
+fn lookup(log: &ResultLog, target: &str, strip: bool) -> Lookup {
     let key = if log.outcomes.contains_key(target) {
         target
     } else {
         match target.split_once("::") {
-            Some((_, rest)) if log.outcomes.contains_key(rest) => rest,
+            Some((_, rest))
+                if strip
+                    && log.binaries.is_empty()
+                    && log.outcomes.contains_key(rest) =>
+            {
+                rest
+            }
             _ => return Lookup::Absent,
         }
     };
@@ -924,7 +792,7 @@ fn check_interpreter_coverage(
     let covered = target
         .split_once("::")
         .is_some_and(|(krate, _)| log.binaries.contains(krate));
-    if covered && lookup(log, target) == Lookup::Absent {
+    if covered && lookup(log, target, true) == Lookup::Absent {
         let artifact = ctx
             .config
             .method
@@ -945,17 +813,18 @@ fn check_interpreter_coverage(
 
 fn evaluate_target(
     row: &Row,
-    method: &str,
+    Artifact { method, results }: Artifact<'_>,
     target: &str,
     ctx: &mut StatusCtx<'_>,
 ) -> ItemOutcome {
+    let (strip, method) = (method.strip, method.name);
     let artifact = artifact_name(ctx.config, method);
     let outcome = |passed: bool, message: Option<String>| ItemOutcome {
         target: target.to_string(),
         passed,
         message,
     };
-    let Some(results) = ctx.result_cache.get(method) else {
+    let Some(results) = results else {
         ctx.defects.push(Defect::at(
             row,
             format!(
@@ -965,7 +834,7 @@ fn evaluate_target(
         ));
         return outcome(false, Some("result log missing".to_string()));
     };
-    match lookup(results, target) {
+    match lookup(results, target, strip) {
         Lookup::Passed => {
             check_interpreter_coverage(row, method, target, ctx);
             outcome(true, None)
@@ -1006,237 +875,32 @@ fn evaluate_target(
     }
 }
 
-fn eval_adr_target(
-    target: &str,
+/// The status of a condition `row` of the artifact method `method`.
+fn check_artifact(
     row: &Row,
     ctx: &mut StatusCtx<'_>,
-) -> SingleDocEval {
-    let outcome = |passed: bool, msg: Option<String>| ItemOutcome {
-        target: target.to_string(),
-        passed,
-        message: msg,
-    };
-    if let Some(opt_status) = ctx.doc_index.decisions.get(target) {
-        match opt_status.as_deref() {
-            Some(s)
-                if ctx
-                    .doc_index
-                    .accepted_decisions
-                    .iter()
-                    .any(|acc| acc == s) =>
-            {
-                (outcome(true, None), TargetDocStatus::Passed)
-            }
-            Some(s) => {
-                let msg = format!(
-                    "decision {target} has status {s}; expected Accepted"
-                );
-                ctx.defects.push(Defect::at(
-                    row,
-                    format!(
-                        "condition {} target '{target}' has status {s}; expected Accepted",
-                        row.id
-                    ),
-                ));
-                (outcome(false, Some(msg)), TargetDocStatus::Fail)
-            }
-            None => {
-                let msg = format!("decision {target} has no status");
-                ctx.defects.push(Defect::at(
-                    row,
-                    format!(
-                        "condition {} target '{target}' has no status",
-                        row.id
-                    ),
-                ));
-                (outcome(false, Some(msg)), TargetDocStatus::Fail)
-            }
-        }
-    } else {
-        let msg = format!("decision {target} has no decision record");
-        ctx.defects.push(Defect::at(
-            row,
-            format!(
-                "condition {} target '{target}' not found: no decision record",
-                row.id
-            ),
-        ));
-        (outcome(false, Some(msg)), TargetDocStatus::Unrun)
-    }
-}
-
-fn eval_roadmap_target(
-    target: &str,
-    doc_index: &DocIndex,
-) -> Option<SingleDocEval> {
-    let roadmap_target = target.strip_prefix("roadmap#").unwrap_or(target);
-    if (roadmap_target.starts_with("PR") || target.starts_with("roadmap#"))
-        && doc_index.roadmap_items.contains(roadmap_target)
-    {
-        Some((
-            ItemOutcome {
-                target: target.to_string(),
-                passed: true,
-                message: None,
-            },
-            TargetDocStatus::Deferred,
-        ))
-    } else {
-        None
-    }
-}
-
-fn eval_design_doc_target(
-    target: &str,
-    row: &Row,
-    ctx: &mut StatusCtx<'_>,
-) -> Option<SingleDocEval> {
-    let normalized = target.strip_suffix(".md").unwrap_or(target);
-    let opt_status = ctx
-        .doc_index
-        .design_docs
-        .get(target)
-        .or_else(|| ctx.doc_index.design_docs.get(normalized))?;
-
-    if opt_status.is_some() {
-        Some((
-            ItemOutcome {
-                target: target.to_string(),
-                passed: true,
-                message: None,
-            },
-            TargetDocStatus::Deferred,
-        ))
-    } else {
-        let msg =
-            format!("design document {target} has no Design Status badge");
-        ctx.defects.push(Defect::at(
-            row,
-            format!(
-                "condition {} target '{target}' has no Design Status badge",
-                row.id
-            ),
-        ));
-        Some((
-            ItemOutcome {
-                target: target.to_string(),
-                passed: false,
-                message: Some(msg),
-            },
-            TargetDocStatus::Fail,
-        ))
-    }
-}
-
-fn eval_single_doc_target(
-    target: &str,
-    row: &Row,
-    ctx: &mut StatusCtx<'_>,
-) -> SingleDocEval {
-    if target.starts_with("ADR-") {
-        eval_adr_target(target, row, ctx)
-    } else if let Some(res) = eval_roadmap_target(target, ctx.doc_index) {
-        res
-    } else if let Some(res) = eval_design_doc_target(target, row, ctx) {
-        res
-    } else {
-        let msg = format!(
-            "target '{target}' is no known ADR, design document or roadmap item"
-        );
-        ctx.defects.push(Defect::at(
-            row,
-            format!(
-                "condition {} target '{target}' not found: no known ADR, design document or roadmap item",
-                row.id
-            ),
-        ));
-        (
-            ItemOutcome {
-                target: target.to_string(),
-                passed: false,
-                message: Some(msg),
-            },
-            TargetDocStatus::Unrun,
-        )
-    }
-}
-
-fn evaluate_doc_status(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
-    let method = DOC_STATUS_METHOD.to_string();
-    let status_fn = |status: Status, items: Vec<ItemOutcome>| ConditionStatus {
-        id: row.id.clone(),
-        parents: row.parents.clone(),
-        method: method.clone(),
-        status,
-        items,
-    };
-    if row.targets.is_empty() {
-        ctx.defects.push(Defect::at(
-            row,
-            format!("condition {} names no target", row.id),
-        ));
-        return status_fn(Status::Uncovered, Vec::new());
-    }
-
-    let mut outcomes = Vec::new();
-    let mut any_deferred = false;
-    let mut has_unrun = false;
-    let mut has_fail = false;
-
-    for target in &row.targets {
-        let (outcome, target_status) = eval_single_doc_target(target, row, ctx);
-        match target_status {
-            TargetDocStatus::Passed => {}
-            TargetDocStatus::Deferred => any_deferred = true,
-            TargetDocStatus::Fail => has_fail = true,
-            TargetDocStatus::Unrun => has_unrun = true,
-        }
-        outcomes.push(outcome);
-    }
-
-    let derived = if has_unrun {
-        Status::Unrun
-    } else if has_fail {
-        Status::Fail
-    } else if any_deferred {
-        Status::Deferred
-    } else {
-        Status::Pass
-    };
-
-    status_fn(derived, outcomes)
-}
-
-fn condition_status(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
-    let method = row.method.clone().unwrap_or_default();
-    let status = |status: Status, items: Vec<ItemOutcome>| ConditionStatus {
-        id: row.id.clone(),
-        parents: row.parents.clone(),
-        method: method.clone(),
-        status,
-        items,
-    };
-    if method == DOC_STATUS_METHOD {
-        return evaluate_doc_status(row, ctx);
-    }
-    if !AUTOMATED_METHODS.contains(&method.as_str()) {
-        ctx.defects.push(Defect::at(
-            row,
-            format!("condition {} names unknown method `{method}`", row.id),
-        ));
-        return status(Status::Fail, Vec::new());
-    }
-    if row.targets.is_empty() {
-        ctx.defects
-            .push(Defect::at(row, format!("{} names no target", row.id)));
-        return status(Status::Uncovered, Vec::new());
-    }
-
+    method: &ArtifactMethod,
+) -> ConditionStatus {
+    let results = ctx.results.remove(method.name).unwrap_or_else(|| {
+        ctx.config
+            .method
+            .get(method.name)
+            .and_then(|m| m.result_artifact.as_ref())
+            .and_then(|path| read_text(&ctx.base.join(path)).ok())
+            .map(|text| (method.parse)(&text))
+    });
     let items: Vec<ItemOutcome> = row
         .targets
         .iter()
-        .map(|target| evaluate_target(row, &method, target, ctx))
+        .map(|target| {
+            let artifact = Artifact {
+                method,
+                results: results.as_ref(),
+            };
+            evaluate_target(row, artifact, target, ctx)
+        })
         .collect();
+    ctx.results.insert(method.name, results);
     let derived = if items.iter().any(|i| {
         i.message
             .as_deref()
@@ -1248,7 +912,187 @@ fn condition_status(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
     } else {
         Status::Pass
     };
-    status(derived, items)
+    condition(row, derived, items)
+}
+
+fn check_libtest(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
+    let method = ArtifactMethod {
+        name: "libtest",
+        parse: parse_libtest_results,
+        strip: true,
+    };
+    check_artifact(row, ctx, &method)
+}
+
+fn check_kani(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
+    let method = ArtifactMethod {
+        name: "kani",
+        parse: parse_kani_results,
+        strip: false,
+    };
+    check_artifact(row, ctx, &method)
+}
+
+fn check_compare(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
+    let method = ArtifactMethod {
+        name: "compare",
+        parse: parse_compare_results,
+        strip: false,
+    };
+    check_artifact(row, ctx, &method)
+}
+
+fn check_junit(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
+    let method = ArtifactMethod {
+        name: "junit",
+        parse: parse_junit_results,
+        strip: false,
+    };
+    check_artifact(row, ctx, &method)
+}
+
+/// The derived graph gives every link condition it interned its status, so a
+/// link condition reaches this check only when the graph did not intern it.
+fn check_link(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
+    ctx.defects.push(Defect::at(
+        row,
+        format!("condition {} is not in the link graph", row.id),
+    ));
+    condition(row, Status::Fail, Vec::new())
+}
+
+/// The status of a `doc-status` condition: the worst status of its targets.
+fn check_doc_status(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
+    let (items, statuses): DocTargets = row
+        .targets
+        .iter()
+        .map(|target| doc_target(row, target, ctx))
+        .unzip();
+    let derived = statuses.into_iter().max().unwrap_or(Status::Uncovered);
+    condition(row, derived, items)
+}
+
+/// The outcome of one `doc-status` target: a decision ID or a traced
+/// document name.
+fn doc_target(
+    row: &Row,
+    target: &str,
+    ctx: &mut StatusCtx<'_>,
+) -> DocTargetEval {
+    let found = if ctx
+        .decisions
+        .as_ref()
+        .is_some_and(|rules| rules.names_decision(target))
+    {
+        decision_status(target, ctx).map(|status| {
+            let accepted = status.as_deref().is_some_and(|s| {
+                ctx.decisions.as_ref().is_some_and(|r| r.accepts(s))
+            });
+            (status, accepted, false)
+        })
+    } else {
+        document_status(target, ctx).map(|status| {
+            let accepted =
+                matches!(status.as_deref(), Some("Ready" | "Shipped"));
+            let draft = status.as_deref() == Some("Draft");
+            (status, accepted || draft, draft)
+        })
+    };
+    let outcome = |passed: bool, message: Option<String>| ItemOutcome {
+        target: target.to_string(),
+        passed,
+        message,
+    };
+    let Some((status, passed, draft)) = found else {
+        let message = "names no traced document or decision".to_string();
+        ctx.defects.push(Defect::at(
+            row,
+            format!("condition {} target '{target}' {message}", row.id),
+        ));
+        return (outcome(false, Some(message)), Status::Unrun);
+    };
+    if draft {
+        ctx.warnings.push(InterpreterWarning {
+            code: "W-4".to_string(),
+            file: row.file.clone(),
+            line: row.line,
+            item: target.to_string(),
+            message: "document status is Draft".to_string(),
+        });
+    }
+    if passed {
+        return (outcome(true, None), Status::Pass);
+    }
+    let message = status.map_or_else(
+        || "has no status".to_string(),
+        |s| format!("has status {s}"),
+    );
+    ctx.defects.push(Defect::at(
+        row,
+        format!("condition {} target '{target}' {message}", row.id),
+    ));
+    (outcome(false, Some(message)), Status::Fail)
+}
+
+/// The status of decision `id`: `None` when no selected decision record
+/// defines it.
+fn decision_status(id: &str, ctx: &StatusCtx<'_>) -> RecordStatus {
+    let rules = ctx.decisions.as_ref()?;
+    let config = ctx.config.decisions.as_ref()?;
+    let files =
+        select(ctx.base, &config.files, &ctx.config.doc_suffixes()).ok()?;
+    files.iter().find_map(|file| {
+        let source = read_text(&ctx.base.join(file)).ok()?;
+        rules.record_status(file, &source, id)
+    })
+}
+
+/// The status badge of traced document `doc`: `None` when no row names the
+/// document or its file cannot be read.
+fn document_status(doc: &str, ctx: &StatusCtx<'_>) -> RecordStatus {
+    let file = ctx.documents.get(doc)?;
+    let source = read_text(&ctx.base.join(file)).ok()?;
+    Some(ctx.patterns.status.as_ref().and_then(|re| {
+        re.captures(&source)
+            .and_then(|c| c.name("status"))
+            .map(|m| m.as_str().to_string())
+    }))
+}
+
+/// Condition `row` with `status` and `items`.
+fn condition(
+    row: &Row,
+    status: Status,
+    items: Vec<ItemOutcome>,
+) -> ConditionStatus {
+    ConditionStatus {
+        id: row.id.clone(),
+        parents: row.parents.clone(),
+        method: row.method.clone().unwrap_or_default(),
+        status,
+        items,
+    }
+}
+
+/// The status of condition `row` by its method; `Uncovered` with no target
+/// and `Fail` for an unknown method.
+fn condition_status(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
+    let method = row.method.as_deref().unwrap_or_default();
+    let Some(entry) = METHODS.iter().find(|m| m.name == method) else {
+        ctx.defects.push(Defect::at(
+            row,
+            format!("condition {} names unknown method `{method}`", row.id),
+        ));
+        return condition(row, Status::Fail, Vec::new());
+    };
+    if row.targets.is_empty() {
+        ctx.defects.push(Defect::at(
+            row,
+            format!("condition {} names no target", row.id),
+        ));
+        return condition(row, Status::Uncovered, Vec::new());
+    }
+    (entry.check)(row, ctx)
 }
 
 /// The worst status of `conditions`; `Uncovered` when there are none.
@@ -1293,36 +1137,6 @@ fn requirement_statuses(
         .collect()
 }
 
-fn parse_artifact(method: &str, text: &str) -> Option<ResultLog> {
-    match method {
-        "libtest" => Some(parse_libtest_results(text)),
-        "kani" => Some(parse_kani_results(text)),
-        "compare" => Some(parse_compare_results(text)),
-        "junit" => Some(parse_junit_results(text)),
-        _ => None,
-    }
-}
-
-fn load_method_artifacts(config: &TraceConfig, base: &Path) -> MethodResultMap {
-    let mut result_cache = HashMap::new();
-    for method in AUTOMATED_METHODS {
-        let Some(artifact_rel) = config
-            .method
-            .get(method)
-            .and_then(|m| m.result_artifact.as_ref())
-        else {
-            continue;
-        };
-        let Ok(text) = read_text(&base.join(artifact_rel)) else {
-            continue;
-        };
-        if let Some(results) = parse_artifact(method, &text) {
-            result_cache.insert(method.to_string(), results);
-        }
-    }
-    result_cache
-}
-
 /// Warns (W-3) for each result log of an automated method that is older than
 /// the most recently modified document `reqs` names: a document edited after
 /// the run may name targets the log never ran.
@@ -1345,12 +1159,8 @@ fn check_staleness(
     let Some((doc_time, doc)) = newest else {
         return;
     };
-    for method in AUTOMATED_METHODS {
-        let Some(artifact) = config
-            .method
-            .get(method)
-            .and_then(|m| m.result_artifact.as_deref())
-        else {
+    for (method, entry) in &config.method {
+        let Some(artifact) = entry.result_artifact.as_deref() else {
             continue;
         };
         if modified(artifact).is_some_and(|log_time| log_time < doc_time) {
@@ -1382,17 +1192,10 @@ fn load_interpreter_log(
 }
 
 fn initial_status_counts() -> StatusCounts {
-    [
-        Status::Pass,
-        Status::Review,
-        Status::Deferred,
-        Status::Uncovered,
-        Status::Unrun,
-        Status::Fail,
-    ]
-    .into_iter()
-    .map(|status| (status, 0))
-    .collect()
+    [Status::Pass, Status::Uncovered, Status::Unrun, Status::Fail]
+        .into_iter()
+        .map(|status| (status, 0))
+        .collect()
 }
 
 fn evaluate_all_conditions<'a>(
@@ -1403,8 +1206,6 @@ fn evaluate_all_conditions<'a>(
 ) -> ConditionEvalResult<'a> {
     let (conditions, condition_order) = cond_idx;
     let mut evaluated = Vec::new();
-    let mut review = Vec::new();
-    let mut deferred = Vec::new();
 
     let LinkStatuses {
         conditions: mut derived,
@@ -1418,29 +1219,14 @@ fn evaluate_all_conditions<'a>(
         let status = derived
             .remove(row.id.as_str())
             .unwrap_or_else(|| condition_status(row, ctx));
-        let is_link = status.method == LINK_METHOD;
 
         if let Some(count) = counts.get_mut(&status.status) {
             *count = count.saturating_add(1);
         }
-        let pending = match status.status {
-            Status::Review if !is_link => Some(&mut review),
-            Status::Deferred if !is_link => Some(&mut deferred),
-            _ => None,
-        };
-        if let Some(pending) = pending {
-            pending.push(ReviewCondition {
-                id: row.id.clone(),
-                parents: row.parents.clone(),
-                method: status.method.clone(),
-                file: row.file.clone(),
-                line: row.line,
-            });
-        }
         evaluated.push(status);
     }
 
-    (evaluated, review, deferred, requirements)
+    (evaluated, requirements)
 }
 
 /// The link view of `graph` as text in `format`, with the condition statuses
@@ -1493,21 +1279,36 @@ pub fn derive_with_graph(
 
     let mut defects = link_defects;
     let mut warnings = Vec::new();
-    let result_cache = load_method_artifacts(config, base);
     let interpreter_results = load_interpreter_log(config, base);
     let mut counts = initial_status_counts();
 
-    let doc_index = DocIndex::build(base, config);
+    let mut documents = DocFiles::new();
+    for row in reqs {
+        if let Some((doc, _)) = row.id.split_once(QUALIFIER) {
+            documents.entry(doc).or_insert(row.file.as_str());
+        }
+    }
     let mut ctx = StatusCtx {
         config,
-        result_cache: &result_cache,
+        base,
+        results: ResultCache::new(),
         interpreter_results: interpreter_results.as_ref(),
-        doc_index: &doc_index,
+        documents,
+        decisions: config
+            .decisions
+            .as_ref()
+            .and_then(|d| d.rules(Path::new("trace.toml")).ok()),
+        patterns: DocumentMetaPatterns {
+            status: regex::Regex::new(
+                r"(?:Design|Doc)%20Status-(?P<status>[A-Za-z_]+)-",
+            )
+            .ok(),
+        },
         defects: &mut defects,
         warnings: &mut warnings,
     };
 
-    let (evaluated, review, deferred, rolled) =
+    let (evaluated, rolled) =
         evaluate_all_conditions(graph, &cond_idx, &mut ctx, &mut counts);
 
     let requirements = requirement_statuses(&order, &evaluated, &rolled);
@@ -1524,8 +1325,6 @@ pub fn derive_with_graph(
         schema: SCHEMA,
         counts,
         requirements,
-        review,
-        deferred,
         warnings,
     };
 
@@ -1538,7 +1337,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use crate::trace::reqs::MethodConfig;
+    use crate::trace::reqs::{DecisionConfig, MethodConfig};
 
     /// A condition status and how many conditions have it.
     type Count = (Status, usize);
@@ -1559,7 +1358,7 @@ mod tests {
 
     fn report(counts: &[Count], requirements: &[Status]) -> TraceReport {
         TraceReport {
-            schema: 4,
+            schema: SCHEMA,
             counts: counts.iter().copied().collect(),
             requirements: requirements
                 .iter()
@@ -1570,8 +1369,6 @@ mod tests {
                     conditions: Vec::new(),
                 })
                 .collect(),
-            review: Vec::new(),
-            deferred: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -1580,8 +1377,8 @@ mod tests {
     fn a_report_passes_only_without_fail_unrun_or_uncovered() {
         assert!(
             report(
-                &[(Status::Pass, 3), (Status::Review, 1)],
-                &[Status::Pass, Status::Review]
+                &[(Status::Pass, 3), (Status::Fail, 0)],
+                &[Status::Pass, Status::Pass]
             )
             .passes()
         );
@@ -1614,27 +1411,31 @@ mod tests {
 
     #[test]
     fn each_result_format_has_a_parser() {
-        let lt = parse_artifact("libtest", "test a::t ... ok\n").unwrap();
+        let lt = parse_libtest_results("test a::t ... ok\n");
         assert_eq!(lt.outcomes.get("a::t"), Some(&true));
-        let kn = parse_artifact(
-            "kani",
+        let kn = parse_kani_results(
             "Checking harness h::ok...\nVERIFICATION:- SUCCESSFUL\n",
-        )
-        .unwrap();
+        );
         assert_eq!(kn.outcomes.get("h::ok"), Some(&true));
-        let cp = parse_artifact(
-            "compare",
+        let cp = parse_compare_results(
             r#"{"suites":[{"name":"mat","status":"Pass","comparisons":[]}]}"#,
-        )
-        .unwrap();
+        );
         assert_eq!(cp.outcomes.get("mat"), Some(&true));
-        let ju = parse_artifact(
-            "junit",
+        let ju = parse_junit_results(
             r#"<testsuite><testcase name="c1" classname="pkg.Cls"/></testsuite>"#,
-        )
-        .unwrap();
+        );
         assert_eq!(ju.outcomes.get("c1"), Some(&true));
-        assert!(parse_artifact("unknown", "").is_none());
+    }
+
+    #[test]
+    fn the_method_table_names_each_method_once() {
+        let names: BTreeSet<&str> = METHODS.iter().map(|m| m.name).collect();
+        assert_eq!(names.len(), METHODS.len());
+        for name in names {
+            assert!(super::super::reqs::is_method(name), "{name}");
+        }
+        assert!(!super::super::reqs::is_method("review"));
+        assert!(!super::super::reqs::is_method("deferred"));
     }
 
     #[test]
@@ -1739,8 +1540,10 @@ mod tests {
     }
 
     fn default_config() -> TraceConfig {
-        let method = AUTOMATED_METHODS
-            .into_iter()
+        let method = METHODS
+            .iter()
+            .map(|m| m.name)
+            .filter(|m| !matches!(*m, "link" | "doc-status"))
             .map(|m| {
                 let file = match m {
                     "compare" => "cross-val-report.json".to_string(),
@@ -1919,7 +1722,7 @@ mod tests {
         assert!(!derived.0.passes());
         assert_eq!(
             derived.1.first().map(|d| d.message.as_str()),
-            Some("w#VC-1.1 names no target")
+            Some("condition w#VC-1.1 names no target")
         );
         assert_eq!(derived.0.counts.get(&Status::Uncovered), Some(&1));
     }
@@ -1933,9 +1736,19 @@ mod tests {
             adr_dir.join("0001.md"),
             "# ADR-0001: Size\n\n![Status](https://img.shields.io/badge/ADR%20Status-Accepted-brightgreen)\n",
         ).unwrap();
+        let config = TraceConfig {
+            decisions: Some(DecisionConfig {
+                files: vec!["documentation/adr".to_string()],
+                id: "ADR-[0-9]{4}".to_string(),
+                definition: r"^#\s+ADR-[0-9]{4}:".to_string(),
+                status: "ADR%20Status-(?P<status>[A-Za-z]+)-".to_string(),
+                accepted: vec!["Accepted".to_string()],
+            }),
+            ..default_config()
+        };
         let derived = derive_with_base(
             &[definition(), condition("doc-status", &["ADR-0001"])],
-            &default_config(),
+            &config,
             &dir,
         );
         assert_eq!(status(&derived), Some(Status::Pass));
@@ -2127,25 +1940,130 @@ mod tests {
     }
 
     #[test]
-    fn deferred_condition_is_listed_and_does_not_fail() {
-        let dir = test_dir("deferred_doc");
-        let doc_dir = dir.join("documentation");
-        fs::create_dir_all(&doc_dir).unwrap();
-        fs::write(
-            doc_dir.join("storage-design.md"),
-            "# Storage (storage)\n\n![Design Status Badge](https://img.shields.io/badge/Design%20Status-Draft-blue)\n",
-        ).unwrap();
-        let derived = derive_with_base(
-            &[definition(), condition("doc-status", &["storage-design"])],
+    fn compare_and_junit_targets_match_exactly() {
+        let dir = test_dir("exact");
+        write_log(
+            &dir,
+            "cross-val-report.json",
+            r#"{"suites":[{"name":"suite_a","status":"Pass","comparisons":[{"signal":"torque","verdict":"pass"}]}]}"#,
+        );
+        write_log(
+            &dir,
+            "junit.xml",
+            r#"<testsuite name="s"><testcase name="test_ok" classname="A"/></testsuite>"#,
+        );
+        let derive = |method: &str, target: &str| {
+            status(&derive_with_base(
+                &[definition(), condition(method, &[target])],
+                &default_config(),
+                &dir,
+            ))
+        };
+        assert_eq!(derive("compare", "torque"), Some(Status::Pass));
+        assert_eq!(derive("compare", "suite_a::torque"), Some(Status::Pass));
+        assert_eq!(derive("compare", "suite_b::torque"), Some(Status::Unrun));
+        assert_eq!(derive("junit", "A::test_ok"), Some(Status::Pass));
+        assert_eq!(derive("junit", "B::test_ok"), Some(Status::Unrun));
+    }
+
+    /// Derives one `doc-status` condition naming `targets`, with document `w`
+    /// written to `docs/w-design.md` carrying `badge` when given.
+    fn doc_status_run(
+        name: &str,
+        badge: Option<&str>,
+        targets: &[&str],
+    ) -> Derived {
+        let dir = test_dir(name);
+        fs::create_dir_all(dir.join("docs")).unwrap();
+        let badge = badge.map_or_else(String::new, |b| {
+            format!("![Design Status Badge](https://img.shields.io/badge/Design%20Status-{b}-blue)\n")
+        });
+        fs::write(dir.join("docs/w-design.md"), format!("# W (w)\n\n{badge}"))
+            .unwrap();
+        derive_with_base(
+            &[definition(), condition("doc-status", targets)],
             &default_config(),
             &dir,
-        );
-        assert_eq!(status(&derived), Some(Status::Deferred));
+        )
+    }
+
+    #[test]
+    fn doc_status_passes_on_a_ready_or_shipped_document() {
+        for badge in ["Ready", "Shipped"] {
+            let derived = doc_status_run("doc_ready", Some(badge), &["w"]);
+            assert_eq!(status(&derived), Some(Status::Pass), "{badge}");
+            assert!(derived.1.is_empty(), "{:?}", derived.1);
+            assert!(derived.0.warnings.is_empty(), "{:?}", derived.0.warnings);
+        }
+    }
+
+    #[test]
+    fn doc_status_warns_on_a_draft_document() {
+        let derived = doc_status_run("doc_draft", Some("Draft"), &["w"]);
+        assert_eq!(status(&derived), Some(Status::Pass));
         assert!(derived.0.passes());
         assert!(derived.1.is_empty(), "{:?}", derived.1);
-        assert_eq!(derived.0.deferred.len(), 1);
-        assert!(derived.0.review.is_empty(), "{:?}", derived.0.review);
-        assert_eq!(derived.0.counts.get(&Status::Deferred), Some(&1));
+        let codes: Vec<_> = derived
+            .0
+            .warnings
+            .iter()
+            .map(|w| (w.code.as_str(), w.item.as_str()))
+            .collect();
+        assert_eq!(codes, [("W-4", "w")]);
+    }
+
+    #[test]
+    fn doc_status_fails_on_any_other_status() {
+        for badge in [Some("Stale"), None] {
+            let derived = doc_status_run("doc_stale", badge, &["w"]);
+            assert_eq!(status(&derived), Some(Status::Fail), "{badge:?}");
+            assert!(!derived.0.passes());
+            assert_eq!(derived.1.len(), 1, "{:?}", derived.1);
+        }
+    }
+
+    #[test]
+    fn doc_status_target_naming_no_traced_document_is_unrun() {
+        let derived =
+            doc_status_run("doc_untraced", Some("Ready"), &["w-design"]);
+        assert_eq!(status(&derived), Some(Status::Unrun));
+        assert_eq!(
+            derived.1.first().map(|d| d.message.as_str()),
+            Some(
+                "condition w#VC-1.1 target 'w-design' names no traced \
+                 document or decision"
+            )
+        );
+    }
+
+    #[test]
+    fn doc_status_reads_decisions_with_the_configured_patterns() {
+        let dir = test_dir("doc_decisions");
+        fs::create_dir_all(dir.join("decisions")).unwrap();
+        fs::write(dir.join("decisions/1.md"), "# DEC-1\nState: approved\n")
+            .unwrap();
+        fs::write(dir.join("decisions/2.md"), "# DEC-2\nState: rejected\n")
+            .unwrap();
+        let config = TraceConfig {
+            decisions: Some(DecisionConfig {
+                files: vec!["decisions".to_string()],
+                id: "DEC-[0-9]+".to_string(),
+                definition: "^# DEC-".to_string(),
+                status: "State: (?P<status>[a-z]+)".to_string(),
+                accepted: vec!["approved".to_string()],
+            }),
+            ..default_config()
+        };
+        let derive = |target: &str| {
+            derive_with_base(
+                &[definition(), condition("doc-status", &[target])],
+                &config,
+                &dir,
+            )
+        };
+        assert_eq!(status(&derive("DEC-1")), Some(Status::Pass));
+        assert_eq!(status(&derive("DEC-2")), Some(Status::Fail));
+        assert_eq!(status(&derive("DEC-3")), Some(Status::Unrun));
     }
 
     /// Sets the modification time of `path` to `secs` after the epoch.
@@ -2240,34 +2158,6 @@ mod tests {
         assert_eq!(linked.status, Status::Fail);
         assert_eq!(linked.items.len(), 1);
         assert!(!derived.0.passes());
-    }
-
-    #[test]
-    fn link_conditions_are_not_listed_for_deferred() {
-        let dir = test_dir("link_deferred");
-        let doc_dir = dir.join("documentation");
-        fs::create_dir_all(&doc_dir).unwrap();
-        fs::write(
-            doc_dir.join("widget-design.md"),
-            "# Widget (widget)\n\n![Design Status Badge](https://img.shields.io/badge/Design%20Status-Draft-blue)\n",
-        ).unwrap();
-        let rows = [
-            definition_of("w#FR-1"),
-            condition_of(
-                "w#VC-1.1",
-                "w#FR-1",
-                "doc-status",
-                &["widget-design"],
-            ),
-            definition_of("l#FR-1"),
-            condition_of("l#VC-1.1", "l#FR-1", "link", &["w#FR-1"]),
-        ];
-        let derived = derive_with_base(&rows, &default_config(), &dir);
-        let linked = condition_status_of(&derived, "l#VC-1.1").unwrap();
-        assert_eq!(linked.status, Status::Deferred);
-        let listed: Vec<&str> =
-            derived.0.deferred.iter().map(|c| c.id.as_str()).collect();
-        assert_eq!(listed, ["w#VC-1.1"]);
     }
 
     #[test]
