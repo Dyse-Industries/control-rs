@@ -700,6 +700,12 @@ impl<'a> LinkGraph<'a, Acyclic> {
         }
     }
 
+    /// The rows the graph was built from.
+    #[must_use]
+    pub const fn rows(&self) -> &'a [Row] {
+        self.rows
+    }
+
     /// The link view as a Graphviz `digraph`.
     fn dot(&self, view: &RenderView<'_>) -> String {
         let mut lines =
@@ -910,6 +916,17 @@ impl<'a> LinkGraph<'a, Acyclic> {
     }
 }
 
+/// The acyclic link graph of `rows` and its defects: [`LinkGraph::resolve`]
+/// then [`LinkGraph::cut_cycles`], resolution defects then cycle defects,
+/// each in row order.
+#[must_use]
+pub fn link_graph(rows: &[Row]) -> Built<'_, Acyclic> {
+    let (graph, mut defects) = LinkGraph::resolve(rows);
+    let (graph, cycles) = graph.cut_cycles();
+    defects.extend(cycles);
+    (graph, defects)
+}
+
 /// `values[i]`, or 0 outside the slice; every index comes from a vertex of the
 /// graph the slice was sized for.
 fn at(values: &[usize], i: usize) -> usize {
@@ -1056,10 +1073,7 @@ mod tests {
     }
 
     fn acyclic(rows: &[Row]) -> Built<'_, Acyclic> {
-        let (graph, mut defects) = LinkGraph::resolve(rows);
-        let (graph, cycles) = graph.cut_cycles();
-        defects.extend(cycles);
-        (graph, defects)
+        link_graph(rows)
     }
 
     /// A leaf evaluation that takes each row's status from `table` by ID and

@@ -17,7 +17,9 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::link::{GraphFormat, LinkGraph, LinkStatuses, RequirementMap};
+use super::link::{
+    Acyclic, GraphFormat, LinkGraph, LinkStatuses, RequirementMap, link_graph,
+};
 use super::reqs::{
     AUTOMATED_METHODS, DEFERRED_METHOD as DEFERRED, LINK_METHOD, TraceConfig,
 };
@@ -798,7 +800,7 @@ fn initial_status_counts() -> StatusCounts {
 }
 
 fn evaluate_all_conditions<'a>(
-    reqs: &'a [Row],
+    graph: &LinkGraph<'a, Acyclic>,
     cond_idx: &Indexed<'_>,
     ctx: &mut StatusCtx<'_>,
     counts: &mut StatusCounts,
@@ -808,10 +810,6 @@ fn evaluate_all_conditions<'a>(
     let mut review = Vec::new();
     let mut deferred = Vec::new();
 
-    let (graph, resolution) = LinkGraph::resolve(reqs);
-    let (graph, cycles) = graph.cut_cycles();
-    ctx.defects.extend(resolution);
-    ctx.defects.extend(cycles);
     let LinkStatuses {
         conditions: mut derived,
         requirements,
@@ -846,16 +844,14 @@ fn evaluate_all_conditions<'a>(
     (evaluated, review, deferred, requirements)
 }
 
-/// The link view of the rows `reqs` as text in `format`, with the condition
-/// statuses of `report`.
+/// The link view of `graph` as text in `format`, with the condition statuses
+/// of `report`.
 #[must_use]
 pub fn render_graph(
-    reqs: &[Row],
+    graph: &LinkGraph<'_, Acyclic>,
     report: &TraceReport,
     format: GraphFormat,
 ) -> String {
-    let (graph, _) = LinkGraph::resolve(reqs);
-    let (graph, _) = graph.cut_cycles();
     let statuses = report
         .requirements
         .iter()
@@ -879,10 +875,24 @@ pub fn derive_with_base(
     config: &TraceConfig,
     base: &Path,
 ) -> Derived {
+    let (graph, link_defects) = link_graph(reqs);
+    derive_with_graph(&graph, link_defects, config, base)
+}
+
+/// Derives condition and requirement status relative to `base` from the rows
+/// of `graph`, their acyclic link graph, and its `link_defects`.
+#[must_use]
+pub fn derive_with_graph(
+    graph: &LinkGraph<'_, Acyclic>,
+    link_defects: Defects,
+    config: &TraceConfig,
+    base: &Path,
+) -> Derived {
+    let reqs = graph.rows();
     let (_, order) = first_by_id(reqs, DEFINITION);
     let cond_idx = first_by_id(reqs, CONDITION);
 
-    let mut defects = Vec::new();
+    let mut defects = link_defects;
     let mut warnings = Vec::new();
     let result_cache = load_method_artifacts(config, base);
     let interpreter_results = load_interpreter_log(config, base);
@@ -897,7 +907,7 @@ pub fn derive_with_base(
     };
 
     let (evaluated, review, deferred, rolled) =
-        evaluate_all_conditions(reqs, &cond_idx, &mut ctx, &mut counts);
+        evaluate_all_conditions(graph, &cond_idx, &mut ctx, &mut counts);
 
     let requirements = requirement_statuses(&order, &evaluated, &rolled);
     check_staleness(reqs, config, base, &mut warnings);

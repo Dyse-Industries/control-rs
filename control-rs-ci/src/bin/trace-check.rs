@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use control_rs_ci::GateResult;
-use control_rs_ci::trace::link::GraphFormat;
+use control_rs_ci::trace::link::{GraphFormat, link_graph};
 use control_rs_ci::trace::reqs::TraceConfig;
 use control_rs_ci::trace::status::{self, Derived, TraceReport};
 use control_rs_ci::trace::{
@@ -69,11 +69,17 @@ fn run(
     }
     let reqs = read_rows(reqs)?;
     let trace_cfg = TraceConfig::load(config)?;
-    let (report, defects) = status::derive(&reqs, &trace_cfg);
+    let (links, link_defects) = link_graph(&reqs);
+    let (report, defects) = status::derive_with_graph(
+        &links,
+        link_defects,
+        &trace_cfg,
+        Path::new("."),
+    );
     report.write(out)?;
     ui::status("Writing", out.display());
     if let Some((path, format)) = graph {
-        let text = status::render_graph(&reqs, &report, format);
+        let text = status::render_graph(&links, &report, format);
         write_file(&path, text.as_bytes())?;
         ui::status("Writing", path.display());
     }
