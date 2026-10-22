@@ -243,15 +243,6 @@ pub struct TraceReport {
     pub warnings: Vec<InterpreterWarning>,
 }
 
-impl From<TestResultMap> for ResultLog {
-    fn from(outcomes: TestResultMap) -> Self {
-        Self {
-            outcomes,
-            ..Self::default()
-        }
-    }
-}
-
 impl ResultLog {
     /// Records `passed` for `key`. A repeat is ambiguous when `unique`
     /// forbids repeats or the outcomes differ.
@@ -543,10 +534,25 @@ pub fn parse_libtest_results(text: &str) -> ResultLog {
     log
 }
 
-/// Parses Kani bounded model checking output.
+/// Parses Kani bounded model checking output into a [`ResultLog`].
+///
+/// Each `Checking harness <path>...` block maps to one identifier. The harness
+/// passes only when Kani reports `VERIFICATION:- SUCCESSFUL` and every evaluated
+/// cover property is satisfied. A harness name recorded more than once with
+/// different outcomes is ambiguous and becomes a `Fail` defect at lookup.
+///
+/// # Arguments
+/// * `text` - Kani stdout or a saved `kani.log` artifact.
+///
+/// # Returns
+/// A [`ResultLog`] keyed by harness path. Identical repeats keep the first
+/// outcome; conflicting repeats mark the key ambiguous.
+///
+/// # Panics
+/// This function does not panic.
 #[must_use]
-pub fn parse_kani_results(text: &str) -> TestResultMap {
-    let mut results = HashMap::new();
+pub fn parse_kani_results(text: &str) -> ResultLog {
+    let mut log = ResultLog::default();
     let mut current_harness: Option<String> = None;
     let mut harness_lines: Vec<&str> = Vec::new();
 
@@ -574,7 +580,7 @@ pub fn parse_kani_results(text: &str) -> TestResultMap {
         if let Some(rest) = trimmed.strip_prefix("Checking harness ") {
             if let Some(prev) = current_harness.take() {
                 let passed = evaluate_harness(&harness_lines);
-                results.insert(prev, passed);
+                log.record(prev, passed, false);
                 harness_lines.clear();
             }
             let harness_name = rest.trim_end_matches('.').trim().to_string();
@@ -585,9 +591,9 @@ pub fn parse_kani_results(text: &str) -> TestResultMap {
     }
     if let Some(prev) = current_harness {
         let passed = evaluate_harness(&harness_lines);
-        results.insert(prev, passed);
+        log.record(prev, passed, false);
     }
-    results
+    log
 }
 
 fn parse_cover_summary(line: &str) -> Option<CoverSummary> {
@@ -600,10 +606,26 @@ fn parse_cover_summary(line: &str) -> Option<CoverSummary> {
     Some((m, n))
 }
 
-/// Parses verbose `pytest` output (`<file>::<test> PASSED|FAILED|ERROR`).
+/// Parses verbose `pytest` output into a [`ResultLog`].
+///
+/// A line `<file>::<test> PASSED` maps to a passing target; `FAILED` or
+/// `ERROR` maps to a failed target. A node id recorded with different outcomes
+/// (for example after `pytest-rerunfailures`) is ambiguous and becomes a
+/// `Fail` defect at lookup, matching the “any target recorded as failed”
+/// gate rule.
+///
+/// # Arguments
+/// * `text` - Verbose pytest stdout or a saved `pytest.log` artifact.
+///
+/// # Returns
+/// A [`ResultLog`] keyed by `<file>::<test>`. Identical repeats keep the first
+/// outcome; conflicting repeats mark the key ambiguous.
+///
+/// # Panics
+/// This function does not panic.
 #[must_use]
-pub fn parse_pytest_results(text: &str) -> TestResultMap {
-    let mut results = HashMap::new();
+pub fn parse_pytest_results(text: &str) -> ResultLog {
+    let mut log = ResultLog::default();
     for line in text.lines() {
         let mut words = line.split_whitespace();
         let (Some(name), Some(outcome)) = (words.next(), words.next()) else {
@@ -613,18 +635,32 @@ pub fn parse_pytest_results(text: &str) -> TestResultMap {
             continue;
         }
         match outcome {
-            "PASSED" => results.insert(name.to_string(), true),
-            "FAILED" | "ERROR" => results.insert(name.to_string(), false),
-            _ => None,
-        };
+            "PASSED" => log.record(name.to_string(), true, false),
+            "FAILED" | "ERROR" => log.record(name.to_string(), false, false),
+            _ => {}
+        }
     }
-    results
+    log
 }
 
-/// Parses Google Test output (`[       OK ] Suite.Case`, `[  FAILED  ] Suite.Case`).
+/// Parses Google Test output into a [`ResultLog`].
+///
+/// A line `[       OK ] <Suite>.<Case>` maps to a passing target;
+/// `[  FAILED  ] <Suite>.<Case>` maps to a failed target. A case recorded with
+/// different outcomes is ambiguous and becomes a `Fail` defect at lookup.
+///
+/// # Arguments
+/// * `text` - gtest stdout or a saved `gtest.log` artifact.
+///
+/// # Returns
+/// A [`ResultLog`] keyed by `<Suite>.<Case>`. Identical repeats keep the first
+/// outcome; conflicting repeats mark the key ambiguous.
+///
+/// # Panics
+/// This function does not panic.
 #[must_use]
-pub fn parse_gtest_results(text: &str) -> TestResultMap {
-    let mut results = HashMap::new();
+pub fn parse_gtest_results(text: &str) -> ResultLog {
+    let mut log = ResultLog::default();
     for line in text.lines() {
         let Some((tag, rest)) =
             line.strip_prefix('[').and_then(|rest| rest.split_once(']'))
@@ -638,12 +674,12 @@ pub fn parse_gtest_results(text: &str) -> TestResultMap {
             continue;
         }
         match tag.trim() {
-            "OK" => results.insert(name.to_string(), true),
-            "FAILED" => results.insert(name.to_string(), false),
-            _ => None,
-        };
+            "OK" => log.record(name.to_string(), true, false),
+            "FAILED" => log.record(name.to_string(), false, false),
+            _ => {}
+        }
     }
-    results
+    log
 }
 
 /// What `log` records for `target`: an exact identifier, or the identifier
@@ -1087,9 +1123,9 @@ fn requirement_statuses(
 fn parse_artifact(method: &str, text: &str) -> Option<ResultLog> {
     match method {
         "libtest" => Some(parse_libtest_results(text)),
-        "kani" => Some(parse_kani_results(text).into()),
-        "pytest" => Some(parse_pytest_results(text).into()),
-        "gtest" => Some(parse_gtest_results(text).into()),
+        "kani" => Some(parse_kani_results(text)),
+        "pytest" => Some(parse_pytest_results(text)),
+        "gtest" => Some(parse_gtest_results(text)),
         _ => None,
     }
 }
@@ -1386,13 +1422,13 @@ mod tests {
                 "Checking harness h::bad...\n{marker}\nVERIFICATION:- SUCCESSFUL\n"
             );
             assert_eq!(
-                parse_kani_results(&log).get("h::bad"),
+                parse_kani_results(&log).outcomes.get("h::bad"),
                 Some(&false),
                 "{marker}"
             );
         }
         let ok = "Checking harness h::ok...\n** 2 of 2 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n";
-        assert_eq!(parse_kani_results(ok).get("h::ok"), Some(&true));
+        assert_eq!(parse_kani_results(ok).outcomes.get("h::ok"), Some(&true));
     }
 
     #[test]
@@ -1564,14 +1600,66 @@ mod tests {
     fn pytest_and_gtest_logs_are_parsed() {
         let py = "python3/m.py::test_step PASSED [ 50%]\npython3/m.py::test_bad FAILED [100%]\n";
         let results = parse_pytest_results(py);
-        assert_eq!(results.get("python3/m.py::test_step"), Some(&true));
-        assert_eq!(results.get("python3/m.py::test_bad"), Some(&false));
+        assert_eq!(
+            results.outcomes.get("python3/m.py::test_step"),
+            Some(&true)
+        );
+        assert_eq!(
+            results.outcomes.get("python3/m.py::test_bad"),
+            Some(&false)
+        );
 
         let gt = "[ RUN      ] Suite.Case\n[       OK ] Suite.Case (0 ms)\n[  FAILED  ] Suite.Bad (1 ms)\n[==========] 2 tests\n";
         let results = parse_gtest_results(gt);
-        assert_eq!(results.get("Suite.Case"), Some(&true));
-        assert_eq!(results.get("Suite.Bad"), Some(&false));
-        assert_eq!(results.len(), 2);
+        assert_eq!(results.outcomes.get("Suite.Case"), Some(&true));
+        assert_eq!(results.outcomes.get("Suite.Bad"), Some(&false));
+        assert_eq!(results.outcomes.len(), 2);
+    }
+
+    #[test]
+    fn pytest_gtest_and_kani_conflicting_records_are_ambiguous() {
+        let py = "m.py::t FAILED [ 50%]\nm.py::t PASSED [100%]\n";
+        let pytest =
+            run("pytest_ambiguous", py, condition("pytest", &["m.py::t"]));
+        assert_eq!(status(&pytest), Some(Status::Fail));
+        assert!(
+            pytest
+                .1
+                .first()
+                .is_some_and(|d| d.message.contains("is ambiguous in")),
+            "{:?}",
+            pytest.1
+        );
+        assert!(!pytest.0.passes());
+
+        let gt =
+            "[  FAILED  ] Suite.Case (1 ms)\n[       OK ] Suite.Case (0 ms)\n";
+        let gtest =
+            run("gtest_ambiguous", gt, condition("gtest", &["Suite.Case"]));
+        assert_eq!(status(&gtest), Some(Status::Fail));
+        assert!(
+            gtest
+                .1
+                .first()
+                .is_some_and(|d| d.message.contains("is ambiguous in")),
+            "{:?}",
+            gtest.1
+        );
+
+        let kani = "Checking harness h::dup...\nVERIFICATION:- FAILED\n\
+                    Checking harness h::dup...\nVERIFICATION:- SUCCESSFUL\n\
+                    ** 1 of 1 cover properties satisfied\n";
+        let kani_run =
+            run("kani_ambiguous", kani, condition("kani", &["h::dup"]));
+        assert_eq!(status(&kani_run), Some(Status::Fail));
+        assert!(
+            kani_run
+                .1
+                .first()
+                .is_some_and(|d| d.message.contains("is ambiguous in")),
+            "{:?}",
+            kani_run.1
+        );
     }
 
     #[test]
