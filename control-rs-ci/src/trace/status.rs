@@ -853,17 +853,23 @@ pub fn parse_junit_results(text: &str) -> ResultLog {
     log
 }
 
-/// What `log` records for `target`: an exact identifier, or the identifier
-/// without its leading crate segment, which only a log without binary
-/// headers records.
-fn lookup(log: &ResultLog, target: &str) -> Lookup {
+/// What `log` records for `target`.
+///
+/// Exact key match always wins. When `allow_prefix_strip` is set (libtest only),
+/// a miss retries after dropping the first `::` segment so a binary-qualified
+/// target matches a bare path from a headerless log. Compare and junit also
+/// record bare signal/case aliases; stripping there would let `other::sig`
+/// match a bare `sig` from a different suite.
+fn lookup(log: &ResultLog, target: &str, allow_prefix_strip: bool) -> Lookup {
     let key = if log.outcomes.contains_key(target) {
         target
-    } else {
+    } else if allow_prefix_strip {
         match target.split_once("::") {
             Some((_, rest)) if log.outcomes.contains_key(rest) => rest,
             _ => return Lookup::Absent,
         }
+    } else {
+        return Lookup::Absent;
     };
     if log.ambiguous.contains(key) {
         Lookup::Ambiguous
@@ -922,7 +928,7 @@ fn check_interpreter_coverage(
     let covered = target
         .split_once("::")
         .is_some_and(|(krate, _)| log.binaries.contains(krate));
-    if covered && lookup(log, target) == Lookup::Absent {
+    if covered && lookup(log, target, true) == Lookup::Absent {
         let artifact = ctx
             .config
             .method
@@ -963,7 +969,10 @@ fn evaluate_target(
         ));
         return outcome(false, Some("result log missing".to_string()));
     };
-    match lookup(results, target) {
+    // Prefix strip is libtest-only: binary-qualified targets vs headerless bare
+    // paths. Compare/junit expose intentional bare aliases; strip would cross suites.
+    let allow_prefix_strip = method == "libtest";
+    match lookup(results, target, allow_prefix_strip) {
         Lookup::Passed => {
             check_interpreter_coverage(row, method, target, ctx);
             outcome(true, None)
@@ -1677,6 +1686,46 @@ mod tests {
     }
 
     #[test]
+    fn compare_suite_qualified_target_does_not_match_bare_alias() {
+        // suite_a records bare "torque"; a target "suite_b::torque" must not
+        // Pass via libtest-style prefix strip against that bare alias.
+        let text = r#"{
+            "suites": [
+                {
+                    "name": "suite_a",
+                    "status": "Pass",
+                    "comparisons": [
+                        {"key": "k", "signal": "torque", "verdict": "pass"}
+                    ]
+                }
+            ]
+        }"#;
+        let dir = test_dir("compare_no_cross_suite");
+        write_log(&dir, "cross-val-report.json", text);
+        let derived = derive_with_base(
+            &[definition(), condition("compare", &["suite_b::torque"])],
+            &default_config(),
+            &dir,
+        );
+        assert_eq!(status(&derived), Some(Status::Unrun));
+        assert!(!derived.0.passes());
+        assert_eq!(
+            derived.1.first().map(|d| d.message.as_str()),
+            Some(
+                "condition w#VC-1.1 target 'suite_b::torque' not found in cross-val-report.json"
+            )
+        );
+
+        let bare = derive_with_base(
+            &[definition(), condition("compare", &["torque"])],
+            &default_config(),
+            &dir,
+        );
+        assert_eq!(status(&bare), Some(Status::Pass));
+        assert!(bare.0.passes());
+    }
+
+    #[test]
     fn junit_results_are_parsed() {
         let text = r#"<?xml version="1.0" encoding="UTF-8"?>
         <testsuites>
@@ -1722,6 +1771,36 @@ mod tests {
         let log = parse_junit_results(text);
         assert!(log.ambiguous.contains("dup_test"));
         assert!(log.ambiguous.contains("pkg.Cls::dup_test"));
+    }
+
+    #[test]
+    fn junit_class_qualified_target_does_not_match_bare_alias() {
+        let text = r#"<testsuite name="SuiteA">
+            <testcase name="test_ok" classname="pkg.ClassA"/>
+        </testsuite>"#;
+        let dir = test_dir("junit_no_cross_class");
+        write_log(&dir, "junit.xml", text);
+        let derived = derive_with_base(
+            &[definition(), condition("junit", &["other.Class::test_ok"])],
+            &default_config(),
+            &dir,
+        );
+        assert_eq!(status(&derived), Some(Status::Unrun));
+        assert!(!derived.0.passes());
+        assert_eq!(
+            derived.1.first().map(|d| d.message.as_str()),
+            Some(
+                "condition w#VC-1.1 target 'other.Class::test_ok' not found in junit.xml"
+            )
+        );
+
+        let bare = derive_with_base(
+            &[definition(), condition("junit", &["test_ok"])],
+            &default_config(),
+            &dir,
+        );
+        assert_eq!(status(&bare), Some(Status::Pass));
+        assert!(bare.0.passes());
     }
 
     fn write_log(dir: &Path, name: &str, text: &str) {
