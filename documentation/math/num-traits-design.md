@@ -1,6 +1,6 @@
 # Numeric Trait Hierarchy (num-traits)
 
-![Date Badge](https://img.shields.io/badge/Date-October_21,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_22,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 ![Design Status Badge](https://img.shields.io/badge/Design%20Status-Stale-lightgrey)
 
@@ -474,14 +474,14 @@ list after the table describes the checks in prose.
 | VC-5.1 | FR-5 | `libtest` | `control_rs::math::tests::num_trait_tests::num_trait_test_suite::test_num_trait_scalar_markers`, `control_rs::math::tests::num_trait_tests::num_trait_test_suite::test_num_trait_unsigned_integer_markers` | `Scalar` holds for every integer and float primitive and the partition marker bounds compile |
 | VC-5.2 | FR-5 | `libtest` | `control_rs::src/math/num_traits.rs - math::num_traits::AdditiveGroup - compile fail`, `control_rs::src/math/num_traits.rs - math::num_traits::Float - compile fail`, `control_rs::src/math/num_traits.rs - math::num_traits::Scalar - compile fail`, `control_rs::src/math/num_traits.rs - math::num_traits::Signed - compile fail` | Negative bounds (`Complex<f64>: Float`, `Complex<u8>: Scalar`, unsigned `AdditiveGroup`, unsigned `Signed`) are `compile_fail` doctests on the trait definitions |
 | VC-6.1 | FR-6 | `libtest` | `control_rs::math::tests::op_tests::op_test_suite::test_ops_saturating_add_signed_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_saturating_add_unsigned_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_saturating_sub_signed_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_saturating_sub_unsigned_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_saturating_mul_signed_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_saturating_mul_unsigned_integers`, `control_rs::math::tests::op_tests::op_test_suite::test_ops_saturating_div_neg_signed_integers` | Saturating add, subtract, multiply, divide and negate clamp to `[MIN, MAX]` without panicking or wrapping |
-| VC-6.2 | FR-6 | `doc-status` | `num-traits-design` | `clippy::arithmetic_side_effects` is `deny` and library arithmetic on a generic `T` calls the saturating methods, not `core::ops` operators |
+| VC-6.2 | FR-6 | `doc-status` | `num-traits` | `clippy::arithmetic_side_effects` is `deny` and library arithmetic on a generic `T` calls the saturating methods, not `core::ops` operators |
 | VC-7.1 | FR-7 | `libtest` | `control_rs::math::tests::num_trait_tests::num_trait_test_suite::test_mul_acc_float_unfused` | Float `mac` equals the unfused `a * b + c` bit for bit |
 | VC-7.2 | FR-7 | `libtest` | `control_rs::math::tests::num_trait_tests::num_trait_test_suite::test_mul_acc_integer_exact_chain` | An integer chain whose intermediate sum leaves `[MIN, MAX]` and returns inside it yields the exact final sum, clamped once |
 | VC-7.3 | FR-7 | `libtest` | `control_rs::math::tests::num_trait_tests::num_trait_test_suite::test_mul_acc_complex_formula` | `Complex<T>` components equal the four-term formula exactly |
 | VC-7.4 | FR-7 | `libtest` | `control_rs::math::tests::num_trait_tests::num_trait_test_suite::test_mul_acc_complex_min_imag`, `control_rs::math::tests::num_trait_tests::num_trait_test_suite::test_mul_acc_complex_fixed_full_scale` | `Complex<T>` `mac` keeps the exact doubled-width product when an imaginary operand is `MIN` or `MAX`, for integer and `Fixed` components |
 | VC-7.5 | FR-7 | `libtest` | `control_rs::math::tests::num_trait_tests::num_trait_test_suite::test_mul_acc_open_trait` | An external type implementing `MulAcc` compiles against a generic `T: Scalar + MulAcc` consumer |
-| VC-8.1 | NFR-1 | `doc-status` | `num-traits-design` | Trait calls and constants compile to direct primitive instructions without trampolines |
-| VC-9.1 | C-1 | `doc-status` | `num-traits-design` | `num_traits` uses `core` only, without heap allocation or `std` |
+| VC-8.1 | NFR-1 | `doc-status` | `num-traits` | Trait calls and constants compile to direct primitive instructions without trampolines |
+| VC-9.1 | C-1 | `doc-status` | `num-traits` | `num_traits` uses `core` only, without heap allocation or `std` |
 
 Verification ensures structural correctness and trait compliance across all
 target environments:
@@ -654,6 +654,7 @@ for Complex<T>`). Every implementor must name `Real` and provide
 | 1.8 | October 13, 2026 | Claude Sonnet 5.5 | Adds FR-7 MulAcc and section 4.5 for the classical-control realizations; header migrated to the Approval and Doc Status badge grammar. |
 | 1.9 | October 16, 2026 | Claude Sonnet 5.5 | Cites ADR-0003 for `MulAcc`; §8 items 9 and 10 record the integer coverage and the saturating `conj` and `abs`; `Quantized` rows cite `fixed-num-design.md` FR-8, which now exists. |
 | 1.10 | October 21, 2026 | Antigravity | Migrated condition rows to libtest compile_fail doctests and doc-status methods. |
+| 1.11 | October 22, 2026 | @MitchellDScott, Claude Opus 5.5 | doc-status targets name the document ID. |
 
 ---
 

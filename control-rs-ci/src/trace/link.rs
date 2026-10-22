@@ -10,7 +10,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use super::reqs::LINK_METHOD;
+use super::status::LINK;
 use super::status::{ConditionStatus, ItemOutcome, Status};
 use super::{CONDITION, DEFINITION, Defect, Defects, QUALIFIER, Row};
 
@@ -25,9 +25,6 @@ const FILL_OPEN: &str = "#ffb74d";
 
 /// Fill of a vertex with a passing status.
 const FILL_PASS: &str = "#66bb6a";
-
-/// Fill of a vertex that awaits sign-off or is deferred.
-const FILL_PENDING: &str = "#bdbdbd";
 
 /// Number of [`VertexKind`] values; the width of one component's slot in the
 /// evaluation order.
@@ -324,16 +321,10 @@ impl<'a> LinkGraphBuilder<'a> {
         for (i, row) in rows.iter().enumerate() {
             // Only the first definition of a condition whose method is `link`
             // is a link condition; every other row is a leaf.
-            let is_link =
-                row.method.as_deref().is_some_and(|m| m == LINK_METHOD);
+            let is_link = row.method.as_deref().is_some_and(|m| m == LINK.name);
             let Some(v) = self.condition_of(row, i).filter(|_| is_link) else {
                 continue;
             };
-            if row.targets.is_empty() {
-                let message =
-                    format!("condition {} names no link target", row.id);
-                defects.push(Defect::at(row, message));
-            }
             // Resolve each named target in order; `targets` stays parallel to
             // `row.targets` so statuses can later be matched back to names.
             let mut targets = Vec::with_capacity(row.targets.len());
@@ -963,7 +954,6 @@ const fn fails_gate(status: Status) -> bool {
 const fn fill_of(status: Status) -> &'static str {
     match status {
         Status::Pass => FILL_PASS,
-        Status::Review | Status::Deferred => FILL_PENDING,
         Status::Uncovered | Status::Unrun => FILL_OPEN,
         Status::Fail => FILL_FAIL,
     }
@@ -1094,14 +1084,10 @@ mod tests {
     }
 
     #[test]
-    fn link_without_a_target_is_reported() {
+    fn link_without_a_target_has_no_resolve_defect() {
         let rows = [def("a#FR-1", 1), link("a#VC-1.1", "a#FR-1", &[], 3)];
         let (_, defects) = LinkGraph::resolve(&rows);
-        assert_eq!(
-            messages(&defects),
-            ["condition a#VC-1.1 names no link target"]
-        );
-        assert_eq!(defects.first().map(|d| d.line), Some(3));
+        assert!(defects.is_empty(), "{:?}", messages(&defects));
     }
 
     #[test]
@@ -1270,9 +1256,9 @@ mod tests {
             cond(["b#VC-1.1", "b#FR-1"], "libtest", &["t"], 7),
             cond(["b#VC-2.1", "b#FR-1"], "review", &[], 8),
         ];
-        let table = [("b#VC-1.1", Status::Fail), ("b#VC-2.1", Status::Review)];
+        let table = [("b#VC-1.1", Status::Fail), ("b#VC-2.1", Status::Unrun)];
         assert_eq!(status_of(&rows, &table, "a#VC-1.1"), Status::Fail);
-        assert_eq!(status_of(&rows, &table, "a#VC-2.1"), Status::Review);
+        assert_eq!(status_of(&rows, &table, "a#VC-2.1"), Status::Unrun);
     }
 
     #[test]
@@ -1286,7 +1272,7 @@ mod tests {
             cond(["b#VC-2.1", "b#FR-2"], "libtest", &["t"], 11),
         ];
         let table =
-            [("b#VC-1.1", Status::Deferred), ("b#VC-2.1", Status::Unrun)];
+            [("b#VC-1.1", Status::Uncovered), ("b#VC-2.1", Status::Unrun)];
         assert_eq!(status_of(&rows, &table, "a#VC-1.1"), Status::Unrun);
     }
 
@@ -1366,6 +1352,18 @@ mod tests {
             ("a#FR-3", Status::Uncovered),
         ];
         assert_eq!(requirements.into_iter().collect::<Vec<_>>(), expected);
+    }
+
+    #[test]
+    fn a_doc_status_condition_adds_no_edge() {
+        let rows = [
+            def("a#FR-1", 1),
+            cond(["a#VC-1.1", "a#FR-1"], "doc-status", &["a"], 3),
+        ];
+        assert_eq!(out_degree(&rows, "a#VC-1.1"), 0);
+        let (graph, resolution) = LinkGraph::resolve(&rows);
+        let (_, cycles) = graph.cut_cycles();
+        assert!(resolution.is_empty() && cycles.is_empty());
     }
 
     #[test]

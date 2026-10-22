@@ -32,7 +32,7 @@ pub const DEFINITION: &str = "definition";
 pub const QUALIFIER: char = '#';
 
 /// Row and report format version, incremented on every incompatible change.
-pub const SCHEMA: u32 = 4;
+pub const SCHEMA: u32 = 5;
 
 /// Exit code of a usage, configuration or I/O error.
 pub const USAGE_ERROR: u8 = 2;
