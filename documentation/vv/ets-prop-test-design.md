@@ -334,14 +334,11 @@ Cortex-M target is a measurement that has not been taken.
 
 ### 10. Revision History
 
-| Revision | Date              | Author          | Description                                                                                                                                                                                                         |
-|:---------|:------------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | September 8, 2026 | @MitchellDScott | Initial draft.                                                                                                                                                                                                      |
-| 1.1      | September 9, 2026 | @MitchellDScott | Structural hardening: converted §6.4 from prose into complete traceability table mapping all requirements, updated badge to standard dialect, mapped catalogue methods in §6.2, standardized revision history. |
-| 1.2      | September 15, 2026 | @MitchellDScott | Locator-only §6.4; unimplemented range type listed in 6.7; citations removed from FR bodies. |
-| 1.3      | September 24, 2026 | @MitchellDScott | Deferred: removed from the roadmap. Suite authors write range-valued property tests manually in ETS suites; the crate ships no range type. C-4 and §6.1 cite `cross-compare-design.md` (renamed from `oracle-harness-design.md`). |
-| 1.4      | September 27, 2026 | @MitchellDScott | Added saturating arithmetic contract specification (§4.4) for Scalar trait adherence. |
-| 1.5 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. |
+| Revision | Date               | Author          | Description                                 |
+|:---------|:-------------------|:----------------|:--------------------------------------------|
+| 1.0      | September 18, 2026 | @MitchellDScott | Range-valued property tests for ETS suites. |
+| 2.0      | September 25, 2026 | @MitchellDScott | Deferred: removed from the roadmap.         |
+| 3.0      | September 28, 2026 | @MitchellDScott | Saturating arithmetic contract (§4.4).      |
 
 ---
 
