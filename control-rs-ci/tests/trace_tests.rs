@@ -58,19 +58,21 @@ mod cli {
 ";
 
     /// Three requirements: one `libtest` condition each for FR-1 and FR-2 and
-    /// a `review` condition for FR-3.
+    /// a `doc-status` condition for FR-3.
     const MATRIX: &str = "\
 # Widget (widget)
+
+![Design Status Badge](https://img.shields.io/badge/Design%20Status-Draft-blue)
 
 - **FR-1 — Size**: The widget shall report its size.
 - **FR-2 — Mass**: The widget shall report its mass.
 - **FR-3 — Style**: The widget shall follow the style guide.
 
-| Condition | Requirement | Method    | Target                | Criterion        |
-|:----------|:------------|:----------|:----------------------|:-----------------|
-| VC-1.1    | FR-1        | `libtest` | `widget::tests::size` | Exact size match |
-| VC-2.1    | FR-2        | `libtest` | `widget::tests::mass` | Exact mass match |
-| VC-3.1    | FR-3        | `review`  | —                     | Style review     |
+| Condition | Requirement | Method       | Target                | Criterion        |
+|:----------|:------------|:-------------|:----------------------|:-----------------|
+| VC-1.1    | FR-1        | `libtest`    | `widget::tests::size` | Exact size match |
+| VC-2.1    | FR-2        | `libtest`    | `widget::tests::mass` | Exact mass match |
+| VC-3.1    | FR-3        | `doc-status` | `widget-design`       | Style review     |
 ";
 
     /// A file to create: its path and contents.
@@ -382,7 +384,7 @@ mod cli {
     }
 
     #[test]
-    fn passed_unrun_and_review_conditions_take_their_status() {
+    fn passed_unrun_and_deferred_conditions_take_their_status() {
         let log = "test widget::tests::size ... ok\n";
         let (code, report) = check("matrix", MATRIX, &[("out/test.log", log)]);
         assert_eq!(code, 1);
@@ -392,8 +394,8 @@ mod cli {
         };
         assert_eq!(status(0).as_deref(), Some("Pass"));
         assert_eq!(status(1).as_deref(), Some("Unrun"));
-        assert_eq!(status(2).as_deref(), Some("Review"));
-        for (key, count) in [("Pass", 1), ("Unrun", 1), ("Review", 1)] {
+        assert_eq!(status(2).as_deref(), Some("Deferred"));
+        for (key, count) in [("Pass", 1), ("Unrun", 1), ("Deferred", 1)] {
             assert_eq!(
                 report
                     .pointer(&format!("/counts/{key}"))
@@ -406,17 +408,17 @@ mod cli {
             text(&report, "/requirements/0/conditions/0/items/0/target"),
             Some("widget::tests::size")
         );
-        assert_eq!(text(&report, "/review/0/id"), Some("widget#VC-3.1"));
-        assert_eq!(text(&report, "/review/0/method"), Some("review"));
+        assert_eq!(text(&report, "/deferred/0/id"), Some("widget#VC-3.1"));
+        assert_eq!(text(&report, "/deferred/0/method"), Some("doc-status"));
     }
 
     #[test]
-    fn every_automated_target_passed_passes_and_review_does_not_fail() {
+    fn every_automated_target_passed_passes_and_doc_status_does_not_fail() {
         let log = "test widget::tests::size ... ok\n\
                    test widget::tests::mass ... ok\n";
         let (code, report) = check("covered", MATRIX, &[("out/test.log", log)]);
         assert_eq!(code, 0);
-        assert_eq!(text(&report, "/requirements/2/status"), Some("Review"));
+        assert_eq!(text(&report, "/requirements/2/status"), Some("Deferred"));
     }
 
     #[test]
