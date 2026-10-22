@@ -476,7 +476,9 @@ impl<'g> SccSearch<'g> {
 
     /// Depth-first visit from `root` with an explicit stack of
     /// `(vertex, next edge)` frames, so the depth of a chain does not bound the
-    /// call stack.
+    /// call stack. The frames hold distinct vertices, so the stack never grows
+    /// past the vertex count; a descent that would is not taken, which bounds
+    /// the search even when the adjacency and the per-vertex tables disagree.
     fn visit(&mut self, root: usize) {
         self.discover(root);
         let mut frames = vec![(root, 0_usize)];
@@ -487,7 +489,10 @@ impl<'g> SccSearch<'g> {
             }
             match self.adj.out(v).get(pos).copied() {
                 // Tree edge to an unvisited vertex: descend into it.
-                Some(w) if at(&self.number, w) == 0 => {
+                Some(w)
+                    if at(&self.number, w) == 0
+                        && frames.len() < self.number.len() =>
+                {
                     self.discover(w);
                     frames.push((w, 0));
                 }
