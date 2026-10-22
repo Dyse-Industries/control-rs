@@ -1123,6 +1123,18 @@ mod tests {
     }
 
     #[test]
+    fn a_repeated_condition_id_resolves_only_its_first_row() {
+        let rows = [
+            def("a#FR-1", 1),
+            def("b#FR-1", 2),
+            link("a#VC-1.1", "a#FR-1", &["b#FR-1"], 3),
+            link("a#VC-1.1", "a#FR-1", &["nowhere"], 4),
+        ];
+        let (_, defects) = LinkGraph::resolve(&rows);
+        assert!(defects.is_empty(), "{:?}", messages(&defects));
+    }
+
+    #[test]
     fn link_to_a_document_without_requirements_is_reported() {
         let rows = [
             def("a#FR-1", 1),

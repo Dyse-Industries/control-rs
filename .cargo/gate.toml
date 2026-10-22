@@ -472,8 +472,10 @@ description = "Mutation testing: every file not claimed by another mutants-* gat
 # `>=` where equality of two instants or byte counts cannot occur or changes
 # nothing, `match guard ... with true` where the guarded arm is a no-op for
 # other inputs, and the `cfg(not(unix))` `terminate_tree`, which is not
-# compiled on the CI platform (`terminate_child_only`). The same list is on
-# both shards so `--shard` partitions one mutant list.
+# compiled on the CI platform (`terminate_child_only`). `&&` with `||` in
+# `LinkGraph::render` is equivalent because every removed cyclic edge runs from
+# a link condition to one of its resolved targets, and the link view shows both.
+# The same list is on both shards so `--shard` partitions one mutant list.
 #
 # `children_of`, `stop_tree`, `terminate_tree` and `signal` in gate.rs are
 # excluded for safety, not equivalence: they send `kill -STOP` and `kill -KILL`
@@ -486,7 +488,7 @@ description = "Mutation testing: every file not claimed by another mutants-* gat
 mode = "fail"
 default = false
 command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "replace terminate_child_only with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--exclude-re", "replace (children_of|stop_tree|terminate_tree|signal)\\b", "--exclude-re", " in (children_of|stop_tree|terminate_tree|signal)$", "--shard", "0/2", "--output", "target/ci-artifacts/mutants-ci-0.out"]
+args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "replace terminate_child_only with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--exclude-re", "replace && with \\|\\| in LinkGraph<'a, Acyclic>::render", "--exclude-re", "replace (children_of|stop_tree|terminate_tree|signal)\\b", "--exclude-re", " in (children_of|stop_tree|terminate_tree|signal)$", "--shard", "0/2", "--output", "target/ci-artifacts/mutants-ci-0.out"]
 diff-trigger = ["control-rs-ci/", "control-rs-ets/", "control-rs-ets-host/", ".cargo/trace/", ".cargo/compare.toml", ".cargo/regression.toml"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ci, chunk 1 of 2"
@@ -495,7 +497,7 @@ description = "Mutation testing: control-rs-ci, chunk 1 of 2"
 mode = "fail"
 default = false
 command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "replace terminate_child_only with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--exclude-re", "replace (children_of|stop_tree|terminate_tree|signal)\\b", "--exclude-re", " in (children_of|stop_tree|terminate_tree|signal)$", "--shard", "1/2", "--output", "target/ci-artifacts/mutants-ci-1.out"]
+args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "replace terminate_child_only with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--exclude-re", "replace && with \\|\\| in LinkGraph<'a, Acyclic>::render", "--exclude-re", "replace (children_of|stop_tree|terminate_tree|signal)\\b", "--exclude-re", " in (children_of|stop_tree|terminate_tree|signal)$", "--shard", "1/2", "--output", "target/ci-artifacts/mutants-ci-1.out"]
 diff-trigger = ["control-rs-ci/", "control-rs-ets/", "control-rs-ets-host/", ".cargo/trace/", ".cargo/compare.toml", ".cargo/regression.toml"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ci, chunk 2 of 2"
