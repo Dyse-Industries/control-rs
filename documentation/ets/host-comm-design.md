@@ -497,18 +497,11 @@ reproduce that value.
 
 ### 10. Revision History
 
-| Revision | Date           | Author          | Description                                                                                                               |
-|:---------|:---------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | May 23, 2026   | @MitchellDScott | Initial draft outlining the `HostComms` transport trait.                                                                  |
-| 1.1      | July 18, 2026  | @MitchellDScott | Protocol integration: added binary telemetry framing, serialization protocols, and remote tooling research.               |
-| 1.2      | August 6, 2026 | @MitchellDScott | Transport standardization: standardized on `serial2` host transport, postcard payload schemas, and target crash handling. |
-| 1.3      | September 9, 2026 | @MitchellDScott | Packaging alignment: allocated host DEMUX and transport management to `control-rs-ets-host` and presentation to `control-rs-tui`. |
-| 1.4      | September 9, 2026 | @MitchellDScott | Project split: relocated to `documentation/ets/host-comm-design.md` from the retired xtask project. |
-| 1.5      | September 9, 2026 | @MitchellDScott | Wire contract: added FR-4 and `PROTOCOL_VERSION` with append-only variants and golden byte vectors; cited the postcard encoding rules; §6 restructured per `vv-standards.md`. |
-| 1.6      | September 9, 2026 | @MitchellDScott | Hardening pass: narrowed scope to target trait/drivers, demoted badge to Draft, added FR-5 and Telemetry::TargetInfo, deduplicated NFR-2/C-1, deferred defmt and watchdog to §6.7, and updated §9. |
-| 1.7      | September 16, 2026 | @MitchellDScott | Step 4 marked outstanding repair: `TargetInfo` / `PROTOCOL_VERSION` still absent on the wire; blocks host FR-8 and TUI FR-1. |
-| 1.8      | September 24, 2026 | @MitchellDScott | FR-4/FR-5 stated as unmet until `PROTOCOL_VERSION` and `TargetInfo` ship; `defmt` deferred, not chosen; §4.5 skeleton takes `&Telemetry<'_>`; §4.6 drops `probe-rs` RTT as a host transport; Step 2 driver model undecided; Step 3 uses the `control-rs-macros` panic handler. |
-| 1.9      | September 24, 2026 | @MitchellDScott | Step 4 shipped: `PROTOCOL_VERSION` = 1 and `Telemetry::TargetInfo` in `control-rs-ets::comms`, sent first in discovery; FR-4/FR-5 met. |
+| Revision | Date               | Author          | Description                                                                      |
+|:---------|:-------------------|:----------------|:---------------------------------------------------------------------------------|
+| 1.0      | August 29, 2026    | @MitchellDScott | `HostComms` transport trait, telemetry framing and the `serial2` host transport. |
+| 2.0      | September 18, 2026 | @MitchellDScott | Moved to `documentation/ets/`; wire contract (FR-4) and `TargetInfo` (FR-5).     |
+| 3.0      | September 25, 2026 | @MitchellDScott | Step 4 shipped: `PROTOCOL_VERSION` and `TargetInfo` on the wire.                 |
 
 ---
 
