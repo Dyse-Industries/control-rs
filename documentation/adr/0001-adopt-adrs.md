@@ -69,7 +69,7 @@ design documents cite it by number.
 ## References
 
 [1] `control-rs`, "Requirement Traceability Infrastructure,"
-`documentation/vv/requirement-traceability-design.md`, rev. 1.16, Sept. 2026.
+`documentation/vv/requirement-traceability-design.md`, rev. 3.0, Sept. 2026.
 
 [2] M. Nygard, "Documenting Architecture Decisions," *Cognitect Blog*, Nov.
 
