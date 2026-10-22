@@ -309,21 +309,12 @@ No frame-rate bound is asserted. See §6.3.
 
 ### 10. Revision History
 
-| Revision | Date           | Author          | Description                                                                                                                 |
-|:---------|:---------------|:----------------|:----------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | May 24, 2026   | @MitchellDScott | Initial specification for interactive terminal user interface (TUI) test dashboard.                                         |
-| 1.1      | July 18, 2026  | @MitchellDScott | Architecture & transport: added Ratatui layout, `ServerBridge` async polling channels, and Teensy 4.1 hardware integration. |
-| 1.2      | August 6, 2026 | @MitchellDScott | Protocol alignment: synchronized interactive command schemas with shipped postcard framing and reconnection lifecycles.     |
-| 1.3      | September 9, 2026 | @MitchellDScott | Packaging split: promoted TUI to standalone `control-rs-tui` binary crate consuming `control-rs-ets-host::ServerBridge`.   |
-| 1.4      | September 9, 2026 | @MitchellDScott | Crate split: relocated to `documentation/tui/`; framing, panic detection and reconnection delegated to `control-rs-ets-host`. |
-| 1.5      | September 9, 2026 | @MitchellDScott | Evidence pass: added the research pair and citation layer, grounded the rendering and repaint claims, added the process-per-case alternative, restructured §6 per `vv-standards.md`, and moved the unverified 16 ms budget to 6.7. |
-| 1.6      | September 9, 2026 | @MitchellDScott | Hardening pass: numbered §2.1–§2.3 and added §2.3 Constraints (C-1..C-3), mapped TargetInfo in FR-1, corrected bridge diagram link, completed 6.4 traceability, and standardized References. |
-| 1.7      | September 15, 2026 | @MitchellDScott | NFR-1 is diff-only repaint; 16 ms budget is not a requirement and is not traced. |
-| 1.8      | September 16, 2026 | @MitchellDScott | FR-6 session liveness, FR-7 suite setting inspection and edit; 6.2 discovery/exit/setting rows; §9 Step 4. |
-| 1.9      | September 18, 2026 | @MitchellDScott | Packaging alignment: updated host bridge references to `control-rs-ets-host::ETSBridge`. |
-| 1.10      | September 24, 2026 | @MitchellDScott | Duration column shows the target-reported `time_us`; §6.3 reference corrected. |
-| 1.11     | September 24, 2026 | @MitchellDScott | FR-1 header shows `TargetInfo` protocol, board, clock and FPU, or the protocol mismatch. |
-| 1.12     | September 28, 2026 | @MitchellDScott | The event loop takes its input from an injected event source (the terminal is the production source) and the discovery retry decision is a pure function, so the loop is testable without a terminal. |
+| Revision | Date               | Author          | Description                                                                                                      |
+|:---------|:-------------------|:----------------|:-----------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 29, 2026    | @MitchellDScott | Ratatui test dashboard over the bridge's polling channels.                                                       |
+| 2.0      | September 18, 2026 | @MitchellDScott | Standalone `control-rs-tui` crate; diff-only repaint (NFR-1), session liveness (FR-6) and suite settings (FR-7). |
+| 3.0      | September 25, 2026 | @MitchellDScott | Target-reported durations; `TargetInfo` header (FR-1).                                                           |
+| 4.0      | October 1, 2026    | @MitchellDScott | Injected event source, so the event loop runs without a terminal.                                                |
 
 ---
 
