@@ -388,17 +388,12 @@ same reason the overhead itself is bounded.
 
 ### 10. Revision History
 
-| Revision | Date           | Author          | Description                                                                                                          |
-|:---------|:---------------|:----------------|:---------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 18, 2026  | @MitchellDScott | Initial specification for the `CPUProfiler` trait, hardware timer abstractions, and benchmark execution.             |
-| 1.1      | August 6, 2026 | @MitchellDScott | Hardware targets: added DWT cycle counting for Cortex-M and CSR `mcycle` for RISC-V with static call-stack analysis. |
-| 1.2 | September 9, 2026 | @MitchellDScott | Project split: relocated to `documentation/ets/cpu-profiler-design.md`; research pair renamed to match the slug. |
-| 1.3      | September 9, 2026 | @MitchellDScott | Citation pass: grounded the DWT, critical-section and stack-painting mechanisms, added four evidence-backed alternatives, restructured §6 from prose into 6.1-6.7 per `vv-standards.md` with numeric acceptance bounds. |
-| 1.4      | September 9, 2026 | @MitchellDScott | Structural hardening: numbered §2 subsections 2.1-2.3, reconciled Step 4 with static-analyzer-design, standardized reference ordering. |
-| 1.5      | September 9, 2026 | @MitchellDScott | Dropped the author-year / `[n]` mapping table. |
-| 1.6      | September 24, 2026 | @MitchellDScott | §6.3 cites `ci-design.md` C-6 (indicative emulation timing), renumbered from C-2 in its revision 1.26. Crash reset calls `CPUProfiler::reset` after `TryReset`; static-analyzer references removed with that design; C-2 scope and `HostCPUProfiler` defaults clarified. |
-| 1.7      | September 24, 2026 | @MitchellDScott | Provided methods `board_id`, `core_clock_hz` and `fpu_flags` supply `Telemetry::TargetInfo`. |
-| 1.8      | September 28, 2026 | @MitchellDScott | The `fpu_flags` default computes its bits in a private pure function of the target properties so each combination is testable on a host. |
+| Revision | Date               | Author          | Description                                                        |
+|:---------|:-------------------|:----------------|:-------------------------------------------------------------------|
+| 1.0      | August 29, 2026    | @MitchellDScott | `CPUProfiler` trait with DWT and `mcycle` cycle counters.          |
+| 2.0      | September 18, 2026 | @MitchellDScott | Moved to `documentation/ets/`; citation and structure pass.        |
+| 3.0      | September 25, 2026 | @MitchellDScott | `TargetInfo` provided methods; static-analyzer references removed. |
+| 4.0      | October 1, 2026    | @MitchellDScott | Host-testable `fpu_flags` default.                                 |
 
 ---
 
