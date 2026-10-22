@@ -373,17 +373,11 @@ Steps 1–4 are implemented in `control-rs-macros/src/lib.rs`; discovery via
 
 ### 10. Revision History
 
-| Revision | Date           | Author          | Description                                                                                                                   |
-|:---------|:---------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | May 24, 2026   | @MitchellDScott | Initial specification for embedded test registration and discovery procedural macros.                                         |
-| 1.1      | July 18, 2026  | @MitchellDScott | Linker section codegen: added distributed slice linker-section generation and bare-metal panic redirection in `#[ets_setup]`. |
-| 1.2      | August 6, 2026 | @MitchellDScott | Tooling hardening: unified linker script name (`ets_suites.x`) and added compile-time AST span error diagnostics.             |
-| 1.3      | September 9, 2026 | @MitchellDScott | Packaging alignment: updated host validation reference to `control-rs-ets-host::ServerBridge`.                               |
-| 1.4 | September 9, 2026 | @MitchellDScott | Project split: relocated to `documentation/macros/` from the retired xtask project. |
-| 1.5      | September 9, 2026 | @MitchellDScott | Evidence pass: replaced the pre-evidence research file with a quotes-only pair, cited the `linkme` and `inventory` rejections and the `link_section` semantics, corrected the linkme rejection from a capability claim to an ownership one, restructured §6 per `vv-standards.md`. |
-| 1.6      | September 9, 2026 | @MitchellDScott | Structural hardening: numbered §2 subsections 2.1-2.3, fixed cross-reference to ../ets/embedded-test-server-design.md, recorded #[analysis_budget] deferral in §6.7, standardized reference ordering. |
-| 1.7      | September 9, 2026 | @MitchellDScott | Dropped the author-year / `[n]` mapping table. |
-| 1.8      | September 24, 2026 | @MitchellDScott | `linkme` rejection rests on ownership and dependency cost: 0.3.37 is `no_std` and supports `target_os = "none"`; re-evaluation closed. `#[analysis_budget]` dropped with the withdrawn static-analyzer. |
+| Revision | Date               | Author          | Description                                                                              |
+|:---------|:-------------------|:----------------|:-----------------------------------------------------------------------------------------|
+| 1.0      | August 29, 2026    | @MitchellDScott | Test registration and discovery macros; linker-section codegen and span diagnostics.     |
+| 2.0      | September 18, 2026 | @MitchellDScott | Moved to `documentation/macros/`; evidence for the `linkme` and `inventory` rejections.  |
+| 3.0      | September 25, 2026 | @MitchellDScott | `linkme` rejection rests on ownership and dependency cost; `#[analysis_budget]` dropped. |
 
 ---
 
