@@ -662,26 +662,14 @@ Validation compares against NumPy / SciPy reference models.
 
 ### 10. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                                             |
-|:---------|:----------------|:----------------|:----------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 26, 2026   | @MitchellDScott | Initial draft: SISO transfer functions with separate numerator and denominator polynomials.                                             |
-| 1.1      | August 16, 2026 | @MitchellDScott | Storage parameterization: decoupled polynomial storage into `DenseStorage` traits and added zero-copy views.                            |
-| 1.2      | August 25, 2026 | @MitchellDScott | System operations & algebra: added frequency response evaluation, series/parallel/feedback algebra, and bilinear/Tustin discretization. |
-| 1.3      | August 25, 2026 | @MitchellDScott | V&V standardization: aligned test oracles with frequency sweep tolerances and algebraic invariants.                                     |
-| 1.4      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView`/`StorageViewMut` and `Const<1>` dimensions.                                  |
-| 1.5      | August 26, 2026 | @MitchellDScott | Trimmed near-pole and companion-form caveats; crate-wide standards cite `vv-standards.md`.                                              |
-| 1.6      | August 28, 2026 | @MitchellDScott | Host-scale V&V: clustered-pole $H(j\omega)$ ($N>50$); realization at degree $>32$ stays in §6.7. Caps unchanged.                        |
-| 1.8      | August 28, 2026 | @MitchellDScott | Tustin returns biproper `(D, D)` after clearing $(z+1)^{D-1}$ (matches ZOH).                                                            |
-| 1.9      | August 28, 2026 | @MitchellDScott | §6.4 FR-4 `test_tustin_prewarped` and FR-5 CCF eigenvalue match live in `transfer_function_test_suite`.                                 |
-| 2.0      | August 30, 2026 | @MitchellDScott | Reverted Butterworth constructor from `transfer_function` module; deferred filter synthesis to future `filters/` crate module.          |
-| 2.1      | August 31, 2026 | @MitchellDScott | Added harold multi-source frequency response / discretization cross-validation oracle and updated validation crate paths.                |
-| 2.2      | September 1, 2026 | @MitchellDScott | Added FR-6: Generic pole and zero extraction `poles<const ORDER>()` and `zeros<const DEG>()` delegating to `Polynomial::roots()`.        |
-| 2.3      | September 1, 2026 | @MitchellDScott | Updated `poles()` and `zeros()` to return worst-case buffers `[Complex<T>; D]` and `[Complex<T>; N]` directly from type bounds without generic parameters. |
-| 2.4      | September 22, 2026 | @MitchellDScott | Retargeted §6 validation to `control-rs-verification` (SciPy oracle) and listed the cases not yet cross-validated. |
-| 2.5      | September 23, 2026 | @MitchellDScott | Field bounds use `T: Scalar + SaturatingDiv` (`num-traits-design.md` FR-6). |
-| 2.6      | September 24, 2026 | @MitchellDScott | Structure repaired (§4.11 in §4, one §5, one §6, traceability table rejoined). §4.5 error enum without `thiserror`. §4.7–§4.9 signatures match code (`T: Float` evaluation and discretization, caller-sized `NOUT`/`DOUT`). Discretization error contract and silent truncation recorded in §8. ZOH deferral no longer waits on a pole solver. C-3 recomputed. |
-| 2.7      | September 30, 2026 | @MitchellDScott | Output capacities of `series`, `parallel`, `feedback` and `ORDER` of the canonical forms and `to_discrete_zoh` are type-level constraints (`DimAdd`, `DimMax`); the silent-truncation limitation is removed from §4.8 and §8. |
-| 2.8 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. |
+| Revision | Date               | Author          | Description                                                                    |
+|:---------|:-------------------|:----------------|:-------------------------------------------------------------------------------|
+| 1.0      | August 29, 2026    | @MitchellDScott | SISO transfer functions: frequency response, block algebra and discretization. |
+| 2.0      | September 2, 2026  | @MitchellDScott | Poles and zeros (FR-6) and the harold oracle; Butterworth constructor removed. |
+| 3.0      | September 23, 2026 | @MitchellDScott | Validation retargeted to `control-rs-verification`.                            |
+| 4.0      | September 24, 2026 | @MitchellDScott | Field bounds use `SaturatingDiv`.                                              |
+| 5.0      | September 25, 2026 | @MitchellDScott | Structure repaired; signatures match the code.                                 |
+| 6.0      | September 30, 2026 | @MitchellDScott | Type-level output capacities for the block algebra and canonical forms.        |
 
 ---
 
