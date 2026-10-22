@@ -216,6 +216,9 @@ fn serve(
         match requests.recv_timeout(IDLE) {
             Ok(Request::Quit) | Err(RecvTimeoutError::Disconnected) => break,
             Ok(request) => {
+                // Only run requests release the UI. Idle after SetSetting would
+                // clear Status::Running while a later run is still queued.
+                let release = is_run(&request);
                 let resets = session.results().resets;
                 if let Err(e) = handle(&mut session, request, updates, control)
                 {
@@ -226,7 +229,9 @@ fn serve(
                 if session.results().resets != resets {
                     announce(&session, updates);
                 }
-                let _ = updates.send(Update::Idle);
+                if release {
+                    let _ = updates.send(Update::Idle);
+                }
             }
             Err(RecvTimeoutError::Timeout) => {
                 flush_log(&mut session, updates);
@@ -239,6 +244,14 @@ fn serve(
         }
     }
     session.close();
+}
+
+/// Whether finishing `request` should re-arm the UI with [`Update::Idle`].
+const fn is_run(request: &Request) -> bool {
+    matches!(
+        request,
+        Request::RunCase(_) | Request::RunAll | Request::RunTask { .. }
+    )
 }
 
 /// Repeats discovery until it succeeds. Returns `false` when the worker should stop.
@@ -282,7 +295,14 @@ fn handle(
     control: &RunControl,
 ) -> Result<(), HostError> {
     match request {
-        Request::RunCase(id) => run_case(session, id, updates),
+        Request::RunCase(id) => {
+            // Honor a Stop that raced the queued request (same gate as RunAll).
+            if control.stop_requested() {
+                Ok(())
+            } else {
+                run_case(session, id, updates)
+            }
+        }
         Request::RunAll => {
             for id in session.catalog().case_ids() {
                 if control.stop_requested() {
@@ -470,6 +490,44 @@ mod tests {
         worker.submit(Request::RunAll);
         assert!(!worker.control.stop_requested(), "a new run clears it");
         worker.shutdown();
+    }
+
+    #[test]
+    fn a_stop_before_run_case_skips_the_case() {
+        let fake = ETSBridge::fake(None);
+        for t in discovery(PROTOCOL_VERSION) {
+            fake.tx.send(BridgeMessage::Telemetry(t)).unwrap();
+        }
+        let mut worker = Worker::spawn(fake.bridge, quick());
+        assert!(matches!(next(&worker), Update::Catalog(..)));
+        assert_eq!(next(&worker), Update::Idle);
+        worker.submit(Request::Stop);
+        // Bypass submit so clear() does not withdraw the stop.
+        worker.requests.send(Request::RunCase((0, 0))).unwrap();
+        assert_eq!(next(&worker), Update::Idle);
+        assert!(
+            worker.control.stop_requested(),
+            "stop survives a skipped case"
+        );
+        worker.shutdown();
+    }
+
+    #[test]
+    fn only_run_requests_emit_idle() {
+        assert!(is_run(&Request::RunAll));
+        assert!(is_run(&Request::RunCase((0, 0))));
+        assert!(is_run(&Request::RunTask {
+            id: (0, 1),
+            mode: ExecMode::FreeRunning,
+            period_ns: 1_000_000,
+        }));
+        assert!(!is_run(&Request::SetSetting {
+            suite: 0,
+            name: "gain".into(),
+            value: control_rs_ets::wire::Param::U8(1),
+        }));
+        assert!(!is_run(&Request::Stop));
+        assert!(!is_run(&Request::Quit));
     }
 
     #[test]

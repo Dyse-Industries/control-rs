@@ -506,7 +506,9 @@ impl App {
                 Some(Request::Quit)
             }
             Command::RunAll if self.idle() => {
-                for id in self.catalog.case_ids() {
+                let ids = self.catalog.case_ids();
+                let &first = ids.first()?;
+                for id in ids {
                     self.cases.insert(
                         id,
                         CaseRow {
@@ -516,9 +518,7 @@ impl App {
                     );
                 }
                 self.faults.clear();
-                if let Some(first) = self.catalog.case_ids().first() {
-                    self.status = Status::Running(*first);
-                }
+                self.status = Status::Running(first);
                 Some(Request::RunAll)
             }
             Command::Stop => Some(Request::Stop),
@@ -1147,6 +1147,21 @@ mod tests {
         assert_eq!(key(&mut app, KeyCode::Enter), None);
         app.on_update(Update::Idle);
         assert_eq!(app.status, Status::Idle);
+    }
+
+    #[test]
+    fn a_setting_echo_does_not_rearm_while_a_run_is_armed() {
+        let mut app = ready(false);
+        assert_eq!(key(&mut app, KeyCode::Char('r')), Some(Request::RunAll));
+        assert!(matches!(app.status, Status::Running(_)));
+        // Worker must not emit Idle for SetSetting; a Setting echo alone must
+        // leave the armed run blocked against a second start.
+        app.on_update(Update::Setting(
+            0,
+            Box::new(setting("kp", Param::U8(7))),
+        ));
+        assert!(matches!(app.status, Status::Running(_)));
+        assert_eq!(key(&mut app, KeyCode::Char('r')), None);
     }
 
     #[test]
