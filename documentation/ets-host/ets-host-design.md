@@ -482,18 +482,11 @@ established by `../ets/cpu-profiler-design.md`, not here.
 
 ### 10. Revision History
 
-| Revision | Date              | Author          | Description                                                                |
-|:---------|:------------------|:----------------|:---------------------------------------------------------------------------|
-| 1.0      | September 9, 2026 | @MitchellDScott | Initial draft: host ETS session library extracted from `control-rs-xtask`. |
-| 1.1      | September 9, 2026 | @MitchellDScott | Implementability pass: defined `HostError` and `EtsRunResult`, fixed the timeout return contract, stated the reset delay and reset budget, added FR-8 wire-contract check, admitted `thiserror` under C-3, restructured §6 per `vv-standards.md`. |
-| 1.2      | September 9, 2026 | @MitchellDScott | Hardening pass: updated badge to brightgreen, clarified serial session reset semantics, integrated TargetInfo protocol check, clarified xtask as deprecated parity baseline, and normalized §6.4 catalogue method names. |
-| 1.3      | September 16, 2026 | @MitchellDScott | Retired `vv-standards.md`: §6 authoring rules are `design-template.md` §6. |
-| 1.4      | September 16, 2026 | @MitchellDScott | FR-9 QEMU shorthand names the example crate; 6.2 shorthand and send-failure rows; §9 Phase 5. |
-| 1.5      | September 18, 2026 | @MitchellDScott | Renamed `ServerBridge` to `ETSBridge`, and updated execution result to recorded `RunRecord` data model. |
-| 1.6      | September 18, 2026 | @MitchellDScott | FR-8 marked outstanding (no `PROTOCOL_VERSION` / `TargetInfo` on the wire); `terminate` teardown; send and reconnect keep partial `RunRecord`s; host `crc` dropped. |
-| 1.7      | September 24, 2026 | @MitchellDScott | Phase 4 consumer cutover completed for `control-rs-ci`: the `ets` gate drives `run_headless_ets_with_options` and writes `ets-results.json` (per-target entries, §4.6); the §6.1 QEMU matrix step runs in CI instead of against the removed `control-rs-xtask`; §1, §6.1 back-to-back row, §6.2 outcome row and §8 Renode note no longer cite the removed crate or a Renode CI use. |
-| 1.8      | September 24, 2026 | @MitchellDScott | FR-8 implemented: `TargetInfo` first in discovery, `SessionState::target_info` / `protocol_mismatch`, runner returns `ProtocolMismatch`; §4.3, error table, §6.2 row and §8 updated. |
-| 1.9      | September 28, 2026 | @MitchellDScott | Testability seams without behavior change: reader loops and the `cargo build` command are free functions, and a Unix in-memory `ETSBridge` link (`fake-link` feature) backs runner tests; §6.1 rows added. |
+| Revision | Date               | Author          | Description                                                                              |
+|:---------|:-------------------|:----------------|:-----------------------------------------------------------------------------------------|
+| 1.0      | September 18, 2026 | @MitchellDScott | Host ETS session library extracted from `control-rs-xtask`; `ETSBridge` and `RunRecord`. |
+| 2.0      | September 25, 2026 | @MitchellDScott | `ets` gate cutover (Phase 4); `TargetInfo` protocol check (FR-8).                        |
+| 3.0      | October 1, 2026    | @MitchellDScott | Testability seams and the `fake-link` in-memory link.                                    |
 
 ---
 
