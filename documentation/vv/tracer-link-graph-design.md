@@ -2,7 +2,7 @@
 
 ![Date Badge](https://img.shields.io/badge/Date-October_22,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
-![Design Status Badge](https://img.shields.io/badge/Design%20Status-Ready-brightgreen)
+![Design Status Badge](https://img.shields.io/badge/Design%20Status-Shipped-blue)
 
 ---
 
@@ -523,20 +523,10 @@ process instead of two.
 
 ### 10. Revision History
 
-| Revision | Date             | Author                                              | Description                                                                                                                                                                              |
-|:---------|:-----------------|:----------------------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5                  | Initial design document.                                                                                                                                                                 |
-| 1.2      | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5                  | Added the link graph export. Affects C-1, C-2, C-3, C-4, FR-1, FR-2, FR-3, FR-4, FR-5, NFR-1, NFR-2, NFR-3.                                                                              |
-| 1.3      | October 20, 2026 | @MitchellDScott                                     | Removed AI-generated mark after human review. Affects C-1, C-2, C-3, C-4, FR-1, FR-2, FR-3, FR-4, FR-5, NFR-1, NFR-2, NFR-3.                                                             |
-| 1.4      | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5                  | Empty requirement and document rule, render palette, row-reading rules, public aliases and binary wiring. Affects C-1, C-2, C-3, C-4, FR-1, FR-2, FR-3, FR-4, FR-5, NFR-1, NFR-2, NFR-3. |
-| 1.5      | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5                  | Binary wiring signatures, the qualifier constant and phase status. Affects C-1, C-2, C-3, C-4, FR-1, FR-2, FR-3, FR-4, FR-5, NFR-1, NFR-2, NFR-3.                                        |
-| 2.0      | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5                  | link is a fixed method name: resolve takes no method set, render_graph takes no configuration, and the link_methods configuration is removed.                                            |
-| 3.0      | October 20, 2026 | @MitchellDScott, Claude Opus 5.5                    | Raised graph fill contrast; Mermaid vertices get a dark 2 px outline.                                                                                                                    |
-| 3.1      | October 20, 2026 | @MitchellDScott, Claude Opus 5.5                    | Mermaid vertex colours are written as one style line per vertex instead of classDef classes.                                                                                             |
-| 4.0      | October 21, 2026 | @MitchellDScott, Claude Opus 5.5                    | cut_cycles replaces condense; derive returns condition and requirement statuses; linear evaluation order; usize indices and compressed sparse row adjacency                              |
-| 4.1      | October 21, 2026 | @MitchellDScott, Claude Opus 5.5                    | Cites Feder and Motwani as the primary source of the document vertex                                                                                                                     |
-| 6.0      | October 22, 2026 | @MitchellDScott, Claude Sonnet 5.5, Claude Opus 5.5 | One graph per process: FR-6 added; `link_graph` built once in `trace-check`; `render_graph` takes the graph `derive` read.                                                               |
-| 6.1 | October 22, 2026 | @MitchellDScott, Claude Opus 5.5 | Binary wiring: `link_graph` in `trace::link`, `LinkGraph::rows`, `derive_with_graph` signature and link defect ownership; phase 5 complete. Affects FR-6. |
+| Revision | Date             | Author                                              | Description                                                                                     |
+|:---------|:-----------------|:----------------------------------------------------|:------------------------------------------------------------------------------------------------|
+| 1.0      | October 21, 2026 | @MitchellDScott, Claude Sonnet 5.5, Claude Opus 5.5 | Link graph: target resolution, cycle removal, status derivation and the Mermaid and DOT export. |
+| 2.0      | October 22, 2026 | @MitchellDScott, Claude Sonnet 5.5, Claude Opus 5.5 | One graph per process (FR-6).                                                                   |
 
 ---
 
