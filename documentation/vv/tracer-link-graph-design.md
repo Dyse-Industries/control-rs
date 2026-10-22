@@ -2,7 +2,7 @@
 
 ![Date Badge](https://img.shields.io/badge/Date-October_22,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
-![Design Status Badge](https://img.shields.io/badge/Design%20Status-Draft-orange)
+![Design Status Badge](https://img.shields.io/badge/Design%20Status-Shipped-blue)
 
 ---
 
@@ -483,7 +483,9 @@ input [13]. `LinkCache` is the owning form: it stores indices and numbers, and
 `bind` recovers the names from the rows `trace-check` already parsed. The
 adjacency is already compressed sparse row, which keeps the edges in
 $O (V + E)$ space and iterates the edges of one vertex quickly [14], so its
-offsets and targets are written as they are (NFR-5).
+offsets and targets are written as they are (NFR-5). The snapshot is compact
+JSON, one line, with the default Serde representation of each enum: a link
+target is `{"Resolved":<index>}` or `"Unresolved"`.
 
 | Field                | Role after load                                                                        | Left out                                                |
 |:---------------------|:---------------------------------------------------------------------------------------|:--------------------------------------------------------|
@@ -501,9 +503,12 @@ cases:
 - the format version differs from `CACHE_SCHEMA`;
 - the identity differs from the rows in the length or in any of the seven
   fields of any row (FR-8);
-- an offset table is shorter than the vertex count plus one, or decreases;
+- an offset table does not hold exactly the vertex count plus one entries, or
+  decreases;
+- `links` does not have one entry per vertex;
 - a stored vertex, target, link or removed-edge index is past the last vertex,
   or a vertex's row index is past the last row;
+- the row of a document vertex has no `<doc>#` prefix to name the document;
 - `cyclic` does not have one flag per vertex, or `order` is not a permutation of
   the vertices.
 
@@ -550,8 +555,10 @@ per-run removal of `*.result.json` leaves it, and it is not committed.
 Serves: FR-3, FR-4, FR-5, FR-6, FR-7, FR-10
 
 `control_rs_ci::trace::reqs` gains the constant `LINK_METHOD`, the method name
-`link`. `trace-reqs` calls `resolve` and `cut_cycles` from its checks, reports
-both defect lists and writes the snapshot of 4.5. `trace-check` calls
+`link`. `trace-reqs` calls `reqs::check_with_graph`, which runs the checks of
+`reqs::check`, `resolve` and `cut_cycles` among them, and returns the defects
+and the acyclic graph; `check` delegates to it and keeps its signature.
+`trace-reqs` reports the defects and writes the snapshot of that graph (4.5). `trace-check` calls
 `cached_link_graph` once with the snapshot it read, prints
 `ui::status("Reading", <snapshot path>)` for `GraphSource::Snapshot` or
 `ui::status("Building", "link graph")` for `GraphSource::Built` (FR-10),
@@ -580,6 +587,15 @@ the graph, so each link defect is reported once.
 /// The acyclic link graph of `rows` and its defects: `resolve` then
 /// `cut_cycles`, resolution defects then cycle defects, each in row order.
 pub fn link_graph(rows: &[Row]) -> Built<'_, Acyclic>;
+
+// control_rs_ci::trace::reqs
+
+/// The defects in `rows`, sorted by file, then line, and the acyclic link
+/// graph the link checks built.
+pub fn check_with_graph<'a>(
+    rows: &'a [Row],
+    rules: &Rules,
+) -> (Defects, LinkGraph<'a, Acyclic>);
 
 impl<'a> LinkGraph<'a, Acyclic> {
     /// The rows the graph was built from.
@@ -701,7 +717,7 @@ reports that a snapshot was missed. Writing the snapshot cannot fail the gate:
 | VC-14.7   | FR-9        | `libtest`    | `trace_tests::cli::a_corrupt_snapshot_is_rebuilt_without_a_diagnostic`, `trace_tests::cli::a_missing_snapshot_is_rebuilt_without_a_diagnostic` | `trace-check` prints no defect, warning or error line for a corrupt or a missing snapshot beyond the `Building` progress line, and exits with the code the same rows give with a matching snapshot |
 | VC-15.1   | FR-10       | `libtest`    | `trace_tests::cli::a_bound_snapshot_prints_reading`, `trace_tests::cli::a_rebuilt_graph_prints_building` | `trace-check` prints one `Reading` line naming the snapshot when it binds one and one `Building` line when it builds the graph, and never both |
 | VC-16.1   | NFR-4       | `libtest`    | `trace_tests::cli::a_matching_missing_stale_and_corrupt_snapshot_give_identical_output` | For one set of rows with a link cycle, `trace-check` with a matching, a missing, a stale (`reqs.jsonl` edited after the snapshot) and a corrupt snapshot writes byte-identical `trace-report.json` and diagram, prints the same defect lines and exits with the same code; progress lines are excluded; NFR-4 holds iff all conditions hold |
-| VC-16.2   | NFR-5       | `libtest`    | `control_rs_ci::trace::link::tests::snapshot_size_is_linear_in_the_chain_length` | The snapshot of a chain of $2n$ linked documents is no more than twice the bytes of the snapshot of $n$, for $n$ of 1 000 and 10 000; reading and binding it are covered by the linear-cost analysis of NFR-1 |
+| VC-16.2   | NFR-5       | `libtest`    | `control_rs_ci::trace::link::tests::snapshot_size_is_linear_in_the_chain_length` | The snapshot of a chain of $2n$ linked documents is no more than 2.1 times the bytes of the snapshot of $n$, for $n$ of 1 000 and 10 000; reading and binding it are covered by the linear-cost analysis of NFR-1 |
 | VC-16.3   | NFR-6       | `libtest`    | `control_rs_ci::trace::link::tests::snapshot_is_byte_identical_across_runs`, `control_rs_ci::trace::link::tests::snapshot_matches_the_recorded_golden_file` | Two snapshots of the same rows are byte-identical, and the snapshot of the fixture rows equals `control-rs-ci/tests/data/link-cache.golden.json` byte for byte |
 | VC-16.4   | NFR-6       | `review`     | — | A diff that changes the golden snapshot also increments `CACHE_SCHEMA`, and a diff that increments `CACHE_SCHEMA` changes the golden snapshot |
 | VC-17.1   | C-5         | `libtest`    | `control_rs_ci::trace::link::tests::cache_path_is_the_sibling_of_the_rows_file`, `trace_tests::cli::trace_binaries_take_no_new_required_flag` | `cache_path` replaces the extension of `reqs.jsonl` to give `reqs.link-cache.json` in the same directory, and the usage text of both binaries lists the same required flags as before |
@@ -736,6 +752,9 @@ reports that a snapshot was missed. Writing the snapshot cannot fail the gate:
   directory is not specified.
 - A write cut short is detected because the JSON no longer parses. No checksum
   is stored.
+- Indices are written as decimal numbers, which widen as the graph grows, so
+  the snapshot grows slightly faster than linearly; VC-16.2 allows 2.1 times
+  the bytes for a doubled chain.
 
 ---
 
@@ -806,28 +825,18 @@ have saved plus one failed read.
 | 3. Derivation and wiring | `derive`, calls from `trace-reqs` and `trace-check`                            | FR-3, FR-4          | 2 days   | Complete |
 | 4. Graph export          | `render`, `--graph` for `trace-check`                                          | FR-5, NFR-3, C-4    | 1.5 days | Complete |
 | 5. One graph per process | `link_graph`, `derive_with_graph`, `render_graph` over the graph `derive` read | FR-6, NFR-3         | 0.5 day  | Complete |
-| 6. Link cache              | `LinkCache`, `snapshot`, `bind`, `defects`, `cache_path`, writer in `trace-reqs`, reader in `trace-check` | FR-4, FR-7, FR-8, FR-9, NFR-5, C-2, C-3, C-4, C-5, C-7 | 1.5 days | Planned  |
-| 7. Observability and guard | `GraphSource` progress lines, golden snapshot, `CACHE_SCHEMA` rule, corruption suite                      | FR-10, NFR-4, NFR-6, C-6                               | 1 day    | Planned  |
+| 6. Link cache              | `LinkCache`, `snapshot`, `bind`, `defects`, `cache_path`, writer in `trace-reqs`, reader in `trace-check` | FR-4, FR-7, FR-8, FR-9, NFR-5, C-2, C-3, C-4, C-5, C-7 | 1.5 days | Complete |
+| 7. Observability and guard | `GraphSource` progress lines, golden snapshot, `CACHE_SCHEMA` rule, corruption suite                      | FR-10, NFR-4, NFR-6, C-6                               | 1 day    | Complete |
 
 ---
 
 ### 10. Revision History
 
-| Revision | Date             | Author                                              | Description                                                                                                                                                                              |
-|:---------|:-----------------|:----------------------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5                  | Initial design document.                                                                                                                                                                 |
-| 1.2      | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5                  | Added the link graph export. Affects C-1, C-2, C-3, C-4, FR-1, FR-2, FR-3, FR-4, FR-5, NFR-1, NFR-2, NFR-3.                                                                              |
-| 1.3      | October 20, 2026 | @MitchellDScott                                     | Removed AI-generated mark after human review. Affects C-1, C-2, C-3, C-4, FR-1, FR-2, FR-3, FR-4, FR-5, NFR-1, NFR-2, NFR-3.                                                             |
-| 1.4      | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5                  | Empty requirement and document rule, render palette, row-reading rules, public aliases and binary wiring. Affects C-1, C-2, C-3, C-4, FR-1, FR-2, FR-3, FR-4, FR-5, NFR-1, NFR-2, NFR-3. |
-| 1.5      | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5                  | Binary wiring signatures, the qualifier constant and phase status. Affects C-1, C-2, C-3, C-4, FR-1, FR-2, FR-3, FR-4, FR-5, NFR-1, NFR-2, NFR-3.                                        |
-| 2.0      | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5                  | link is a fixed method name: resolve takes no method set, render_graph takes no configuration, and the link_methods configuration is removed.                                            |
-| 3.0      | October 20, 2026 | @MitchellDScott, Claude Opus 5.5                    | Raised graph fill contrast; Mermaid vertices get a dark 2 px outline.                                                                                                                    |
-| 3.1      | October 20, 2026 | @MitchellDScott, Claude Opus 5.5                    | Mermaid vertex colours are written as one style line per vertex instead of classDef classes.                                                                                             |
-| 4.0      | October 21, 2026 | @MitchellDScott, Claude Opus 5.5                    | cut_cycles replaces condense; derive returns condition and requirement statuses; linear evaluation order; usize indices and compressed sparse row adjacency                              |
-| 4.1      | October 21, 2026 | @MitchellDScott, Claude Opus 5.5                    | Cites Feder and Motwani as the primary source of the document vertex                                                                                                                     |
-| 6.0      | October 22, 2026 | @MitchellDScott, Claude Sonnet 5.5, Claude Opus 5.5 | One graph per process: FR-6 added; `link_graph` built once in `trace-check`; `render_graph` takes the graph `derive` read.                                                               |
-| 6.1      | October 22, 2026 | @MitchellDScott, Claude Opus 5.5                    | Binary wiring: `link_graph` in `trace::link`, `LinkGraph::rows`, `derive_with_graph` signature and link defect ownership; phase 5 complete. Affects FR-6.                                |
-| 7.0 | October 22, 2026 | Claude Opus 5.5 | Link graph snapshot: FR-7 to FR-10, NFR-4 to NFR-6 and C-5 to C-7 added; user model (3.1) and 4.5 Link Cache added, Binary Wiring and Error Handling renumbered to 4.6 and 4.7; `cached_link_graph` binds the snapshot or falls back to `link_graph`; verification, limits, risks, phases 6 and 7 and references 11 to 16 added. |
+| Revision | Date             | Author                                              | Description                                                                                     |
+|:---------|:-----------------|:----------------------------------------------------|:------------------------------------------------------------------------------------------------|
+| 1.0      | October 21, 2026 | @MitchellDScott, Claude Sonnet 5.5, Claude Opus 5.5 | Link graph: target resolution, cycle removal, status derivation and the Mermaid and DOT export. |
+| 2.0      | October 22, 2026 | @MitchellDScott, Claude Sonnet 5.5, Claude Opus 5.5 | One graph per process (FR-6).                                                                   |
+| 3.0      | October 22, 2026 | @MitchellDScott, Claude Opus 5.5                    | Link graph snapshot (FR-7 to FR-10, NFR-4 to NFR-6, C-5 to C-7).                                |
 
 ---
 
