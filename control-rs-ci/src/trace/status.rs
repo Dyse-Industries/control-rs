@@ -16,7 +16,9 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::link::{GraphFormat, LinkGraph, LinkStatuses, RequirementMap};
+use super::link::{
+    Acyclic, GraphFormat, LinkGraph, LinkStatuses, RequirementMap, link_graph,
+};
 use super::reqs::{DecisionRules, RecordStatus, TraceConfig};
 use super::select::select;
 use super::{
@@ -2570,5 +2572,34 @@ mod tests {
         assert_eq!(status(&derived), Some(Status::Fail));
         assert!(!derived.0.passes());
         assert_eq!(derived.1.len(), 2);
+    }
+
+    #[test]
+    fn derive_with_graph_and_render_graph_share_link_graph() {
+        let rows = [
+            definition(),
+            Row {
+                schema: SCHEMA,
+                id: "w#VC-1.1".to_string(),
+                kind: CONDITION.to_string(),
+                file: "w.md".to_string(),
+                line: 2,
+                text: "link".to_string(),
+                parents: vec!["w#FR-1".to_string()],
+                method: Some("link".to_string()),
+                targets: vec!["w#FR-1".to_string()],
+            },
+        ];
+        let (graph, defects) = link_graph(&rows);
+        assert_eq!(graph.rows().len(), 2);
+        let derived = derive_with_graph(
+            &graph,
+            defects,
+            &default_config(),
+            Path::new("."),
+        );
+        assert_eq!(derived.0.requirements.len(), 1);
+        let rendered = render_graph(&graph, &derived.0, GraphFormat::Mermaid);
+        assert!(rendered.starts_with("flowchart TD\n"));
     }
 }
