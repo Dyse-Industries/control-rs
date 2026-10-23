@@ -590,17 +590,35 @@ pub fn parse_compare_results(json_str: &str) -> ResultLog {
     log
 }
 
+/// Value of attribute `attr` on an XML open tag.
+///
+/// Matches `attr=` only at a token boundary so that looking up `name` does not
+/// bind the trailing `name=` of `classname=` (or `filename=`, and similar).
 fn extract_xml_attr(tag: &str, attr: &str) -> Option<String> {
     let pattern = format!("{attr}=");
-    let idx = tag.find(&pattern)?;
-    let after_eq = tag.get(idx.saturating_add(pattern.len())..)?;
-    let quote = after_eq.chars().next()?;
-    if quote != '"' && quote != '\'' {
-        return None;
+    let bytes = tag.as_bytes();
+    let mut from = 0usize;
+    while let Some(rel) = tag.get(from..).and_then(|s| s.find(&pattern)) {
+        let idx = from.saturating_add(rel);
+        let boundary = idx == 0
+            || bytes.get(idx.saturating_sub(1)).is_some_and(|b| {
+                b.is_ascii_whitespace() || *b == b'<' || *b == b'/'
+            });
+        if !boundary {
+            from = idx.saturating_add(1);
+            continue;
+        }
+        let after_eq = tag.get(idx.saturating_add(pattern.len())..)?;
+        let quote = after_eq.chars().next()?;
+        if quote != '"' && quote != '\'' {
+            from = idx.saturating_add(1);
+            continue;
+        }
+        let after_quote = after_eq.get(quote.len_utf8()..)?;
+        let end = after_quote.find(quote)?;
+        return after_quote.get(..end).map(str::to_string);
     }
-    let after_quote = after_eq.get(quote.len_utf8()..)?;
-    let end = after_quote.find(quote)?;
-    Some(after_quote.get(..end)?.to_string())
+    None
 }
 
 fn parse_junit_case_content<'a>(
@@ -1752,6 +1770,23 @@ mod tests {
         let log = parse_junit_results(text);
         assert!(log.ambiguous.contains("dup_test"));
         assert!(log.ambiguous.contains("pkg.Cls::dup_test"));
+    }
+
+    /// `classname` before `name` is the usual producer order. A bare substring
+    /// search for `name=` binds the trailing `name=` of `classname=` and can
+    /// record a passing classname while dropping a failed case of that name.
+    #[test]
+    fn junit_classname_before_name_does_not_false_pass() {
+        let text = r#"<testsuite>
+            <testcase classname="safety_check" name="setup"/>
+            <testcase classname="other" name="safety_check"><failure/></testcase>
+        </testsuite>"#;
+        let log = parse_junit_results(text);
+        assert_eq!(log.outcomes.get("setup"), Some(&true));
+        assert_eq!(log.outcomes.get("safety_check::setup"), Some(&true));
+        assert_eq!(log.outcomes.get("safety_check"), Some(&false));
+        assert_eq!(log.outcomes.get("other::safety_check"), Some(&false));
+        assert_ne!(log.outcomes.get("safety_check"), Some(&true));
     }
 
     fn write_log(dir: &Path, name: &str, text: &str) {
