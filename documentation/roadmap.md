@@ -55,23 +55,36 @@ work follows both tracks.
     - [x] **PR3-11**: Design Status & AI-Use Tracking
       ([#94](https://github.com/Dyse-Industries/control-rs/pull/94))
         - `Approval` phases and `Doc Status` badges on every design document
+    - [x] **PR3-12**: CI & Tracer Maintenance
+      ([#121](https://github.com/Dyse-Industries/control-rs/pull/121),
+      [#122](https://github.com/Dyse-Industries/control-rs/pull/122),
+      [#125](https://github.com/Dyse-Industries/control-rs/pull/125),
+      [#127](https://github.com/Dyse-Industries/control-rs/pull/127);
+      [#124](https://github.com/Dyse-Industries/control-rs/pull/124) reverted in
+      [#128](https://github.com/Dyse-Industries/control-rs/pull/128))
+        - Path-selective gate triggers, stale CI report cleanup, regression
+          warning bound
+        - Condition `link` method and link graph
+          ([tracer-link-graph](vv/tracer-link-graph-design.md))
+- [x] **PR4**: Classical Control Synthesis & Math Core (`src/classical_control`)
+  ([#88](https://github.com/Dyse-Industries/control-rs/pull/88); stacked
+  [#92](https://github.com/Dyse-Industries/control-rs/pull/92) and
+  [#113](https://github.com/Dyse-Industries/control-rs/pull/113))
+    - [x] **PR4-1**: Design (`control-toolboxes/classical-control-design.md`);
+      in review against the implementation
+    - [x] **PR4-2**: Implementation
+    - [x] **PR4-3**: Fine-tuning and polish: `fixed-num-design.md` FR-8 and
+      ADR-0003 for `MulAcc`; `margin`, `root_locus`, `Section`; phase-crossover
+      bracketing, non-finite `Pid` gains
+    - [x] Post-merge scope and correctness pass
+      ([#119](https://github.com/Dyse-Industries/control-rs/pull/119))
 
 ## Track A: Control toolboxes (priority)
 
-Stack order is PR4, PR5, PR6, PR7, PR8, PR9. Each design is a Draft until it is
-signed off. No stack branch merges until its design is approved, implemented
-and `cargo ci` is green.
+Stack order is PR5, PR6, PR7, PR8, PR9. Each design is a Draft on its
+`mdsdev/prN-1-planning` branch until it is signed off. No stack branch merges
+until its design is approved, implemented and `cargo ci` is green.
 
-- [ ] **PR4**: Classical Control Synthesis & Math Core (`src/classical_control`)
-    - [ ] **PR4-1**: Design (`control-toolboxes/classical-control-design.md`);
-      awaiting review and sign-off
-    - [ ] **PR4-2**: Implementation; written on the stack, merges after PR4-1
-    - [ ] **PR4-3**: Fine-tuning and polish (not hardening).
-        - Scope: `fixed-num-design.md` FR-8 and ADR-0003 for `MulAcc`; index,
-          README and `lib.rs` brought up to date
-        - Interface: `margin` summary, inferred `root_locus`, `Section`
-          associated type, `section_count`, example `classical_loop`
-        - Correctness: phase-crossover bracketing, non-finite `Pid` gains
 - [ ] **PR5**: Modern Control Toolbox (`src/modern_control`)
     - Design drafted (`control-toolboxes/modern-control-design.md`); needs the
       Gehrd, Orghr, Hseqr, Trsen and Trsyl kernels (see PR11)
@@ -92,26 +105,54 @@ and `cargo ci` is green.
 ## Track B: ETS overhaul and examples (parallel, non-blocking)
 
 The overhaul replaces the lifecycle-suite branch (`mdsdev/ets-loop-suite`),
-which is archived instead of merged. Implementation PRs build from `main`.
+which is archived instead of merged. Each PR follows one component of the
+current separation and lands one or more complete design documents with their
+implementation, `VC` tests and examples. A document is Approved and traced at
+merge and no later PR adds requirements to it. No design-only PRs. PRs stack
+in dependency order, ETS-1 first.
 
-- [ ] **ETS-1**: Design Overhaul (docs only)
-    - Executive and runner object model, single wire revision 2, ADR-0002,
-      ETS design documents consolidated under `documentation/ets/`
-    - Gates ETS-2 to ETS-6 only
-- [ ] **ETS-2**: Target Executive & Runners (`control-rs-ets`)
-    - Dispatcher with runners, parameter groups, lifecycle tasks, fault path
-- [ ] **ETS-3**: Host Session & Runs (`control-rs-ets-host`)
-    - `Session` over a `Link`; case runs and task runs; observers
-    - Starts in parallel with ETS-2; task runs need the ETS-2 task runner
-- [ ] **ETS-4**: Frontends on `Session` (`control-rs-tui`, `control-rs-ci`)
-    - Task row beside cases; Run all excludes tasks; no task runs in CI
-- [ ] **ETS-5**: Overhaul Examples & Boundary Measurement
-    - QEMU lockstep task and Teensy tasks; DWT cost of the task boundary
-- [ ] **EX-1**: Board Examples
-    - ESP32-C6 (standalone showcase), Arduino Uno R4 Minima, Seeed XIAO
-      nRF52840, Seeed XIAO ESP32-S3 and Teensy 4.0 and 4.1
-    - Independent of the overhaul by choice; moves onto ETS-2 as the API
-      changes
+- [ ] **ETS-1**: Link and Wire Schema (`control-rs-ets`, `control-rs-ets-host`)
+  ([#103](https://github.com/Dyse-Industries/control-rs/pull/103), open)
+    - Design: `ets/ets-link-design.md`, `ets/ets-overview.md`
+    - Whole-message `Link`; stream, USB bulk and CAN links behind features;
+      byte stream trait and `embedded-io` adapter; host counterparts
+    - Schema revision 2 (`PROTOCOL_VERSION = 2`): settings dictionary, task
+      and supervision variants, panic capture; golden vectors
+    - Existing server, session and TUI moved onto the link without new
+      behavior; `link_discovery` example; QEMU and Teensy 4.1 on the stream link
+- [ ] **ETS-2**: Target Executive and Suites (`control-rs-ets`, `control-rs-macros`)
+  ([#104](https://github.com/Dyse-Industries/control-rs/pull/104), open)
+    - Design: `ets/ets-executive-design.md`, `ets/embedded-test-server-design.md`,
+      `ets/test-suite-design.md`, `ets/macros-design.md`,
+      `ets/cpu-profiler-design.md`; ADR-0002
+    - Dispatcher, `Context` and runner; `Atomic`, `Lockstep`, `FreeRunning`,
+      `Periodic` and `Triggered`; `LifecycleTask`, `TaskSlot`, `Packet`
+      derive; named settings (`SettingCell`, static dispatch); board binding;
+      fault path and `safe_state`; step jitter profiling; atomic-free build
+    - Examples: QEMU and Teensy 4.1 firmware with cases, settings and tasks;
+      DWT boundary and jitter measurement
+- [ ] **ETS-3**: Host Session and Runs (`control-rs-ets-host`, `control-rs-ci`)
+  ([#105](https://github.com/Dyse-Industries/control-rs/pull/105), open)
+    - Design: `ets/ets-host-design.md`
+    - `Session`, case and task runs, `TaskSim`, `RunObserver`, device state
+      tracking, unresponsive-run recovery, release-paced runs, settings over
+      the session without the ELF; CI runs cases only
+    - Examples: headless QEMU lockstep task with a host plant; Teensy 4.1
+      periodic and triggered runs
+- [ ] **ETS-4**: Terminal Dashboard (`control-rs-tui`)
+  ([#106](https://github.com/Dyse-Industries/control-rs/pull/106), open)
+    - Design: `ets/tui-design.md`
+    - Tasks beside cases, setting console, fault and link status,
+      release-paced controls, independent monitoring
+    - Examples: TUI sessions against QEMU and Teensy 4.1
+- [ ] **ETS-5**: Board Examples
+  ([#107](https://github.com/Dyse-Industries/control-rs/pull/107), open)
+    - Design: new `ets/board-examples-design.md` (per-board link, throughput
+      and fault reporting requirements)
+    - [ ] ESP32-C6 (standalone showcase), Arduino Uno R4 Minima and Seeed XIAO
+      nRF52840 on the stream link
+      ([#107](https://github.com/Dyse-Industries/control-rs/pull/107))
+    - [ ] Seeed XIAO ESP32-S3 and Teensy 4.0 (not started)
 
 ## Independent
 
@@ -121,11 +162,20 @@ which is archived instead of merged. Implementation PRs build from `main`.
     - Traits and backends are independent of both tracks
     - Open: whether the kernels required by PR5, PR6 and PR8 land in those PRs
       or here
+- [ ] **PR3-13**: Tracer & CI Follow-ups (open)
+    - Tracer method overhaul: one method table, structured compare and JUnit
+      methods ([#131](https://github.com/Dyse-Industries/control-rs/pull/131))
+    - Link graph built once per process, tracer-link-graph FR-6
+      ([#132](https://github.com/Dyse-Industries/control-rs/pull/132))
+    - Bounded SCC traversal in the link graph
+      ([#130](https://github.com/Dyse-Industries/control-rs/pull/130))
+    - Regression verdict floor applied to the added time
+      ([#133](https://github.com/Dyse-Industries/control-rs/pull/133))
 
 ## Release
 
 - [ ] **PR12**: CI Workflow Hardening & Physical-Target ETS Runners (Teensy 4.1)
-    - Follows EX-1 for the board list and ETS-2 for the runner API
+    - Follows ETS-5 for the board list and ETS-2 for the runner API
     - Teensy 4.1 `target-build` gate (`ci-design.md` FR-17; ITCM layout)
     - Workflow: build cache, pinned actions and tools, top-level
       `permissions:`, no duplicate `cargo doc` in the report job
