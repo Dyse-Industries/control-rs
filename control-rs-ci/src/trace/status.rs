@@ -621,6 +621,40 @@ fn extract_xml_attr(tag: &str, attr: &str) -> Option<String> {
     None
 }
 
+/// Index of `needle` in `haystack`, ignoring matches inside `<![CDATA[...]]>`.
+///
+/// `JUnit` producers put log text in CDATA under `system-out` / `system-err`. A
+/// literal `</testcase>` in that text must not close the case early or a later
+/// `<failure>` / `<error>` is dropped and the case records as Pass.
+fn find_outside_cdata(haystack: &str, needle: &str) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    let mut i = 0usize;
+    let mut in_cdata = false;
+    while i < haystack.len() {
+        let rest = haystack.get(i..).unwrap_or_default();
+        if in_cdata {
+            let Some(rel) = rest.find("]]>") else {
+                break;
+            };
+            i = i.saturating_add(rel).saturating_add(3);
+            in_cdata = false;
+            continue;
+        }
+        if rest.starts_with("<![CDATA[") {
+            i = i.saturating_add("<![CDATA[".len());
+            in_cdata = true;
+            continue;
+        }
+        if rest.starts_with(needle) {
+            return Some(i);
+        }
+        i = i.saturating_add(1);
+    }
+    None
+}
+
 fn parse_junit_case_content<'a>(
     open_tag: &str,
     open_end: usize,
@@ -634,7 +668,7 @@ fn parse_junit_case_content<'a>(
         );
     }
     let after_open = rest.get(open_end.saturating_add(1)..).unwrap_or_default();
-    after_open.find("</testcase>").map_or_else(
+    find_outside_cdata(after_open, "</testcase>").map_or_else(
         || {
             (
                 None,
@@ -646,9 +680,13 @@ fn parse_junit_case_content<'a>(
             let after_close = after_open
                 .get(close_idx.saturating_add("</testcase>".len())..)
                 .unwrap_or_default();
-            if inner.contains("<failure") || inner.contains("<error") {
+            // Failure/error markers inside CDATA are producer text, not
+            // elements; only tags outside CDATA judge the case.
+            if find_outside_cdata(inner, "<failure").is_some()
+                || find_outside_cdata(inner, "<error").is_some()
+            {
                 (Some(false), after_close)
-            } else if inner.contains("<skipped") {
+            } else if find_outside_cdata(inner, "<skipped").is_some() {
                 (None, after_close)
             } else {
                 (Some(true), after_close)
@@ -1786,6 +1824,26 @@ mod tests {
         assert_eq!(log.outcomes.get("safety_check::setup"), Some(&true));
         assert_eq!(log.outcomes.get("safety_check"), Some(&false));
         assert_eq!(log.outcomes.get("other::safety_check"), Some(&false));
+        assert_ne!(log.outcomes.get("safety_check"), Some(&true));
+    }
+
+    /// `system-out` CDATA often embeds log markers. A bare `find("</testcase>")`
+    /// closes on the CDATA text, drops the real `<failure>`, and records Pass.
+    #[test]
+    fn junit_cdata_close_marker_does_not_false_pass() {
+        let text = r#"<testsuite>
+            <testcase classname="pkg" name="safety_check">
+                <system-out><![CDATA[log contains </testcase> marker]]></system-out>
+                <failure message="assertion failed"/>
+            </testcase>
+            <testcase classname="pkg" name="mentions_failure">
+                <system-out><![CDATA[look for <failure in logs]]></system-out>
+            </testcase>
+        </testsuite>"#;
+        let log = parse_junit_results(text);
+        assert_eq!(log.outcomes.get("safety_check"), Some(&false));
+        assert_eq!(log.outcomes.get("pkg::safety_check"), Some(&false));
+        assert_eq!(log.outcomes.get("mentions_failure"), Some(&true));
         assert_ne!(log.outcomes.get("safety_check"), Some(&true));
     }
 
