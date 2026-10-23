@@ -476,7 +476,9 @@ impl<'g> SccSearch<'g> {
 
     /// Depth-first visit from `root` with an explicit stack of
     /// `(vertex, next edge)` frames, so the depth of a chain does not bound the
-    /// call stack.
+    /// call stack. The frames hold distinct vertices, so the stack never grows
+    /// past the vertex count; a full stack ends the visit, which bounds the
+    /// search even when the adjacency and the per-vertex tables disagree.
     fn visit(&mut self, root: usize) {
         self.discover(root);
         let mut frames = vec![(root, 0_usize)];
@@ -488,6 +490,9 @@ impl<'g> SccSearch<'g> {
             match self.adj.out(v).get(pos).copied() {
                 // Tree edge to an unvisited vertex: descend into it.
                 Some(w) if at(&self.number, w) == 0 => {
+                    if frames.len() == self.number.len() {
+                        return;
+                    }
                     self.discover(w);
                     frames.push((w, 0));
                 }
@@ -1115,6 +1120,18 @@ mod tests {
                  requirement or condition",
             ]
         );
+    }
+
+    #[test]
+    fn a_repeated_condition_id_resolves_only_its_first_row() {
+        let rows = [
+            def("a#FR-1", 1),
+            def("b#FR-1", 2),
+            link("a#VC-1.1", "a#FR-1", &["b#FR-1"], 3),
+            link("a#VC-1.1", "a#FR-1", &["nowhere"], 4),
+        ];
+        let (_, defects) = LinkGraph::resolve(&rows);
+        assert!(defects.is_empty(), "{:?}", messages(&defects));
     }
 
     #[test]

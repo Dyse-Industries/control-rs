@@ -1512,4 +1512,21 @@ mod tests {
             derived.0.review.iter().map(|c| c.id.as_str()).collect();
         assert_eq!(listed, ["w#VC-1.1"]);
     }
+
+    #[test]
+    fn link_conditions_are_not_listed_as_deferred() {
+        let dir = test_dir("link_deferred");
+        let rows = [
+            definition_of("w#FR-1"),
+            condition_of("w#VC-1.1", "w#FR-1", "deferred", &[]),
+            definition_of("l#FR-1"),
+            condition_of("l#VC-1.1", "l#FR-1", "link", &["w#FR-1"]),
+        ];
+        let derived = derive_with_base(&rows, &default_config(), &dir);
+        let linked = condition_status_of(&derived, "l#VC-1.1").unwrap();
+        assert_eq!(linked.status, Status::Deferred);
+        let listed: Vec<&str> =
+            derived.0.deferred.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(listed, ["w#VC-1.1"]);
+    }
 }
