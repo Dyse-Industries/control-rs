@@ -1810,9 +1810,9 @@ mod tests {
         assert!(log.ambiguous.contains("pkg.Cls::dup_test"));
     }
 
-    /// `classname` before `name` is the usual producer order. A bare substring
-    /// search for `name=` binds the trailing `name=` of `classname=` and can
-    /// record a passing classname while dropping a failed case of that name.
+    /// `classname` before `name` is the usual producer order. A bare search
+    /// for `name=` binds the trailing `name=` of `classname=` and can
+    /// record a passing `classname` while dropping a failed case of that name.
     #[test]
     fn junit_classname_before_name_does_not_false_pass() {
         let text = r#"<testsuite>
