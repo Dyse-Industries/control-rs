@@ -1,6 +1,6 @@
 # Continuous Integration & Quality Gate Infrastructure (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-October_17,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_22,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 ![Design Status Badge](https://img.shields.io/badge/Design%20Status-Ready-brightgreen)
 
@@ -718,13 +718,17 @@ deadlines and performance regression bounds within automated quality gates,
    reports `Performance has regressed.`: the change is significant ($p < 0.05$)
    and the confidence interval of the mean change lies above the noise
    threshold. The benches set the noise threshold to 15 % in their Criterion
-   configuration. The verdict is not enforced for a benchmark whose `time:`
-   estimate is under 1 µs: run-to-run jitter at that scale exceeds any real
-   change, and the latency budget alone bounds the benchmark. Criterion compares the new sample with
-   `target/criterion/<benchmark_id>/base/`, then copies `new/` to `base/`. The
-   baseline runs in the same job, on the same runner, before the gate
-   runs: the job checks out the merge base with `main` (the previous tip of
-   `main` on a push), runs `cargo bench` there and copies its
+   configuration. The verdict is not enforced when the regression adds less
+   than 1 µs to the benchmark's time, $t\,c/(1 + c)$ for the `time:` estimate
+   $t$ and the `change:` estimate $c$ as a fraction, which Criterion states
+   relative to the baseline: a shift that small is within the run-to-run
+   jitter of a shared runner, and the latency budget alone bounds the
+   benchmark. The floor applies to the added time rather than to $t$, so a
+   regression cannot lift its own benchmark over the floor. Criterion compares
+   the new sample with `target/criterion/<benchmark_id>/base/`, then copies
+   `new/` to `base/`. The baseline runs in the same job, on the same runner,
+   before the gate runs: the job checks out the merge base with `main` (the
+   previous tip of `main` on a push), runs `cargo bench` there and copies its
    `target/criterion` into the working tree. A baseline from another runner
    shifts every benchmark by more than the noise threshold, so no artifact is
    carried between runs. If the baseline revision is missing or its benchmarks
@@ -1066,6 +1070,7 @@ full history so the merge-base resolves.
 | 1.42     | October 1, 2026    | @MitchellDScott                    | `miri` and `kani` gate examples match `gate.toml` (§4.3). The workflow path filters include `Cargo.lock`, so a lockfile change runs the gates. FR-20 and FR-21 state the checks the `kani` and `miri` gates perform (no empty-target rule, no 32-bit target, no ignored-test baseline). Teensy and workflow deferrals point at roadmap PR10; the mutation limit records the equivalent-mutant exclusions.                                                                   |
 | 1.43     | October 13, 2026   | @MitchellDScott, Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review.                                                                                                                                                                                                                                                                                                                                                                      |
 | 2.0      | October 17, 2026   | @MitchellDScott, Claude Sonnet 5.5 | Path-gated skip (FR-22 to FR-24, §4.11): `diff-trigger` per gate and a runner-wide list matched once, configurable diff range, environment overrides, opt-in through `--diff`, `--base` and `--head`; plain `cargo ci` and `cargo gate` run every gate while CI and the pre-commit hook opt in; `git diff -z`; alternatives reject workflow trigger filters (not per gate, not local).                                                                                      |
+| 2.1      | October 22, 2026   | @MitchellDScott, Claude            | §4.7 `regression` enforces Criterion's `regressed` verdict only when the regression adds at least 1 µs to the benchmark's time, $t\,c/(1 + c)$ for the `time:` estimate $t$ and the `change:` estimate $c$. A floor on $t$ itself let a regression lift a sub-microsecond benchmark over the floor and fail the gate on a shift within runner jitter.                                                                                                                       |
 
 ---
 

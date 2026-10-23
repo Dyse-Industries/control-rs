@@ -4,10 +4,10 @@
 //! benchmark's `time:` point estimate is checked against a real-time latency
 //! budget (for example, 10 µs jitter for flight control loops). Criterion
 //! compares every benchmark with its `base/` sample and prints a verdict; a
-//! `regressed` verdict fails the gate unless the benchmark runs under
-//! [`VERDICT_FLOOR_NS`], where run-to-run jitter exceeds any real change and
-//! only the budget applies. A benchmark without a baseline is only checked
-//! against its budget.
+//! `regressed` verdict fails the gate unless the regression adds less than
+//! [`VERDICT_FLOOR_NS`] to the benchmark's time, a shift within run-to-run
+//! jitter, where only the budget applies. A benchmark without a baseline is
+//! only checked against its budget.
 //!
 //! Budgets come from a TOML file (`--budgets`, default
 //! `.cargo/regression.toml`). A key names a benchmark identifier exactly, or a
@@ -23,9 +23,9 @@ use std::process::{Command, Stdio};
 use control_rs_ci::cli::{USAGE_EXIT, arg_spelling};
 use control_rs_ci::ui;
 
-/// Time below which Criterion's `regressed` verdict is not enforced. A shift of
-/// a few nanoseconds is within the jitter of a shared runner; the latency
-/// budget still bounds these benchmarks.
+/// Added time below which Criterion's `regressed` verdict is not enforced. A
+/// shift of less than a microsecond is within the jitter of a shared runner;
+/// the latency budget still bounds these benchmarks.
 const VERDICT_FLOOR_NS: f64 = 1e3;
 
 /// Benchmarks in the order Criterion printed them.
@@ -352,6 +352,15 @@ fn parse_change_pct(interval: &str) -> Option<f64> {
         .ok()
 }
 
+/// Time the change added to the benchmark in nanoseconds: the `time:` estimate
+/// less the baseline time implied by the `change:` estimate, which Criterion
+/// states relative to the baseline. `None` without a baseline.
+fn added_ns(result: &BenchmarkResult) -> Option<f64> {
+    result
+        .change_pct
+        .map(|pct| result.time_ns * pct / (100.0 + pct))
+}
+
 /// Returns why a benchmark fails the gate; empty when it passes.
 fn failures(result: &BenchmarkResult, budgets: &Budgets) -> Vec<String> {
     let mut reasons = Vec::new();
@@ -366,9 +375,8 @@ fn failures(result: &BenchmarkResult, budgets: &Budgets) -> Vec<String> {
         Some(_) => {}
         None => reasons.push("No budget registered".to_string()),
     }
-    if result.verdict == Some(Verdict::Regressed)
-        && result.time_ns >= VERDICT_FLOOR_NS
-    {
+    let under_floor = added_ns(result).is_some_and(|ns| ns < VERDICT_FLOOR_NS);
+    if result.verdict == Some(Verdict::Regressed) && !under_floor {
         reasons.push("Criterion reports a performance regression".to_string());
     }
     reasons
@@ -524,6 +532,18 @@ state_space_scaling/zoh_dim/128
                         time:   [1.2340 s 1.2345 s 1.2350 s]
                         change: [+1.0123% +2.3456% +3.6789%] (p = 0.01 < 0.05)
                         Change within noise threshold.
+";
+
+    /// Regressions from a CI run that changed only doc comments under `src/`.
+    const SUB_FLOOR_OUTPUT: &str = "
+classical_control/pid_step
+                        time:   [17.344 ns 17.351 ns 17.358 ns]
+                        change: [+23.360% +25.053% +26.476%] (p = 0.00 < 0.05)
+                        Performance has regressed.
+state_space_scaling/ctrb_dim/16
+                        time:   [1.0253 µs 1.0261 µs 1.0270 µs]
+                        change: [+24.286% +24.633% +24.940%] (p = 0.00 < 0.05)
+                        Performance has regressed.
 ";
 
     fn budgets() -> Budgets {
@@ -704,24 +724,46 @@ state_space_scaling/zoh_dim/128
     }
 
     #[test]
-    fn regressed_verdict_below_the_floor_defers_to_the_budget() {
-        let result = |time_ns| super::BenchmarkResult {
+    fn regression_adding_less_than_the_floor_defers_to_the_budget() {
+        let result = |time_ns, change_pct| super::BenchmarkResult {
             id: "a".to_string(),
             time_ns,
-            change_pct: Some(10.5),
+            change_pct,
             verdict: Some(Verdict::Regressed),
         };
         let budget = |text: &str| {
             Budgets::parse(&format!("[budgets]\n\"a\" = \"{text}\"\n")).unwrap()
         };
         let roomy = budget("1 ms");
-        for time_ns in [15.1, super::VERDICT_FLOOR_NS - 1.0] {
-            let got = failures(&result(time_ns), &roomy);
+        // 3.6 µs to 4.5 µs adds 0.9 µs; 4 µs to 5 µs adds the 1 µs floor.
+        for (time_ns, pct) in [(15.1, 10.5), (4500.0, 25.0)] {
+            let got = failures(&result(time_ns, Some(pct)), &roomy);
             assert!(got.is_empty(), "{got:?}");
         }
-        assert_eq!(failures(&result(super::VERDICT_FLOOR_NS), &roomy).len(), 1);
+        assert_eq!(failures(&result(5000.0, Some(25.0)), &roomy).len(), 1);
+        // Without a `change:` estimate the verdict is enforced.
+        assert_eq!(failures(&result(15.1, None), &roomy).len(), 1);
         // The budget still applies below the floor.
-        assert_eq!(failures(&result(15.1), &budget("10 ns")).len(), 1);
+        let tight = budget("10 ns");
+        assert_eq!(failures(&result(15.1, Some(10.5)), &tight).len(), 1);
+    }
+
+    #[test]
+    fn regressions_within_runner_jitter_pass() {
+        let b = Budgets::parse(
+            "[budgets]\n\"classical_control/*\" = \"1 us\"\n\
+             \"state_space_scaling/*\" = \"50 ms\"\n",
+        )
+        .unwrap();
+        let results = parse_criterion_output(SUB_FLOOR_OUTPUT).unwrap();
+        assert_eq!(results.len(), 2);
+        // 1.0261 µs is +24.633 % over a 0.8233 µs baseline: 0.2028 µs added.
+        for (result, want) in results.iter().zip([3.476, 202.803]) {
+            let added = super::added_ns(result).unwrap();
+            assert!((added - want).abs() < 1e-3, "{}: {added}", result.id);
+            let got = failures(result, &b);
+            assert!(got.is_empty(), "{}: {got:?}", result.id);
+        }
     }
 
     #[test]
