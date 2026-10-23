@@ -454,12 +454,38 @@ impl SessionState {
         }
     }
 
-    /// Handles discovery frames. They are ignored once the run has started.
+    /// Applies a `SettingInfo` / `ParamValue` echo to the suite table (FR-11).
+    fn apply_setting_info(&mut self, telemetry: OwnedTelemetry) {
+        if let OwnedTelemetry::SettingInfo {
+            suite_id,
+            setting_id,
+            name,
+            value,
+            description,
+            ..
+        } = telemetry
+        {
+            self.on_setting_info(
+                suite_id,
+                SettingItem {
+                    setting_id,
+                    name,
+                    description,
+                    value,
+                },
+            );
+        }
+    }
+
+    /// Handles discovery frames. Suite and test catalog entries are ignored once the run has
+    /// started. [`OwnedTelemetry::SettingInfo`] (from `ParamValue`) still applies while
+    /// `Running` so a refused or accepted `Param` write refreshes the host value (FR-11).
     fn handle_catalog(
         &mut self,
         telemetry: OwnedTelemetry,
     ) -> Vec<SessionAction> {
         if self.phase == SessionPhase::Running {
+            self.apply_setting_info(telemetry);
             return Vec::new();
         }
         match telemetry {
@@ -482,22 +508,9 @@ impl SessionState {
                 name,
                 description,
             } => self.on_test_info((suite_id, test_id), name, description),
-            OwnedTelemetry::SettingInfo {
-                suite_id,
-                setting_id,
-                name,
-                value,
-                description,
-                ..
-            } => self.on_setting_info(
-                suite_id,
-                SettingItem {
-                    setting_id,
-                    name,
-                    description,
-                    value,
-                },
-            ),
+            setting @ OwnedTelemetry::SettingInfo { .. } => {
+                self.apply_setting_info(setting);
+            }
             OwnedTelemetry::DiscoveryComplete => {
                 return self.on_discovery_complete();
             }
@@ -1438,6 +1451,41 @@ mod tests {
         let first = suite.settings.iter().find(|s| s.setting_id == 0).unwrap();
         assert!(matches!(first.value, Param::U8(5)));
         assert!(suite.is_ready());
+    }
+
+    #[test]
+    fn a_param_echo_updates_settings_while_running() {
+        let mut state = matched();
+        feed(&mut state, make_test_suite_telemetry(0, "S", 0, 1));
+        feed(&mut state, vec![OwnedTelemetry::DiscoveryComplete]);
+        assert_eq!(state.phase, SessionPhase::Running);
+        let setting = state
+            .suites
+            .first_mut()
+            .and_then(|s| s.settings.first_mut())
+            .expect("discovered setting");
+        assert!(matches!(setting.value, Param::U8(0)));
+        // Optimistic host edit then target echo of the stored (refused) value.
+        setting.value = Param::U8(99);
+        feed(
+            &mut state,
+            vec![OwnedTelemetry::SettingInfo {
+                suite_id: 0,
+                setting_id: 0,
+                name: "setting_0".to_string(),
+                description: "Desc for setting 0".to_string(),
+                value: Param::U8(0),
+                count: 1,
+                min: Param::U8(0),
+                max: Param::U8(u8::MAX),
+            }],
+        );
+        let echoed = state
+            .suites
+            .first()
+            .and_then(|s| s.settings.first())
+            .expect("setting after echo");
+        assert!(matches!(echoed.value, Param::U8(0)));
     }
 
     #[test]
