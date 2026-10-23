@@ -314,6 +314,13 @@ mod tests {
         assert_eq!(e.get(), Param::U32(100));
         assert_eq!(e.set(Param::U32(10)), Ok(()));
         assert_eq!(e.set(Param::U32(500)), Ok(()));
+
+        let u =
+            ParamEntry::u8("u", "", 10).bounded(Param::U8(5), Param::U8(20));
+        assert_eq!(u.set(Param::U8(4)), Err("Value out of bounds"));
+        assert_eq!(u.set(Param::U8(21)), Err("Value out of bounds"));
+        assert_eq!(u.set(Param::U8(5)), Ok(()));
+        assert_eq!(u.set(Param::U8(20)), Ok(()));
     }
 
     #[test]
@@ -321,6 +328,12 @@ mod tests {
         let e =
             ParamEntry::u8("x", "", 3).bounded(Param::U32(1), Param::U32(2));
         assert_eq!((e.min(), e.max()), (Param::U8(0), Param::U8(255)));
+        let e1 =
+            ParamEntry::u8("x1", "", 3).bounded(Param::U8(1), Param::U32(2));
+        assert_eq!((e1.min(), e1.max()), (Param::U8(0), Param::U8(255)));
+        let e2 =
+            ParamEntry::u8("x2", "", 3).bounded(Param::U32(1), Param::U8(2));
+        assert_eq!((e2.min(), e2.max()), (Param::U8(0), Param::U8(255)));
         let f = ParamEntry::f32("y", "", 0.0)
             .bounded(Param::F32(-1.0), Param::F32(1.0));
         assert!(f.set(Param::F32(2.0)).is_err());

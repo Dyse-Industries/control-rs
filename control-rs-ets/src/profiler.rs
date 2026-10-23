@@ -489,6 +489,9 @@ mod tests {
     fn test_default_profiler_methods() {
         let mut profiler = TestProfiler::new();
 
+        assert_eq!(profiler.board_id(), 0);
+        assert_eq!(profiler.core_clock_hz(), 0);
+
         let val = profiler.disable_interrupts(|| 42);
         assert_eq!(val, 42);
 
