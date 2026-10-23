@@ -15,38 +15,11 @@ use regex::Regex;
 use serde::Deserialize;
 
 use super::link::LinkGraph;
+use super::status::{LINK, METHODS};
 use super::{
     CONDITION, DEFINITION, Defect, QUALIFIER, Row, SCHEMA, normalize, read_text,
 };
 use crate::error::{GateError, GateResult};
-
-/// The methods whose conditions name targets that a result artifact must
-/// record as passed. `[method.<m>]` names the artifact of method `<m>`.
-pub const AUTOMATED_METHODS: [&str; 4] = ["libtest", "kani", "pytest", "gtest"];
-
-/// The method whose conditions are planned but not yet verifiable.
-pub const DEFERRED_METHOD: &str = "deferred";
-
-/// The method whose conditions name documents, requirements or conditions as
-/// targets.
-pub const LINK_METHOD: &str = "link";
-
-/// The verification methods a condition may name.
-///
-/// The automated methods, the sign-off methods `analysis`, `inspection` and
-/// `review`, `deferred` and `link`. The set is fixed; a configuration does
-/// not list it.
-pub const METHODS: [&str; 9] = [
-    "libtest",
-    "kani",
-    "pytest",
-    "gtest",
-    "analysis",
-    "inspection",
-    "review",
-    DEFERRED_METHOD,
-    LINK_METHOD,
-];
 
 /// A file and line.
 pub(super) type At<'a> = (&'a str, usize);
@@ -80,6 +53,10 @@ pub type Source<'a> = (&'a str, &'a str);
 
 /// Decision records by ID.
 type Decisions<'a> = BTreeMap<&'a str, &'a Decision>;
+
+/// The status of one decision record: `None` when the record is not the one
+/// asked for, `Some(None)` when it has no status.
+pub(super) type RecordStatus = Option<Option<String>>;
 
 /// A `trace.toml`: the patterns that find requirements in Markdown.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -134,6 +111,9 @@ pub struct MethodConfig {
     /// Relative path to the verification result log artifact (for example, `target/ci-artifacts/test.log`).
     #[serde(default)]
     pub result_artifact: Option<String>,
+    /// Relative path to the directory containing gate outcome artifacts (for example, `target/ci-artifacts`).
+    #[serde(default)]
+    pub result_dir: Option<String>,
     /// Relative path to the log of a secondary interpreter run of the same
     /// tests (for example, `target/ci-artifacts/miri.log`); a passing target
     /// of a crate the log covers but does not record is a W-2 warning.
@@ -226,14 +206,11 @@ impl TraceConfig {
                 error(format!("`{key}` is not a valid pattern: {e}"))
             })
         };
-        if let Some(m) = self
-            .method
-            .keys()
-            .find(|m| !AUTOMATED_METHODS.contains(&m.as_str()))
-        {
+        if let Some(m) = self.method.keys().find(|m| !is_method(m)) {
+            let names: Vec<&str> = METHODS.iter().map(|m| m.name).collect();
             return Err(error(format!(
-                "`method.{m}` names no automated method; expected one of {}",
-                AUTOMATED_METHODS.join(", ")
+                "`method.{m}` names no method; expected one of {}",
+                names.join(", ")
             )));
         }
         compile("doc", &self.doc)?;
@@ -290,6 +267,31 @@ impl DecisionConfig {
     }
 }
 
+impl DecisionRules {
+    /// Whether `target` is exactly one decision ID.
+    pub(super) fn names_decision(&self, target: &str) -> bool {
+        self.id.find(target).is_some_and(|m| m.as_str() == target)
+    }
+
+    /// Whether a requirement may cite a decision of `status`.
+    pub(super) fn accepts(&self, status: &str) -> bool {
+        self.accepted.contains(status)
+    }
+
+    /// The status of decision `id` when `source`, the text of `file`, is its
+    /// record: `None` when it is not, `Some(None)` when it has no status.
+    pub(super) fn record_status(
+        &self,
+        file: &str,
+        source: &str,
+        id: &str,
+    ) -> RecordStatus {
+        decision_record(file, source, self)
+            .filter(|d| d.id == id)
+            .map(|d| d.status)
+    }
+}
+
 impl Rules {
     /// The qualified requirement IDs on `line`, left to right; an ID written
     /// without `<doc>#` belongs to `doc`.
@@ -306,10 +308,10 @@ impl Rules {
     }
 }
 
-/// Whether `name` is one of the verification [`METHODS`].
+/// Whether `name` is one of the verification methods.
 #[must_use]
 pub fn is_method(name: &str) -> bool {
-    METHODS.contains(&name)
+    METHODS.iter().any(|m| m.name == name)
 }
 
 fn default_doc_id() -> String {
@@ -426,7 +428,7 @@ fn scan_condition_line(
         .map(|s| s.content.to_string());
 
     // The targets of a link condition are not its parents.
-    let is_link = method.as_deref().is_some_and(|m| m == LINK_METHOD);
+    let is_link = method.as_deref().is_some_and(|m| m == LINK.name);
     let scanned = if is_link {
         without_target_cell(line)
     } else {
@@ -623,6 +625,18 @@ fn check_condition_methods(
             }
             Some(_) if methods > 1 => {
                 Some(format!("condition {id} names more than one method"))
+            }
+            Some(_) if condition.targets.is_empty() => {
+                Some(format!("condition {id} names no target"))
+            }
+            Some(m) if m == "doc-status" => {
+                let doc =
+                    condition.id.split(QUALIFIER).next().unwrap_or_default();
+                condition.targets.iter().find(|t| *t == doc).map(|target| {
+                    format!(
+                        "condition {id} target '{target}' cannot target its own document"
+                    )
+                })
             }
             Some(_) => None,
         };
@@ -897,9 +911,9 @@ mod tests {
 
 - **FR-1 — Size**: The widget shall report its size.
 
-| Condition | Requirement | Method | Criterion |
-|:----------|:------------|:-------|:----------|
-| VC-1.1    | FR-1        | `libtest` | Exact size match |
+| Condition | Requirement | Method | Target | Criterion |
+|:----------|:------------|:-------|:-------|:----------|
+| VC-1.1    | FR-1        | `libtest` | `widget::tests::size` | Exact size match |
 ";
 
     const DECISIONS: &str = r#"retired = []
@@ -931,7 +945,7 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
 
 | Condition | Requirement | Method    | Target                | Criterion |
 |:----------|:------------|:----------|:----------------------|:----------|
-| VC-1.1    | FR-1        | `review`  | —                     | Reviewed  |
+| VC-1.1    | FR-1        | `doc-status` | `ADR-0001`           | Reviewed  |
 | VC-2.1    | FR-2        | `link`    | `widget#FR-1`         | Holds     |
 ";
 
@@ -1048,7 +1062,7 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
         let plan = rows.get(1).unwrap();
         assert_eq!(
             plan.text,
-            "| VC-1.1 | FR-1 | `libtest` | Exact size match |"
+            "| VC-1.1 | FR-1 | `libtest` | `widget::tests::size` | Exact size match |"
         );
     }
 
@@ -1182,7 +1196,8 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
 
     #[test]
     fn reference_to_an_undefined_id_is_unresolved() {
-        let source = format!("{CLEAN}| VC-7.1 | FR-7 | `libtest` | Other |\n");
+        let source =
+            format!("{CLEAN}| VC-7.1 | FR-7 | `libtest` | `t` | Other |\n");
         assert_eq!(
             messages(&source, &rules()),
             [
@@ -1291,8 +1306,20 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
                 "condition widget#VC-1.1 names unknown method `demo`",
             ),
             (
-                "| VC-1.1 | FR-1 | `libtest` | `review` |",
+                "| VC-1.1 | FR-1 | `review` | — | Other |",
+                "condition widget#VC-1.1 names unknown method `review`",
+            ),
+            (
+                "| VC-1.1 | FR-1 | `deferred` | — | Other |",
+                "condition widget#VC-1.1 names unknown method `deferred`",
+            ),
+            (
+                "| VC-1.1 | FR-1 | `libtest` | `doc-status` |",
                 "condition widget#VC-1.1 names more than one method",
+            ),
+            (
+                "| VC-1.1 | FR-1 | `doc-status` | — | Other |",
+                "condition widget#VC-1.1 names no target",
             ),
         ];
         for (line, message) in cases {
@@ -1301,6 +1328,31 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
             );
             assert_eq!(messages(&source, &rules()), [message], "{line}");
         }
+    }
+
+    #[test]
+    fn a_condition_of_any_method_without_a_target_is_reported() {
+        for method in METHODS.iter().map(|m| m.name) {
+            let source = format!(
+                "# Widget (widget)\n\n- **FR-1 — Size**: The widget shall report.\n\n| VC-1.1 | FR-1 | `{method}` | — | Other |\n"
+            );
+            assert_eq!(
+                messages(&source, &rules()),
+                ["condition widget#VC-1.1 names no target"],
+                "{method}"
+            );
+        }
+    }
+
+    #[test]
+    fn doc_status_targeting_own_document_is_a_defect() {
+        let source = "# Widget (widget)\n\n- **FR-1 — Size**: The widget shall report.\n\n| VC-1.1 | FR-1 | `doc-status` | `widget` | Other |\n";
+        assert_eq!(
+            messages(source, &rules()),
+            [
+                "condition widget#VC-1.1 target 'widget' cannot target its own document"
+            ]
+        );
     }
 
     #[test]
@@ -1313,6 +1365,9 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
         assert!(accepted(""));
         assert!(accepted(
             "\n[method.libtest]\nresult_artifact = \"t.log\"\n"
+        ));
+        assert!(accepted(
+            "\n[method.doc-status]\nresult_artifact = \"t.log\"\n"
         ));
         assert!(!accepted(
             "\n[method.review]\nresult_artifact = \"t.log\"\n"
@@ -1582,10 +1637,7 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
 
     /// Rules with a `link` method.
     fn link_rules() -> Rules {
-        let keys = KEYS.replace("\"review\"]", "\"review\", \"link\"]");
-        let text = format!("{keys}retired = []");
-        let config: TraceConfig = toml::from_str(&text).unwrap();
-        config.rules(Path::new("trace.toml")).unwrap()
+        rules()
     }
 
     #[test]
@@ -1607,7 +1659,7 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
         let empty = LINKED.replace("`widget#FR-1`", "—");
         assert_eq!(
             messages(&empty, &rules),
-            ["condition widget#VC-2.1 names no link target"]
+            ["condition widget#VC-2.1 names no target"]
         );
         let unknown = LINKED.replace("`widget#FR-1`", "`widget#FR-9`");
         assert_eq!(

@@ -30,42 +30,11 @@
 //!
 //! `AdditiveGroup` and `Signed` are withheld from unsigned primitives —
 //! for them `a - b` underflows whenever `a < b`, an ordinary-value failure
-//! rather than a representation-edge one:
+//! rather than a representation-edge one. See [`AdditiveGroup`] for compile-fail verification.
 //!
-//! ```compile_fail
-//! use control_rs::math::num_traits::AdditiveGroup;
+//! `Float` and `Signed` are withheld from `Complex<T>`. See [`Float`] and [`Signed`] for compile-fail verification.
 //!
-//! fn assert_additive_group<T: AdditiveGroup>() {}
-//! assert_additive_group::<u32>(); // u32 does not implement AdditiveGroup
-//! ```
-//!
-//! `Float` and `Signed` are withheld from `Complex<T>`:
-//!
-//! ```compile_fail
-//! use control_rs::math::complex_num::Complex;
-//! use control_rs::math::num_traits::Float;
-//!
-//! fn assert_float<T: Float>() {}
-//! assert_float::<Complex<f64>>();
-//! ```
-//!
-//! ```compile_fail
-//! use control_rs::math::complex_num::Complex;
-//! use control_rs::math::num_traits::Signed;
-//!
-//! fn assert_signed<T: Signed>() {}
-//! assert_signed::<Complex<f64>>();
-//! ```
-//!
-//! `Scalar` is withheld from `Complex<T>` when `T` does not implement `Neg`:
-//!
-//! ```compile_fail
-//! use control_rs::math::complex_num::Complex;
-//! use control_rs::math::num_traits::Scalar;
-//!
-//! fn assert_scalar<T: Scalar>() {}
-//! assert_scalar::<Complex<u8>>();
-//! ```
+//! `Scalar` is withheld from `Complex<T>` when `T` does not implement `Neg`. See [`Scalar`] for compile-fail verification.
 //!
 //! `PartialOrd` is withheld from `Complex<T>`:
 //!
@@ -168,6 +137,14 @@ pub trait Conjugate: Sized {
 /// guarantees underflow-free semantics away from those limits, not full
 /// mathematical totality. Implementors must guarantee `a - b` is well-defined
 /// for all `a`, `b` whose difference is representable in the type.
+///
+/// # Negative Compile-Time Bounds
+/// ```compile_fail
+/// use control_rs::math::num_traits::AdditiveGroup;
+///
+/// fn assert_additive_group<T: AdditiveGroup>() {}
+/// assert_additive_group::<u32>(); // u32 does not implement AdditiveGroup
+/// ```
 pub trait AdditiveGroup: Zero + Sub<Output = Self> {}
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -235,6 +212,15 @@ pub trait Unsigned: Sized {}
 /// Defines a set with a mathematical sign (signed integers and
 /// floating/fixed-point types). Values that implement `Neg` have a
 /// well-defined sign.
+///
+/// # Negative Compile-Time Bounds
+/// ```compile_fail
+/// use control_rs::math::complex_num::Complex;
+/// use control_rs::math::num_traits::Signed;
+///
+/// fn assert_signed<T: Signed>() {}
+/// assert_signed::<Complex<f64>>();
+/// ```
 pub trait Signed:
     AdditiveGroup + Neg<Output = Self> + SaturatingNeg + PartialOrd
 {
@@ -370,6 +356,15 @@ pub trait Trig: Clone + PartialEq + PartialOrd {
 ///
 /// assert!(is_significantly_different(1.001f32, 1.0f32));
 /// assert!(!is_significantly_different(1.00000001f32, 1.0f32));
+/// ```
+///
+/// # Negative Compile-Time Bounds
+/// ```compile_fail
+/// use control_rs::math::complex_num::Complex;
+/// use control_rs::math::num_traits::Float;
+///
+/// fn assert_float<T: Float>() {}
+/// assert_float::<Complex<f64>>();
 /// ```
 pub trait Float:
     Scalar
@@ -523,6 +518,15 @@ pub trait Float:
 ///
 /// assert_eq!(clamp_to_unit(5i32), 1);
 /// assert_eq!(clamp_to_unit(5u32), 1);
+/// ```
+///
+/// # Negative Compile-Time Bounds
+/// ```compile_fail
+/// use control_rs::math::complex_num::Complex;
+/// use control_rs::math::num_traits::Scalar;
+///
+/// fn assert_scalar<T: Scalar>() {}
+/// assert_scalar::<Complex<u8>>();
 /// ```
 pub trait Scalar:
     Zero
