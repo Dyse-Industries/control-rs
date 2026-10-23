@@ -621,30 +621,39 @@ fn extract_xml_attr(tag: &str, attr: &str) -> Option<String> {
     None
 }
 
-/// Index of `needle` in `haystack`, ignoring matches inside `<![CDATA[...]]>`.
+/// If `text` starts with an XML region that must not contribute elements
+/// (comment, CDATA, or processing instruction), returns the suffix after it.
+fn skip_xml_ignored(text: &str) -> Option<&str> {
+    if let Some(after) = text.strip_prefix("<!--") {
+        let end = after.find("-->")?;
+        return after.get(end.saturating_add(3)..);
+    }
+    if let Some(after) = text.strip_prefix("<![CDATA[") {
+        let end = after.find("]]>")?;
+        return after.get(end.saturating_add(3)..);
+    }
+    if let Some(after) = text.strip_prefix("<?") {
+        let end = after.find("?>")?;
+        return after.get(end.saturating_add(2)..);
+    }
+    None
+}
+
+/// Index of `needle` in `haystack`, ignoring matches inside comments and CDATA.
 ///
-/// `JUnit` producers put log text in CDATA under `system-out` / `system-err`. A
-/// literal `</testcase>` in that text must not close the case early or a later
-/// `<failure>` / `<error>` is dropped and the case records as Pass.
+/// `JUnit` producers put log text in CDATA under `system-out` / `system-err`,
+/// and reviews often leave markup in `<!-- ... -->`. A literal `</testcase>`
+/// in those regions must not close the case early or a later `<failure>` /
+/// `<error>` is dropped and the case records as Pass.
 fn find_outside_cdata(haystack: &str, needle: &str) -> Option<usize> {
     if needle.is_empty() {
         return Some(0);
     }
     let mut i = 0usize;
-    let mut in_cdata = false;
     while i < haystack.len() {
         let rest = haystack.get(i..).unwrap_or_default();
-        if in_cdata {
-            let Some(rel) = rest.find("]]>") else {
-                break;
-            };
-            i = i.saturating_add(rel).saturating_add(3);
-            in_cdata = false;
-            continue;
-        }
-        if rest.starts_with("<![CDATA[") {
-            i = i.saturating_add("<![CDATA[".len());
-            in_cdata = true;
+        if let Some(after) = skip_xml_ignored(rest) {
+            i = haystack.len().saturating_sub(after.len());
             continue;
         }
         if rest.starts_with(needle) {
@@ -680,8 +689,8 @@ fn parse_junit_case_content<'a>(
             let after_close = after_open
                 .get(close_idx.saturating_add("</testcase>".len())..)
                 .unwrap_or_default();
-            // Failure/error markers inside CDATA are producer text, not
-            // elements; only tags outside CDATA judge the case.
+            // Failure/error markers inside comments or CDATA are text, not
+            // elements; only tags outside those regions judge the case.
             if find_outside_cdata(inner, "<failure").is_some()
                 || find_outside_cdata(inner, "<error").is_some()
             {
@@ -714,7 +723,8 @@ fn record_junit_case(log: &mut ResultLog, ctx: JunitCaseCtx<'_>, passed: bool) {
 /// Scans `<testcase>` elements for `name` and `classname` attributes, judging each
 /// case by the presence of `<failure>` or `<error>` child elements. Skipped test cases
 /// are ignored (remaining `Unrun`). Conflicting outcomes for the same target are marked
-/// ambiguous.
+/// ambiguous. XML comments, CDATA sections, and processing instructions are skipped so
+/// markup embedded there cannot invent passing cases or close a case early.
 ///
 /// # Arguments
 /// * `text` - `JUnit` XML string or a saved `junit.xml` artifact.
@@ -735,6 +745,11 @@ pub fn parse_junit_results(text: &str) -> ResultLog {
             break;
         };
         rest = rest.get(tag_start..).unwrap_or_default();
+
+        if let Some(after) = skip_xml_ignored(rest) {
+            rest = after;
+            continue;
+        }
 
         if rest.starts_with("</testsuite") {
             current_suite = None;
@@ -1845,6 +1860,27 @@ mod tests {
         assert_eq!(log.outcomes.get("pkg::safety_check"), Some(&false));
         assert_eq!(log.outcomes.get("mentions_failure"), Some(&true));
         assert_ne!(log.outcomes.get("safety_check"), Some(&true));
+    }
+
+    /// Comments and suite-level CDATA can embed a literal `<testcase .../>`.
+    /// Scanning those as elements records a ghost Pass for a case that never ran.
+    #[test]
+    fn junit_comment_or_cdata_testcase_does_not_false_pass() {
+        let text = r#"<?xml version="1.0"?>
+        <testsuite name="SuiteA">
+            <!-- <testcase classname="pkg" name="ghost_pass"/> -->
+            <system-out><![CDATA[<testcase classname="pkg" name="cdata_ghost"/>]]></system-out>
+            <testcase classname="pkg" name="real_fail">
+                <!-- early </testcase> must not drop the failure -->
+                <failure message="assertion failed"/>
+            </testcase>
+        </testsuite>"#;
+        let log = parse_junit_results(text);
+        assert_eq!(log.outcomes.get("ghost_pass"), None);
+        assert_eq!(log.outcomes.get("cdata_ghost"), None);
+        assert_eq!(log.outcomes.get("real_fail"), Some(&false));
+        assert_eq!(log.outcomes.get("pkg::real_fail"), Some(&false));
+        assert_ne!(log.outcomes.get("real_fail"), Some(&true));
     }
 
     fn write_log(dir: &Path, name: &str, text: &str) {
