@@ -1469,6 +1469,32 @@ mod tests {
     }
 
     #[test]
+    fn compare_status_variants_are_parsed() {
+        let text = r#"{
+            "suites": [
+                {
+                    "name": "s_passed",
+                    "status": "passed",
+                    "comparisons": [
+                        {"key": "k1", "signal": "sig_ok", "verdict": "ok"},
+                        {"key": "k2", "signal": "sig_passed", "verdict": "passed"},
+                        {"key": "k3", "signal": "sig_err", "verdict": "error"},
+                        {"key": "k4", "signal": "sig_failed", "verdict": "failed"}
+                    ]
+                },
+                {"name": "s_ok", "status": "ok", "comparisons": []}
+            ]
+        }"#;
+        let log = parse_compare_results(text);
+        assert_eq!(log.outcomes.get("s_passed"), Some(&true));
+        assert_eq!(log.outcomes.get("s_ok"), Some(&true));
+        assert_eq!(log.outcomes.get("sig_ok"), Some(&true));
+        assert_eq!(log.outcomes.get("sig_passed"), Some(&true));
+        assert_eq!(log.outcomes.get("sig_err"), Some(&false));
+        assert_eq!(log.outcomes.get("sig_failed"), Some(&false));
+    }
+
+    #[test]
     fn compare_conflicting_records_are_ambiguous() {
         let text = r#"{
             "suites": [
@@ -1493,6 +1519,7 @@ mod tests {
         <testsuites>
             <testsuite name="SuiteA">
                 <testcase name="test_ok" classname="pkg.ClassA"/>
+                <testcase name='test_single' classname='pkg.ClassSingle'/>
                 <testcase name="test_fail" classname="pkg.ClassA">
                     <failure message="assertion failed">stack trace</failure>
                 </testcase>
@@ -1506,6 +1533,7 @@ mod tests {
         </testsuites>"#;
         let log = parse_junit_results(text);
         assert_eq!(log.outcomes.get("test_ok"), Some(&true));
+        assert_eq!(log.outcomes.get("test_single"), Some(&true));
         assert_eq!(log.outcomes.get("pkg.ClassA::test_ok"), Some(&true));
         assert_eq!(log.outcomes.get("pkg.ClassA.test_ok"), Some(&true));
         assert_eq!(log.outcomes.get("SuiteA::test_ok"), Some(&true));
@@ -2152,6 +2180,23 @@ mod tests {
             condition_of("w#VC-1.1", "w#FR-1", "libtest", &["t::a"]),
             definition_of("l#FR-1"),
             condition_of("l#VC-1.1", "l#FR-1", "link", &["w"]),
+        ];
+        let derived = derive_with_base(&rows, &default_config(), &dir);
+        let linked = condition_status_of(&derived, "l#VC-1.1").unwrap();
+        assert_eq!(linked.status, Status::Fail);
+        assert_eq!(linked.items.len(), 1);
+        assert!(!derived.0.passes());
+    }
+
+    #[test]
+    fn link_takes_the_worst_status_of_the_named_requirements() {
+        let dir = test_dir("link_req");
+        write_log(&dir, "libtest.log", "test t::a ... FAILED\n");
+        let rows = [
+            definition_of("w#FR-1"),
+            condition_of("w#VC-1.1", "w#FR-1", "libtest", &["t::a"]),
+            definition_of("l#FR-1"),
+            condition_of("l#VC-1.1", "l#FR-1", "link", &["w#FR-1"]),
         ];
         let derived = derive_with_base(&rows, &default_config(), &dir);
         let linked = condition_status_of(&derived, "l#VC-1.1").unwrap();
