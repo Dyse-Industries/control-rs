@@ -518,58 +518,64 @@ fn parse_cover_summary(line: &str) -> Option<CoverSummary> {
     Some((m, n))
 }
 
+const fn compare_verdict_passed(verdict: &str) -> bool {
+    verdict.eq_ignore_ascii_case("pass")
+        || verdict.eq_ignore_ascii_case("passed")
+        || verdict.eq_ignore_ascii_case("ok")
+}
+
 fn record_compare_suite(log: &mut ResultLog, suite: &SuiteReport) {
     let suite_name = &suite.name;
-    if !suite_name.is_empty() {
-        if !suite.status.is_empty() {
-            let passed = suite.status.eq_ignore_ascii_case("pass")
-                || suite.status.eq_ignore_ascii_case("passed")
-                || suite.status.eq_ignore_ascii_case("ok");
-            log.record(suite_name.clone(), passed, false);
-        }
+    // Suite-level keys require a name. Comparisons still record bare signal/key
+    // when `name` is absent (`#[serde(default)]`), so a failed anonymous suite
+    // cannot leave an earlier bare Pass unchallenged.
+    if !suite_name.is_empty() && !suite.status.is_empty() {
+        let passed = suite.status.eq_ignore_ascii_case("pass")
+            || suite.status.eq_ignore_ascii_case("passed")
+            || suite.status.eq_ignore_ascii_case("ok");
+        log.record(suite_name.clone(), passed, false);
+    }
 
-        for cmp in &suite.comparisons {
-            let passed = if cmp.verdict.eq_ignore_ascii_case("pass")
-                || cmp.verdict.eq_ignore_ascii_case("passed")
-                || cmp.verdict.eq_ignore_ascii_case("ok")
-            {
-                true
-            } else if cmp.verdict.eq_ignore_ascii_case("fail")
-                || cmp.verdict.eq_ignore_ascii_case("failed")
-                || cmp.verdict.eq_ignore_ascii_case("error")
-            {
-                false
-            } else {
-                continue;
-            };
+    for cmp in &suite.comparisons {
+        // Only pass/passed/ok count as Pass. Missing or unknown verdicts
+        // (including `""` after serde default) fail closed.
+        let passed = compare_verdict_passed(&cmp.verdict);
 
-            if !cmp.signal.is_empty() {
+        if !cmp.signal.is_empty() {
+            if !suite_name.is_empty() {
                 log.record(
                     format!("{suite_name}::{}", cmp.signal),
                     passed,
                     false,
                 );
-                log.record(cmp.signal.clone(), passed, false);
             }
-            if !cmp.key.is_empty() {
+            log.record(cmp.signal.clone(), passed, false);
+        }
+        if !cmp.key.is_empty() {
+            if !suite_name.is_empty() {
                 log.record(format!("{suite_name}::{}", cmp.key), passed, false);
-                log.record(cmp.key.clone(), passed, false);
             }
+            log.record(cmp.key.clone(), passed, false);
         }
     }
 }
 
 /// Parses cross-validation comparison results (`cross-val-report.json`) into a [`ResultLog`].
 ///
-/// Records suite names, `<suite>::<signal>`, `<suite>::<key>`, signal names, and comparison keys.
-/// A suite passes when its status is `"Pass"`. A comparison passes when its verdict is `"pass"`.
-/// Conflicting records for the same key are marked ambiguous.
+/// Records suite names, `<suite>::<signal>`, `<suite>::<key>`, signal names, and
+/// comparison keys. A suite passes when its status is `"Pass"`, `"passed"`, or
+/// `"ok"`. A comparison passes only when its verdict is `"pass"`, `"passed"`, or
+/// `"ok"`; any other verdict (including a missing field that deserializes to
+/// `""`) records Fail. Suites with an empty `name` still contribute bare
+/// signal/key outcomes so anonymous failed suites cannot hide behind an earlier
+/// bare Pass. Conflicting records for the same key are marked ambiguous.
 ///
 /// # Arguments
 /// * `json_str` - JSON string of cross-validation results or a saved `cross-val-report.json` artifact.
 ///
 /// # Returns
-/// A [`ResultLog`] keyed by suite and comparison identifiers.
+/// A [`ResultLog`] keyed by suite and comparison identifiers. Invalid JSON yields
+/// an empty log.
 ///
 /// # Panics
 /// This function does not panic.
@@ -1758,6 +1764,53 @@ mod tests {
         let log = parse_compare_results(text);
         assert!(log.ambiguous.contains("sig"));
         assert!(log.ambiguous.contains("s::sig"));
+    }
+
+    #[test]
+    fn compare_nameless_failed_suite_does_not_false_pass() {
+        // `#[serde(default)]` on SuiteReport::name yields "". Skipping the whole
+        // suite would leave bare `torque` as Pass from the named suite alone.
+        let text = r#"{
+            "suites": [
+                {
+                    "name": "good",
+                    "status": "Pass",
+                    "comparisons": [{"signal": "torque", "verdict": "pass"}]
+                },
+                {
+                    "status": "Fail",
+                    "comparisons": [{"signal": "torque", "verdict": "fail"}]
+                }
+            ]
+        }"#;
+        let log = parse_compare_results(text);
+        assert_eq!(log.outcomes.get("good"), Some(&true));
+        assert!(log.ambiguous.contains("torque"));
+        assert_eq!(log.outcomes.get("good::torque"), Some(&true));
+    }
+
+    #[test]
+    fn compare_missing_verdict_does_not_false_pass() {
+        // Missing `verdict` deserializes to "" and must Fail, not skip, so a
+        // later bare alias cannot keep an earlier Pass without conflict.
+        let text = r#"{
+            "suites": [
+                {
+                    "name": "good",
+                    "status": "Pass",
+                    "comparisons": [{"signal": "torque", "verdict": "pass"}]
+                },
+                {
+                    "name": "bad",
+                    "status": "Fail",
+                    "comparisons": [{"signal": "torque"}]
+                }
+            ]
+        }"#;
+        let log = parse_compare_results(text);
+        assert_eq!(log.outcomes.get("bad"), Some(&false));
+        assert_eq!(log.outcomes.get("bad::torque"), Some(&false));
+        assert!(log.ambiguous.contains("torque"));
     }
 
     #[test]
