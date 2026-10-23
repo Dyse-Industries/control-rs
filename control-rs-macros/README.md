@@ -4,11 +4,12 @@ Procedural macros for ETS firmware images.
 
 | Macro | Generates |
 |:--|:--|
-| `#[ets_suite]` | Suite descriptor and case registration in `.ets_test_suites` |
-| `#[ets_setup]` | Target `main` that runs the server with the returned `Context` |
+| `#[ets_suite]` | Suite descriptor, case wrappers, `ParamEntry` statics (`#[param(min, max)]`) and the `impl LifecycleTask` slot and wrappers, registered in `.ets_test_suites` |
+| `#[derive(Packet)]` | Postcard `Packet` for a serde type |
+| `#[ets_setup]` | Target `main` that runs the server with the returned `Context`, or `(Context, Board)` |
 | `ets_entrypoint!`, `ets_panic!`, `ets_exception!` | Entrypoint, panic handler and exception handler |
 
-[Design](../documentation/macros/macros-design.md) · [Workspace](../README.md)
+[Design](../documentation/ets/macros-design.md) · [Workspace](../README.md)
 
 ## End-User Example
 

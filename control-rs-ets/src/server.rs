@@ -12,18 +12,21 @@
 //!   outcomes to the host.
 //! - **Execution Context**: `Context` owns the link, the CPU profiler and a lock (`CommsLock`)
 //!   that serializes the main loop and the fault path on the link without blocking.
-//! - **Test Index Indicator**: Atomic indicators (`TestIndexIndicator`) tracking the active suite
+//! - **Test Index Indicator**: Single-writer indicators (`TestIndexIndicator`) tracking the active suite
 //!   and item so the fault path can report where a crash happened.
 //! - **Unsupported commands**: A command the server cannot execute yet is answered with an error
 //!   log and changes no state.
 
-use core::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
-
+use crate::board::{Board, NoBoard};
+use crate::cell::StateCell;
+use crate::exec::HookOf;
 use crate::link::{Link, RecvOf, SendOf, UnitOf};
+use crate::run::{
+    Atomic, FreeRunning, Job, Lockstep, Periodic, Runner, Triggered,
+};
 use crate::wire::{
-    Command, ExecMode, ItemState, LogMessage, MAX_MESSAGE_SIZE,
-    PROTOCOL_VERSION, PacketInfo, Param, ParamKey, PayloadEncoding, Telemetry,
-    Verdict,
+    Command, ExecMode, LogMessage, MAX_MESSAGE_SIZE, PROTOCOL_VERSION, Param,
+    ParamKey, Telemetry,
 };
 use crate::{ParamTable, SuiteDescriptor};
 
@@ -71,7 +74,7 @@ const LOG_TARGET: &str = "server";
 /// assert!(lock.try_lock());
 /// ```
 pub struct CommsLock {
-    locked: AtomicBool,
+    locked: StateCell<bool>,
 }
 
 /// Context object that encapsulates the link, CPU profiling utilities and the communication lock.
@@ -174,12 +177,15 @@ pub type TrySendOf<L> = Result<SendOutcome, <L as Link>::Error>;
 /// let server = Server::new(ctx, &[]);
 /// assert_eq!(server.suites.len(), 0);
 /// ```
-pub struct Server<'a, L, P> {
+pub struct Server<'a, L, P, B = NoBoard> {
+    /// The board binding.
+    pub board: B,
     /// The global context containing the link, `cpu_utils` and the comms lock.
     pub context: Context<L, P>,
     /// The registered test suites.
     pub suites: &'a [&'static SuiteDescriptor],
     rx: [u8; MAX_MESSAGE_SIZE],
+    run_rx: [u8; MAX_MESSAGE_SIZE],
 }
 
 /// Result of server operations.
@@ -220,12 +226,14 @@ pub struct TestMetrics {
 /// ```
 pub struct TestIndexIndicator {
     /// Holds the active test index (>= 0) or `IDLE_STATE` (< 0).
-    state: AtomicIsize,
+    state: StateCell<isize>,
 }
 
 /// Borrows of the server that a command handler needs, disjoint from the receive buffer.
-struct Exec<'e, L, P> {
+struct Exec<'e, L, P, B> {
+    board: &'e mut B,
     context: ContextMut<'e, L, P>,
+    rx: &'e mut [u8; MAX_MESSAGE_SIZE],
     suites: &'e [&'static SuiteDescriptor],
 }
 
@@ -240,20 +248,25 @@ impl CommsLock {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            locked: AtomicBool::new(false),
+            locked: StateCell::new(false),
         }
     }
 
     /// Attempts to take the lock without waiting; returns `true` if it was taken.
+    ///
+    /// The fault path, the only other taker, never returns control to the code it interrupted,
+    /// so a check followed by a store needs no read-modify-write.
     pub fn try_lock(&self) -> bool {
-        self.locked
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok()
+        if self.locked.get() {
+            return false;
+        }
+        self.locked.set(true);
+        true
     }
 
     /// Releases the lock.
     pub fn unlock(&self) {
-        self.locked.store(false, Ordering::Release);
+        self.locked.set(false);
     }
 }
 
@@ -410,6 +423,69 @@ impl<L: Link, P: crate::profiler::CPUProfiler> Context<L, P> {
         Ok(())
     }
 
+    /// Answers a parameter request: reads the entry, or writes it first when `value` is set.
+    ///
+    /// The stored value is sent back whether or not a write succeeded. Returns whether a write
+    /// stored a value.
+    ///
+    /// # Errors
+    /// Returns a transport error if sending fails.
+    pub fn param_request(
+        &mut self,
+        (suite_id, params): (u16, ParamTable),
+        key: ParamKey<'_>,
+        value: Option<Param>,
+    ) -> SendOf<L> {
+        let found = match key {
+            ParamKey::Name(name) => {
+                params.iter().position(|p| p.name() == name)
+            }
+            ParamKey::Index(index) => Some(usize::from(index)),
+        };
+        let Some((index, entry)) =
+            found.and_then(|i| params.get(i).map(|&entry| (i, entry)))
+        else {
+            self.report_error_log("Error: Param is unknown")?;
+            return Ok(false);
+        };
+        let stored = match value.map(|new| entry.set(new)) {
+            Some(Err(err)) => {
+                self.report_param_error(entry.name(), err)?;
+                false
+            }
+            Some(Ok(())) => true,
+            None => false,
+        };
+        self.send_param(suite_id, index, params)?;
+        Ok(stored)
+    }
+
+    /// Sends the `ParamValue` of entry `index`.
+    ///
+    /// # Errors
+    /// Returns a transport error if sending fails.
+    pub fn send_param(
+        &mut self,
+        suite_id: u16,
+        index: usize,
+        params: ParamTable,
+    ) -> UnitOf<L> {
+        let Some(&entry) = params.get(index) else {
+            return Ok(());
+        };
+        let _ = self.send_telemetry_locked(&Telemetry::ParamValue {
+            suite: suite_id,
+            index: u16::try_from(index).unwrap_or(u16::MAX),
+            count: u16::try_from(params.len()).unwrap_or(u16::MAX),
+            name: entry.name(),
+            description: entry.description(),
+            value: entry.get(),
+            min: entry.min(),
+            max: entry.max(),
+        })?;
+        Ok(())
+    }
+
     /// Reports a refused parameter write via Log telemetry.
     ///
     /// # Errors
@@ -438,10 +514,32 @@ impl<L: Link, P: crate::profiler::CPUProfiler> Context<L, P> {
     }
 }
 
-impl<'a, L, P> Server<'a, L, P>
+impl<'a, L, P> Server<'a, L, P, NoBoard>
 where
     L: Link,
     P: crate::profiler::CPUProfiler,
+{
+    /// Creates a new `Server` without a board binding.
+    ///
+    /// # Arguments
+    /// * `context` - Link and hardware environment context.
+    /// * `suites` - Slice of static test suite references.
+    ///
+    /// # Returns
+    /// * `Self` - Server instance.
+    pub const fn new(
+        context: Context<L, P>,
+        suites: &'a [&'static SuiteDescriptor],
+    ) -> Self {
+        Self::with_board(context, suites, NoBoard)
+    }
+}
+
+impl<'a, L, P, B> Server<'a, L, P, B>
+where
+    L: Link,
+    P: crate::profiler::CPUProfiler,
+    B: Board,
 {
     /// Exits the server, using target-specific exit mechanisms.
     ///
@@ -459,40 +557,46 @@ where
         cpu_utils.exit()
     }
 
-    /// Creates a new `Server` instance with the given context.
+    /// Creates a new `Server` with a board binding.
     ///
     /// # Arguments
     /// * `context` - Link and hardware environment context.
     /// * `suites` - Slice of static test suite references.
+    /// * `board` - Board binding: watchdog feed, wait and release source.
     ///
     /// # Returns
     /// * `Self` - Server instance.
-    pub const fn new(
+    pub const fn with_board(
         context: Context<L, P>,
         suites: &'a [&'static SuiteDescriptor],
+        board: B,
     ) -> Self {
         Self {
+            board,
             context,
             suites,
             rx: [0; MAX_MESSAGE_SIZE],
+            run_rx: [0; MAX_MESSAGE_SIZE],
         }
     }
 
     /// Runs the interactive server event loop.
     ///
-    /// This function polls for incoming host commands, executes requested cases,
+    /// This function polls for incoming host commands, executes requested executables,
     /// and streams telemetry and metrics back to the host.
     ///
     /// # Returns
-    /// * `ServerResult<L::Error>` - Success or transport error status.
+    /// * `UnitOf<L>` - Success or transport error status.
     ///
     /// # Errors
     /// Returns a transport error `L::Error` propagated from the link if receiving or
     /// transmitting telemetry fails.
     pub fn run(&mut self) -> UnitOf<L> {
         loop {
+            self.board.feed();
             let received = self.context.recv_locked(&mut self.rx)?;
             let Some(len) = received else {
+                self.board.wait();
                 continue;
             };
             let Some(Ok(cmd)) =
@@ -501,7 +605,9 @@ where
                 continue;
             };
             Exec {
+                board: &mut self.board,
                 context: &mut self.context,
+                rx: &mut self.run_rx,
                 suites: self.suites,
             }
             .handle(cmd)?;
@@ -509,17 +615,24 @@ where
     }
 }
 
-impl<L, P> Exec<'_, L, P>
+impl<L, P, B> Exec<'_, L, P, B>
 where
     L: Link,
     P: crate::profiler::CPUProfiler,
+    B: Board,
 {
     fn handle(&mut self, cmd: Command<'_>) -> UnitOf<L> {
         match cmd {
             Command::ListSuites => self.stream_discovery(),
             Command::RunExecutable {
-                suite, item, mode, ..
-            } => self.run_executable(suite, item, mode),
+                suite,
+                item,
+                mode,
+                max_steps,
+                period_ns,
+            } => {
+                self.run_executable((suite, item), mode, (max_steps, period_ns))
+            }
             Command::Param { suite, key, value } => {
                 self.param(suite, key, value)
             }
@@ -535,15 +648,10 @@ where
 
     fn run_executable(
         &mut self,
-        suite_id: u16,
-        item_id: u16,
+        (suite_id, item_id): (u16, u16),
         mode: ExecMode,
+        (max_steps, period_ns): (u64, u32),
     ) -> UnitOf<L> {
-        if mode != ExecMode::Atomic {
-            return self.context.report_error_log(
-                "Error: RunExecutable mode is not supported",
-            );
-        }
         let Some(&suite) = self.suites.get(usize::from(suite_id)) else {
             return self
                 .context
@@ -554,51 +662,60 @@ where
                 .context
                 .report_error_log("Error: RunExecutable item out of range");
         };
-
-        self.send_state(suite_id, item_id, ItemState::Running)?;
-
-        // Track globally in case of panic during test execution
-        CURRENT_SUITE.set_active(usize::from(suite_id));
-        CURRENT_TEST.set_active(usize::from(item_id));
-
-        let metrics = self.context.profile_test(exec.test_fn);
-
-        // Clear global trackers on success
-        CURRENT_SUITE.set_idle();
-        CURRENT_TEST.set_idle();
-
-        self.send_state(suite_id, item_id, ItemState::Done(Verdict::Pass))?;
-
-        let time_ns = metrics.time_us.saturating_mul(1000);
-        let step_ns = u32::try_from(time_ns).unwrap_or(u32::MAX);
-        let _ = self.context.send_telemetry_locked(&Telemetry::RunStats {
-            suite: suite_id,
+        if let Err(message) = self.admit(exec.modes, mode, period_ns) {
+            return self.context.report_error_log(message);
+        }
+        let job = Job {
+            exec,
             item: item_id,
-            steps: 1,
-            time_ns,
-            step_min_ns: step_ns,
-            step_max_ns: step_ns,
-            cycles: metrics.cycles,
-            stack_peak: metrics.stack_peak,
-            jitter_max_ns: 0,
-            missed_releases: 0,
-        })?;
-        Ok(())
+            max_steps,
+            params: suite.params,
+            period_ns,
+            suite: suite_id,
+        };
+        let (board, context, rx) =
+            (&mut *self.board, &mut *self.context, &mut *self.rx);
+        match mode {
+            ExecMode::Atomic => {
+                Runner::<_, _, _, Atomic>::new(board, context, rx, job).run()
+            }
+            ExecMode::Lockstep => {
+                Runner::<_, _, _, Lockstep>::new(board, context, rx, job).run()
+            }
+            ExecMode::FreeRunning => {
+                Runner::<_, _, _, FreeRunning>::new(board, context, rx, job)
+                    .run()
+            }
+            ExecMode::Periodic => {
+                Runner::<_, _, _, Periodic>::new(board, context, rx, job).run()
+            }
+            ExecMode::Triggered => {
+                Runner::<_, _, _, Triggered>::new(board, context, rx, job).run()
+            }
+        }
     }
 
-    fn send_state(
-        &mut self,
-        suite: u16,
-        item: u16,
-        state: ItemState,
-    ) -> UnitOf<L> {
-        let _ = self.context.send_telemetry_locked(&Telemetry::ItemState {
-            suite,
-            item,
-            state,
-            message: None,
-        })?;
-        Ok(())
+    /// Checks that `mode` is allowed and that the board can pace it.
+    fn admit(&self, allowed: u8, mode: ExecMode, period_ns: u32) -> HookOf {
+        if allowed & mode.bit() == 0 {
+            return Err("Error: RunExecutable mode is not allowed");
+        }
+        let source = self.board.has_release_source();
+        match mode {
+            ExecMode::Triggered if !source => {
+                Err("Error: Triggered needs a board release source")
+            }
+            ExecMode::Periodic
+                if !source
+                    && (period_ns == 0
+                        || !self.context.cpu_utils.has_clock()) =>
+            {
+                Err(
+                    "Error: Periodic needs a period and a release source or clock",
+                )
+            }
+            _ => Ok(()),
+        }
     }
 
     fn param(
@@ -612,46 +729,9 @@ where
                 .context
                 .report_error_log("Error: Param suite out of range");
         };
-        let found = match key {
-            ParamKey::Name(name) => {
-                suite.params.iter().position(|p| p.name() == name)
-            }
-            ParamKey::Index(index) => Some(usize::from(index)),
-        };
-        let Some((index, entry)) =
-            found.and_then(|i| suite.params.get(i).map(|&entry| (i, entry)))
-        else {
-            return self.context.report_error_log("Error: Param is unknown");
-        };
-        if let Some(new) = value
-            && let Err(err) = entry.set(new)
-        {
-            self.context.report_param_error(entry.name(), err)?;
-        }
-        // Answer with the stored value, also when a write was refused
-        self.send_param(suite_id, index, suite.params)
-    }
-
-    fn send_param(
-        &mut self,
-        suite_id: u16,
-        index: usize,
-        params: ParamTable,
-    ) -> UnitOf<L> {
-        let Some(&entry) = params.get(index) else {
-            return Ok(());
-        };
-        let _ = self.context.send_telemetry_locked(&Telemetry::ParamValue {
-            suite: suite_id,
-            index: u16::try_from(index).unwrap_or(u16::MAX),
-            count: u16::try_from(params.len()).unwrap_or(u16::MAX),
-            name: entry.name(),
-            description: entry.description(),
-            value: entry.get(),
-            min: entry.min(),
-            max: entry.max(),
-        })?;
-        Ok(())
+        self.context
+            .param_request((suite_id, suite.params), key, value)
+            .map(|_| ())
     }
 
     fn stream_discovery(&mut self) -> UnitOf<L> {
@@ -661,7 +741,7 @@ where
             board_id: cpu.board_id(),
             core_clock_hz: cpu.core_clock_hz(),
             fpu_flags: cpu.fpu_flags(),
-            release_source: false,
+            release_source: self.board.has_release_source(),
         };
         let _ = self.context.send_telemetry_locked(&info)?;
         for (suite_id, &suite) in (0_u16..).zip(self.suites.iter()) {
@@ -693,21 +773,15 @@ where
                     item: item_id,
                     name: exec.name,
                     description: exec.description,
-                    modes: ExecMode::Atomic.bit(),
-                    input: PacketInfo {
-                        type_name: "",
-                        encoding: PayloadEncoding::Postcard,
-                    },
-                    output: PacketInfo {
-                        type_name: "",
-                        encoding: PayloadEncoding::Postcard,
-                    },
-                    link_timeout_ms: 0,
+                    modes: exec.modes,
+                    input: exec.input,
+                    output: exec.output,
+                    link_timeout_ms: exec.link_timeout_ms,
                 },
             )?;
         }
         for index in 0..suite.params.len() {
-            self.send_param(suite_id, index, suite.params)?;
+            self.context.send_param(suite_id, index, suite.params)?;
         }
         Ok(())
     }
@@ -730,7 +804,7 @@ impl TestIndexIndicator {
     ///     * `Some(idx)` - The active suite or test index.
     ///     * `None` - If currently idle.
     pub fn get(&self) -> Option<usize> {
-        let current_state = self.state.load(Ordering::Acquire);
+        let current_state = self.state.get();
 
         if current_state < 0 {
             None
@@ -746,7 +820,7 @@ impl TestIndexIndicator {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            state: AtomicIsize::new(Self::IDLE_STATE),
+            state: StateCell::new(Self::IDLE_STATE),
         }
     }
 
@@ -758,12 +832,12 @@ impl TestIndexIndicator {
         // Explicitly pattern match on the Result
         let safe_index = isize::try_from(index).unwrap_or(Self::IDLE_STATE);
 
-        self.state.store(safe_index, Ordering::Release);
+        self.state.set(safe_index);
     }
 
     /// Sets the indicator back to Idle.
     pub fn set_idle(&self) {
-        self.state.store(Self::IDLE_STATE, Ordering::Release);
+        self.state.set(Self::IDLE_STATE);
     }
 }
 
@@ -771,6 +845,7 @@ impl TestIndexIndicator {
 mod tests {
     extern crate std;
     use super::*;
+    use crate::exec::{TaskIo, TaskOutcome};
     use crate::link::{Link, RecvOf, SendOf};
     use crate::params::ParamEntry;
     use crate::profiler::CPUProfiler;
@@ -794,11 +869,11 @@ mod tests {
         params: SUITE_PARAMS,
     };
 
-    static SUITE_EXECUTABLES: &[ExecDescriptor] = &[ExecDescriptor {
-        description: "dummy_desc",
-        name: "dummy_test",
-        test_fn: dummy_test_fn,
-    }];
+    static SUITE_EXECUTABLES: &[ExecDescriptor] = &[ExecDescriptor::case(
+        "dummy_test",
+        "dummy_desc",
+        dummy_test_fn,
+    )];
 
     static SUITE_PARAMS: ParamTable = &[&TEST_U8_PARAM, &TEST_BOUNDED_PARAM];
 
@@ -817,6 +892,7 @@ mod tests {
     struct MockLink {
         commands: Vec<Command<'static>>,
         fail_on_poll: bool,
+        idle_polls: usize,
         payloads: Payloads,
     }
 
@@ -849,6 +925,9 @@ mod tests {
         }
         fn get_nanos(&self) -> u64 {
             0
+        }
+        fn has_clock(&self) -> bool {
+            false
         }
         fn get_sp(&self) -> usize {
             0
@@ -901,8 +980,10 @@ mod tests {
                 return Err("Poll failed");
             }
             if self.commands.is_empty() {
-                // Return an error to break the infinite server loop
-                return Err("Exit loop");
+                // Return an error after a number of idle polls to end the server loop
+                self.idle_polls =
+                    self.idle_polls.checked_sub(1).ok_or("Exit loop")?;
+                return Ok(None);
             }
             let cmd = self.commands.remove(0);
             let len = postcard::to_slice(&cmd, buf)
@@ -934,8 +1015,9 @@ mod tests {
         }
     }
 
-    fn dummy_test_fn() {
+    fn dummy_test_fn(_: &mut TaskIo<'_>) -> TaskOutcome {
         TEST_CALLED.store(true, Ordering::SeqCst);
+        TaskOutcome::Continue
     }
 
     fn serial() -> std::sync::MutexGuard<'static, ()> {
@@ -948,6 +1030,7 @@ mod tests {
         MockLink {
             commands,
             fail_on_poll: false,
+            idle_polls: 20,
             payloads: Vec::new(),
         }
     }
@@ -1144,6 +1227,118 @@ mod tests {
         );
     }
 
+    /// Runs `f` on an `Exec` over `profiler` with the default board.
+    fn with_exec<P: CPUProfiler, R>(
+        profiler: P,
+        f: impl FnOnce(&Exec<'_, MockLink, P, NoBoard>) -> R,
+    ) -> R {
+        let mut context = Context::new(link_of(Vec::new()), profiler);
+        let mut board = NoBoard;
+        let mut rx = [0u8; MAX_MESSAGE_SIZE];
+        f(&Exec {
+            board: &mut board,
+            context: &mut context,
+            rx: &mut rx,
+            suites: SUITES,
+        })
+    }
+
+    #[test]
+    fn discovery_reports_cases_tasks_and_params_with_metadata() {
+        let _g = serial();
+        let (_, server) = run_bounded(std::vec![Command::ListSuites]);
+        let t = decoded(&server);
+        assert!(matches!(
+            t.as_slice(),
+            [
+                Telemetry::TargetInfo {
+                    release_source: false,
+                    ..
+                },
+                Telemetry::SuiteInfo {
+                    name: "mock_suite",
+                    description: "mock_suite_desc",
+                    executable_count: 1,
+                    param_count: 2,
+                    ..
+                },
+                Telemetry::ExecutableInfo {
+                    name: "dummy_test",
+                    description: "dummy_desc",
+                    modes: 1,
+                    ..
+                },
+                Telemetry::ParamValue {
+                    name: "test_u8",
+                    index: 0,
+                    count: 2,
+                    ..
+                },
+                Telemetry::ParamValue {
+                    name: "test_bounded",
+                    min: Param::U16(1),
+                    max: Param::U16(10),
+                    ..
+                },
+                Telemetry::DiscoveryComplete,
+            ]
+        ));
+    }
+
+    #[test]
+    fn periodic_without_clock_or_source_is_rejected() {
+        let periodic = ExecMode::Periodic.bit();
+        with_exec(HostCPUProfiler, |e| {
+            assert!(e.admit(periodic, ExecMode::Periodic, 1000).is_err());
+        });
+        with_exec(ClockProfiler::new([0; 2], [0; 2]), |e| {
+            assert!(e.admit(periodic, ExecMode::Periodic, 1000).is_ok());
+            assert!(e.admit(periodic, ExecMode::Periodic, 0).is_err());
+        });
+    }
+
+    #[test]
+    fn a_release_source_admits_triggered_and_unpaced_periodic() {
+        struct Sourced;
+        impl Board for Sourced {
+            fn has_release_source(&self) -> bool {
+                true
+            }
+        }
+        let mut context = Context::new(link_of(Vec::new()), HostCPUProfiler);
+        let mut board = Sourced;
+        let mut rx = [0u8; MAX_MESSAGE_SIZE];
+        let e = Exec {
+            board: &mut board,
+            context: &mut context,
+            rx: &mut rx,
+            suites: SUITES,
+        };
+        let all = 0b1_1111;
+        assert!(e.admit(all, ExecMode::Triggered, 0).is_ok());
+        assert!(e.admit(all, ExecMode::Periodic, 0).is_ok());
+    }
+
+    #[test]
+    fn default_binding_runs_all_but_triggered() {
+        with_exec(ClockProfiler::new([0; 2], [0; 2]), |e| {
+            let all = 0b1_1111;
+            for mode in [
+                ExecMode::Atomic,
+                ExecMode::Lockstep,
+                ExecMode::FreeRunning,
+                ExecMode::Periodic,
+            ] {
+                assert!(e.admit(all, mode, 1000).is_ok());
+            }
+            assert!(e.admit(all, ExecMode::Triggered, 0).is_err());
+            assert!(
+                e.admit(ExecMode::Atomic.bit(), ExecMode::Lockstep, 0)
+                    .is_err()
+            );
+        });
+    }
+
     #[test]
     fn heartbeat_try_reset_and_undecodable_messages_are_silent() {
         let _g = serial();
@@ -1216,6 +1411,7 @@ mod tests {
             MockLink {
                 commands: Vec::new(),
                 fail_on_poll: true,
+                idle_polls: 0,
                 payloads: Vec::new(),
             },
             HostCPUProfiler,
