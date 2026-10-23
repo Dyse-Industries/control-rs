@@ -46,6 +46,9 @@ pub struct Packets<'a> {
 pub struct Assembler<const N: usize> {
     buf: [u8; N],
     complete: bool,
+    /// After an overflow on a full packet, remaining packets of that transfer are ignored until a
+    /// short packet ends it (FR-5).
+    discarding: bool,
     len: usize,
 }
 
@@ -98,6 +101,7 @@ impl<const N: usize> Assembler<N> {
         Self {
             buf: [0; N],
             complete: false,
+            discarding: false,
             len: 0,
         }
     }
@@ -105,12 +109,15 @@ impl<const N: usize> Assembler<N> {
     /// Discards any partial message.
     pub const fn reset(&mut self) {
         self.complete = false;
+        self.discarding = false;
         self.len = 0;
     }
 
     /// Adds one received packet and returns the message when the packet ends it.
     ///
     /// A packet shorter than `max_packet` ends the message. An empty message is not returned.
+    /// After an overflow on a full packet, later packets of the same transfer are discarded until
+    /// a short packet arrives so a transfer tail cannot become a phantom message (FR-5).
     ///
     /// # Errors
     /// Returns [`Overflow`] and discards the message if it exceeds `N` bytes.
@@ -118,9 +125,18 @@ impl<const N: usize> Assembler<N> {
         if self.complete {
             self.reset();
         }
+        if self.discarding {
+            if packet.len() < max_packet {
+                self.discarding = false;
+            }
+            return Ok(None);
+        }
         let end = self.len.saturating_add(packet.len());
         let Some(dest) = self.buf.get_mut(self.len..end) else {
-            self.reset();
+            // Overflow on a full packet leaves a short/ZLP terminator still on the wire.
+            self.len = 0;
+            self.complete = false;
+            self.discarding = packet.len() >= max_packet;
             return Err(Overflow);
         };
         dest.copy_from_slice(packet);
@@ -189,6 +205,18 @@ mod tests {
         assert_eq!(rx.push(&[1; 8], 8), Ok(None));
         assert_eq!(rx.push(&[1; 1], 8), Err(Overflow));
         assert_eq!(rx.push(&[2; 3], 8), Ok(Some(&[2u8, 2, 2][..])));
+    }
+
+    #[test]
+    fn overflow_on_a_full_packet_discards_the_rest_of_the_transfer() {
+        let mut rx = Assembler::<512>::new();
+        for _ in 0..8 {
+            assert_eq!(rx.push(&[1; 64], 64), Ok(None));
+        }
+        assert_eq!(rx.push(&[1; 64], 64), Err(Overflow));
+        // Short terminator of the oversized transfer must not assemble as a message.
+        assert_eq!(rx.push(&[9; 24], 64), Ok(None));
+        assert_eq!(rx.push(&[2; 3], 64), Ok(Some(&[2u8, 2, 2][..])));
     }
 
     #[test]
