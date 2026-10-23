@@ -25,6 +25,11 @@ exclude_re = [
     # `RunEnd::drained` already returns `Default::default()`.
     "replace RunEnd::drained -> Self with Default::default\\(\\)",
     "replace > with >= in HeadlessRun<'t>::(drive|retry_discovery)",
+    # Hardware links requiring real devices: Linux ISO-TP CAN socket and USB bulk.
+    "<impl MessageReader for (CanReader|UsbReader)>::next_message",
+    " in open\\b",
+    "replace open -> OpenOf",
+    "replace <impl MessageWriter for (CanWriter|UsbWriter)>::write_message",
     # control-rs-ets: `|` joins two bytes with disjoint bits, a frame buffer
     # shorter than six bytes cannot hold a payload either way, and the
     # Cortex-M and RISC-V profilers only compile for their own targets.
