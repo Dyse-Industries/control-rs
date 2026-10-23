@@ -24,6 +24,15 @@ use super::{
     write_file,
 };
 use crate::error::GateResult;
+use crate::gate::{GateOutcome, RESULT_SUFFIX, Verdict};
+use control_rs_compare::ValidationReport;
+use control_rs_compare::report::SuiteReport;
+
+/// The method whose conditions verify that quality gates succeeded.
+pub(crate) const GATE: TraceCheckMethod = TraceCheckMethod {
+    name: "gate",
+    check: check_gate,
+};
 
 /// The method whose conditions take the status of the link graph.
 pub(crate) const LINK: TraceCheckMethod = TraceCheckMethod {
@@ -32,7 +41,7 @@ pub(crate) const LINK: TraceCheckMethod = TraceCheckMethod {
 };
 
 /// Every verification method; no other list of method names exists.
-pub(crate) const METHODS: [TraceCheckMethod; 6] = [
+pub(crate) const METHODS: [TraceCheckMethod; 7] = [
     TraceCheckMethod {
         name: "libtest",
         check: check_libtest,
@@ -49,6 +58,7 @@ pub(crate) const METHODS: [TraceCheckMethod; 6] = [
         name: "junit",
         check: check_junit,
     },
+    GATE,
     LINK,
     TraceCheckMethod {
         name: "doc-status",
@@ -78,6 +88,17 @@ type TestResultMap = HashMap<String, bool>;
 /// artifact is missing.
 type ResultCache = HashMap<&'static str, Option<ResultLog>>;
 
+/// Result of attempting to load a quality gate outcome artifact.
+#[derive(Debug, Clone)]
+enum GateLoadOutcome {
+    Missing,
+    Invalid(String),
+    Loaded(GateOutcome),
+}
+
+/// Cached outcome of quality gates by target slug.
+type GateCache = HashMap<String, GateLoadOutcome>;
+
 /// File of each traced document, by document name.
 type DocFiles<'a> = BTreeMap<&'a str, &'a str>;
 
@@ -87,6 +108,9 @@ type ByParent<'a> = HashMap<&'a str, Vec<ConditionStatus>>;
 /// Evaluated conditions and the requirement statuses of the link graph.
 type ConditionEvalResult<'a> = (Vec<ConditionStatus>, RequirementMap<'a>);
 
+/// Outcome and status of one `gate` target.
+type GateTargetEval = (ItemOutcome, Status);
+
 /// Outcome and status of one `doc-status` target.
 type DocTargetEval = (ItemOutcome, Status);
 
@@ -95,6 +119,9 @@ type CheckFn = fn(&Row, &mut StatusCtx<'_>) -> ConditionStatus;
 
 /// Parses the text of a result artifact.
 type ParseFn = fn(&str) -> ResultLog;
+
+/// Outcomes and statuses of the targets of one `gate` condition.
+type GateTargets = (Vec<ItemOutcome>, Vec<Status>);
 
 /// Outcomes and statuses of the targets of one `doc-status` condition.
 type DocTargets = (Vec<ItemOutcome>, Vec<Status>);
@@ -245,12 +272,20 @@ pub(crate) struct StatusCtx<'a> {
     config: &'a TraceConfig,
     base: &'a Path,
     results: ResultCache,
+    gates: GateCache,
     interpreter_results: Option<&'a ResultLog>,
     documents: DocFiles<'a>,
     decisions: Option<DecisionRules>,
     patterns: DocumentMetaPatterns,
     defects: &'a mut Defects,
     warnings: &'a mut Vec<InterpreterWarning>,
+}
+
+/// Resolved target document or decision state for `doc-status`.
+struct TargetDocState {
+    status: Option<String>,
+    passed: bool,
+    draft: bool,
 }
 
 /// `trace-report.json`.
@@ -481,57 +516,43 @@ fn parse_cover_summary(line: &str) -> Option<CoverSummary> {
     Some((m, n))
 }
 
-fn record_compare_suite(log: &mut ResultLog, suite: &serde_json::Value) {
-    let Some(suite_name) =
-        suite.get("name").and_then(serde_json::Value::as_str)
-    else {
-        return;
-    };
-    if let Some(status) =
-        suite.get("status").and_then(serde_json::Value::as_str)
-    {
-        let passed = status.eq_ignore_ascii_case("pass")
-            || status.eq_ignore_ascii_case("passed")
-            || status.eq_ignore_ascii_case("ok");
-        log.record(suite_name.to_string(), passed, false);
-    }
+fn record_compare_suite(log: &mut ResultLog, suite: &SuiteReport) {
+    let suite_name = &suite.name;
+    if !suite_name.is_empty() {
+        if !suite.status.is_empty() {
+            let passed = suite.status.eq_ignore_ascii_case("pass")
+                || suite.status.eq_ignore_ascii_case("passed")
+                || suite.status.eq_ignore_ascii_case("ok");
+            log.record(suite_name.clone(), passed, false);
+        }
 
-    let Some(comparisons) = suite
-        .get("comparisons")
-        .and_then(serde_json::Value::as_array)
-    else {
-        return;
-    };
-
-    for cmp in comparisons {
-        let verdict = cmp.get("verdict").and_then(serde_json::Value::as_str);
-        let passed = match verdict {
-            Some(v)
-                if v.eq_ignore_ascii_case("pass")
-                    || v.eq_ignore_ascii_case("passed")
-                    || v.eq_ignore_ascii_case("ok") =>
+        for cmp in &suite.comparisons {
+            let passed = if cmp.verdict.eq_ignore_ascii_case("pass")
+                || cmp.verdict.eq_ignore_ascii_case("passed")
+                || cmp.verdict.eq_ignore_ascii_case("ok")
             {
                 true
-            }
-            Some(v)
-                if v.eq_ignore_ascii_case("fail")
-                    || v.eq_ignore_ascii_case("failed")
-                    || v.eq_ignore_ascii_case("error") =>
+            } else if cmp.verdict.eq_ignore_ascii_case("fail")
+                || cmp.verdict.eq_ignore_ascii_case("failed")
+                || cmp.verdict.eq_ignore_ascii_case("error")
             {
                 false
-            }
-            _ => continue,
-        };
+            } else {
+                continue;
+            };
 
-        if let Some(signal) =
-            cmp.get("signal").and_then(serde_json::Value::as_str)
-        {
-            log.record(format!("{suite_name}::{signal}"), passed, false);
-            log.record(signal.to_string(), passed, false);
-        }
-        if let Some(key) = cmp.get("key").and_then(serde_json::Value::as_str) {
-            log.record(format!("{suite_name}::{key}"), passed, false);
-            log.record(key.to_string(), passed, false);
+            if !cmp.signal.is_empty() {
+                log.record(
+                    format!("{suite_name}::{}", cmp.signal),
+                    passed,
+                    false,
+                );
+                log.record(cmp.signal.clone(), passed, false);
+            }
+            if !cmp.key.is_empty() {
+                log.record(format!("{suite_name}::{}", cmp.key), passed, false);
+                log.record(cmp.key.clone(), passed, false);
+            }
         }
     }
 }
@@ -553,21 +574,16 @@ fn record_compare_suite(log: &mut ResultLog, suite: &serde_json::Value) {
 #[must_use]
 pub fn parse_compare_results(json_str: &str) -> ResultLog {
     let mut log = ResultLog::default();
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(json_str) else {
-        return log;
-    };
-    let suites = if let Some(arr) =
-        value.get("suites").and_then(serde_json::Value::as_array)
+    if let Ok(report) = serde_json::from_str::<ValidationReport>(json_str) {
+        for suite in &report.suites {
+            record_compare_suite(&mut log, suite);
+        }
+    } else if let Ok(suites) =
+        serde_json::from_str::<Vec<SuiteReport>>(json_str)
     {
-        arr.as_slice()
-    } else if let Some(arr) = value.as_array() {
-        arr.as_slice()
-    } else {
-        return log;
-    };
-
-    for suite in suites {
-        record_compare_suite(&mut log, suite);
+        for suite in &suites {
+            record_compare_suite(&mut log, suite);
+        }
     }
     log
 }
@@ -756,7 +772,7 @@ fn artifact_name(config: &TraceConfig, method: &str) -> String {
     config
         .method
         .get(method)
-        .and_then(|m| m.result_artifact.as_deref())
+        .and_then(|m| m.result_artifact.as_deref().or(m.result_dir.as_deref()))
         .map_or_else(|| method.to_string(), file_name)
 }
 
@@ -928,7 +944,7 @@ fn check_kani(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
     let method = ArtifactMethod {
         name: "kani",
         parse: parse_kani_results,
-        strip: false,
+        strip: true,
     };
     check_artifact(row, ctx, &method)
 }
@@ -949,6 +965,155 @@ fn check_junit(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
         strip: false,
     };
     check_artifact(row, ctx, &method)
+}
+
+fn check_gate(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
+    let (items, statuses): GateTargets = row
+        .targets
+        .iter()
+        .map(|target| gate_target(row, target, ctx))
+        .unzip();
+    let derived = statuses.into_iter().max().unwrap_or(Status::Uncovered);
+    condition(row, derived, items)
+}
+
+fn load_gate_outcome(target: &str, ctx: &mut StatusCtx<'_>) -> GateLoadOutcome {
+    let artifact = format!("{target}{RESULT_SUFFIX}");
+    ctx.gates
+        .entry(target.to_string())
+        .or_insert_with(|| {
+            let result_dir = ctx
+                .config
+                .method
+                .get("gate")
+                .and_then(|m| m.result_dir.as_deref())
+                .unwrap_or("target/ci-artifacts");
+            let path = ctx.base.join(result_dir).join(&artifact);
+            match GateOutcome::load_from_file(&path) {
+                Ok(gate_outcome) => {
+                    if gate_outcome.schema == crate::gate::OUTCOME_SCHEMA {
+                        GateLoadOutcome::Loaded(gate_outcome)
+                    } else {
+                        GateLoadOutcome::Invalid(format!(
+                            "unsupported outcome schema version: {}",
+                            gate_outcome.schema
+                        ))
+                    }
+                }
+                Err(crate::error::GateError::Io(err))
+                    if err.kind() == std::io::ErrorKind::NotFound =>
+                {
+                    GateLoadOutcome::Missing
+                }
+                Err(err) => GateLoadOutcome::Invalid(err.to_string()),
+            }
+        })
+        .clone()
+}
+
+fn evaluate_gate_verdict(
+    row: &Row,
+    target: &str,
+    ctx: &mut StatusCtx<'_>,
+    verdict: Verdict,
+) -> GateTargetEval {
+    let outcome = |passed: bool, message: Option<String>| ItemOutcome {
+        target: target.to_string(),
+        passed,
+        message,
+    };
+    match verdict {
+        Verdict::Pass => (outcome(true, None), Status::Pass),
+        Verdict::Fail => {
+            ctx.defects.push(Defect::at(
+                row,
+                format!(
+                    "condition {} target '{target}' failed in quality gate",
+                    row.id
+                ),
+            ));
+            (
+                outcome(false, Some("gate outcome failed".to_string())),
+                Status::Fail,
+            )
+        }
+        Verdict::Skipped => {
+            ctx.defects.push(Defect::at(
+                row,
+                format!(
+                    "condition {} target '{target}' gate outcome was skipped",
+                    row.id
+                ),
+            ));
+            (
+                outcome(false, Some("gate outcome was skipped".to_string())),
+                Status::Fail,
+            )
+        }
+        Verdict::Warn => {
+            ctx.defects.push(Defect::at(
+                row,
+                format!(
+                    "condition {} target '{target}' gate outcome has warnings",
+                    row.id
+                ),
+            ));
+            (
+                outcome(false, Some("gate outcome has warnings".to_string())),
+                Status::Fail,
+            )
+        }
+    }
+}
+
+fn gate_target(
+    row: &Row,
+    target: &str,
+    ctx: &mut StatusCtx<'_>,
+) -> GateTargetEval {
+    let outcome = |passed: bool, message: Option<String>| ItemOutcome {
+        target: target.to_string(),
+        passed,
+        message,
+    };
+    let artifact = format!("{target}{RESULT_SUFFIX}");
+    match load_gate_outcome(target, ctx) {
+        GateLoadOutcome::Missing => {
+            ctx.defects.push(Defect::at(
+                row,
+                format!(
+                    "condition {} target '{target}' not found: {artifact} is missing",
+                    row.id
+                ),
+            ));
+            (
+                outcome(
+                    false,
+                    Some("gate outcome artifact missing".to_string()),
+                ),
+                Status::Unrun,
+            )
+        }
+        GateLoadOutcome::Invalid(err) => {
+            ctx.defects.push(Defect::at(
+                row,
+                format!(
+                    "condition {} target '{target}' in {artifact} is invalid: {err}",
+                    row.id
+                ),
+            ));
+            (
+                outcome(
+                    false,
+                    Some("gate outcome artifact invalid".to_string()),
+                ),
+                Status::Fail,
+            )
+        }
+        GateLoadOutcome::Loaded(gate_outcome) => {
+            evaluate_gate_verdict(row, target, ctx, gate_outcome.verdict)
+        }
+    }
 }
 
 /// The derived graph gives every link condition it interned its status, so a
@@ -972,14 +1137,11 @@ fn check_doc_status(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
     condition(row, derived, items)
 }
 
-/// The outcome of one `doc-status` target: a decision ID or a traced
-/// document name.
-fn doc_target(
-    row: &Row,
+fn find_doc_or_decision_status(
     target: &str,
-    ctx: &mut StatusCtx<'_>,
-) -> DocTargetEval {
-    let found = if ctx
+    ctx: &StatusCtx<'_>,
+) -> Option<TargetDocState> {
+    if ctx
         .decisions
         .as_ref()
         .is_some_and(|rules| rules.names_decision(target))
@@ -988,22 +1150,48 @@ fn doc_target(
             let accepted = status.as_deref().is_some_and(|s| {
                 ctx.decisions.as_ref().is_some_and(|r| r.accepts(s))
             });
-            (status, accepted, false)
+            TargetDocState {
+                status,
+                passed: accepted,
+                draft: false,
+            }
         })
     } else {
         document_status(target, ctx).map(|status| {
             let accepted =
                 matches!(status.as_deref(), Some("Ready" | "Shipped"));
             let draft = status.as_deref() == Some("Draft");
-            (status, accepted || draft, draft)
+            TargetDocState {
+                status,
+                passed: accepted || draft,
+                draft,
+            }
         })
-    };
+    }
+}
+
+/// The outcome of one `doc-status` target: a decision ID or a traced
+/// document name.
+fn doc_target(
+    row: &Row,
+    target: &str,
+    ctx: &mut StatusCtx<'_>,
+) -> DocTargetEval {
     let outcome = |passed: bool, message: Option<String>| ItemOutcome {
         target: target.to_string(),
         passed,
         message,
     };
-    let Some((status, passed, draft)) = found else {
+    let row_doc = row.id.split(QUALIFIER).next().unwrap_or_default();
+    if !row_doc.is_empty() && target == row_doc {
+        let message = "cannot target its own document".to_string();
+        ctx.defects.push(Defect::at(
+            row,
+            format!("condition {} target '{target}' {message}", row.id),
+        ));
+        return (outcome(false, Some(message)), Status::Fail);
+    }
+    let Some(doc_state) = find_doc_or_decision_status(target, ctx) else {
         let message = "names no traced document or decision".to_string();
         ctx.defects.push(Defect::at(
             row,
@@ -1011,7 +1199,7 @@ fn doc_target(
         ));
         return (outcome(false, Some(message)), Status::Unrun);
     };
-    if draft {
+    if doc_state.draft {
         ctx.warnings.push(InterpreterWarning {
             code: "W-4".to_string(),
             file: row.file.clone(),
@@ -1020,10 +1208,10 @@ fn doc_target(
             message: "document status is Draft".to_string(),
         });
     }
-    if passed {
+    if doc_state.passed {
         return (outcome(true, None), Status::Pass);
     }
-    let message = status.map_or_else(
+    let message = doc_state.status.map_or_else(
         || "has no status".to_string(),
         |s| format!("has status {s}"),
     );
@@ -1292,6 +1480,7 @@ pub fn derive_with_graph(
         config,
         base,
         results: ResultCache::new(),
+        gates: GateCache::new(),
         interpreter_results: interpreter_results.as_ref(),
         documents,
         decisions: config
@@ -1573,6 +1762,16 @@ mod tests {
             .map(|m| m.name)
             .filter(|m| !matches!(*m, "link" | "doc-status"))
             .map(|m| {
+                if m == "gate" {
+                    return (
+                        m.to_string(),
+                        MethodConfig {
+                            result_artifact: None,
+                            result_dir: Some("target/ci-artifacts".to_string()),
+                            interpreter_artifact: None,
+                        },
+                    );
+                }
                 let file = match m {
                     "compare" => "cross-val-report.json".to_string(),
                     "junit" => "junit.xml".to_string(),
@@ -1584,6 +1783,7 @@ mod tests {
                         result_artifact: Some(format!(
                             "target/ci-artifacts/{file}"
                         )),
+                        result_dir: None,
                         interpreter_artifact: (m == "libtest").then(|| {
                             "target/ci-artifacts/miri.log".to_string()
                         }),
@@ -2006,10 +2206,29 @@ mod tests {
         let badge = badge.map_or_else(String::new, |b| {
             format!("![Design Status Badge](https://img.shields.io/badge/Design%20Status-{b}-blue)\n")
         });
-        fs::write(dir.join("docs/w-design.md"), format!("# W (w)\n\n{badge}"))
-            .unwrap();
+        fs::write(
+            dir.join("docs/w-design.md"),
+            "# W (w)\n\n![Design Status Badge](https://img.shields.io/badge/Design%20Status-Ready-blue)\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("docs/other-design.md"),
+            format!("# Other (other)\n\n{badge}"),
+        )
+        .unwrap();
+        let other_cond = Row {
+            schema: SCHEMA,
+            id: "other#VC-1.1".to_string(),
+            kind: CONDITION.to_string(),
+            parents: vec!["w#FR-1".to_string()],
+            method: Some("doc-status".to_string()),
+            targets: vec!["w".to_string()],
+            file: "docs/other-design.md".to_string(),
+            line: 2,
+            text: String::new(),
+        };
         derive_with_base(
-            &[definition(), condition("doc-status", targets)],
+            &[definition(), other_cond, condition("doc-status", targets)],
             &default_config(),
             &dir,
         )
@@ -2018,7 +2237,7 @@ mod tests {
     #[test]
     fn doc_status_passes_on_a_ready_or_shipped_document() {
         for badge in ["Ready", "Shipped"] {
-            let derived = doc_status_run("doc_ready", Some(badge), &["w"]);
+            let derived = doc_status_run("doc_ready", Some(badge), &["other"]);
             assert_eq!(status(&derived), Some(Status::Pass), "{badge}");
             assert!(derived.1.is_empty(), "{:?}", derived.1);
             assert!(derived.0.warnings.is_empty(), "{:?}", derived.0.warnings);
@@ -2027,7 +2246,7 @@ mod tests {
 
     #[test]
     fn doc_status_warns_on_a_draft_document() {
-        let derived = doc_status_run("doc_draft", Some("Draft"), &["w"]);
+        let derived = doc_status_run("doc_draft", Some("Draft"), &["other"]);
         assert_eq!(status(&derived), Some(Status::Pass));
         assert!(derived.0.passes());
         assert!(derived.1.is_empty(), "{:?}", derived.1);
@@ -2037,13 +2256,13 @@ mod tests {
             .iter()
             .map(|w| (w.code.as_str(), w.item.as_str()))
             .collect();
-        assert_eq!(codes, [("W-4", "w")]);
+        assert_eq!(codes, [("W-4", "other")]);
     }
 
     #[test]
     fn doc_status_fails_on_any_other_status() {
         for badge in [Some("Stale"), None] {
-            let derived = doc_status_run("doc_stale", badge, &["w"]);
+            let derived = doc_status_run("doc_stale", badge, &["other"]);
             assert_eq!(status(&derived), Some(Status::Fail), "{badge:?}");
             assert!(!derived.0.passes());
             assert_eq!(derived.1.len(), 1, "{:?}", derived.1);
@@ -2060,6 +2279,18 @@ mod tests {
             Some(
                 "condition w#VC-1.1 target 'w-design' names no traced \
                  document or decision"
+            )
+        );
+    }
+
+    #[test]
+    fn doc_status_self_targeting_fails_as_defect() {
+        let derived = doc_status_run("doc_self", Some("Ready"), &["w"]);
+        assert_eq!(status(&derived), Some(Status::Fail));
+        assert_eq!(
+            derived.1.first().map(|d| d.message.as_str()),
+            Some(
+                "condition w#VC-1.1 target 'w' cannot target its own document"
             )
         );
     }
@@ -2227,5 +2458,117 @@ mod tests {
             .unwrap();
         assert_eq!(parent.status, Status::Unrun);
         assert!(!derived.0.passes());
+    }
+
+    #[test]
+    fn kani_target_passes_with_crate_qualified_or_bare_name() {
+        let log = "Checking harness proofs::h...\n - Status: SUCCESS\n** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n";
+        for target in ["proofs::h", "my_crate::proofs::h"] {
+            let derived = run("kani_strip", log, condition("kani", &[target]));
+            assert_eq!(status(&derived), Some(Status::Pass), "{target}");
+            assert!(derived.0.passes());
+            assert!(derived.1.is_empty(), "{:?}", derived.1);
+        }
+    }
+
+    fn gate_run(
+        name: &str,
+        outcomes: &[GateOutcome],
+        targets: &[&str],
+    ) -> Derived {
+        let dir = test_dir(name);
+        let out_dir = dir.join("target/ci-artifacts");
+        fs::create_dir_all(&out_dir).unwrap();
+        for o in outcomes {
+            o.save_to_dir(&out_dir).unwrap();
+        }
+        derive_with_base(
+            &[definition(), condition("gate", targets)],
+            &default_config(),
+            &dir,
+        )
+    }
+
+    #[test]
+    fn gate_target_passes_on_verdict_pass() {
+        let outcome = GateOutcome {
+            schema: crate::gate::OUTCOME_SCHEMA,
+            gate: "fmt".to_string(),
+            verdict: Verdict::Pass,
+            exit_code: Some(0),
+            duration_secs: 0.1,
+            summary: Some("Formatted cleanly".to_string()),
+            log_file: "fmt.log".to_string(),
+        };
+        let derived = gate_run("gate_pass", &[outcome], &["fmt"]);
+        assert_eq!(status(&derived), Some(Status::Pass));
+        assert!(derived.0.passes());
+        assert!(derived.1.is_empty(), "{:?}", derived.1);
+    }
+
+    #[test]
+    fn gate_target_fails_on_fail_skipped_or_warn() {
+        for (name, verdict) in [
+            ("gate_fail", Verdict::Fail),
+            ("gate_skip", Verdict::Skipped),
+            ("gate_warn", Verdict::Warn),
+        ] {
+            let outcome = GateOutcome {
+                schema: crate::gate::OUTCOME_SCHEMA,
+                gate: "clippy".to_string(),
+                verdict,
+                exit_code: Some(1),
+                duration_secs: 0.5,
+                summary: None,
+                log_file: "clippy.log".to_string(),
+            };
+            let derived = gate_run(name, &[outcome], &["clippy"]);
+            assert_eq!(status(&derived), Some(Status::Fail), "{verdict:?}");
+            assert!(!derived.0.passes());
+            assert_eq!(derived.1.len(), 1, "{:?}", derived.1);
+        }
+    }
+
+    #[test]
+    fn gate_target_missing_artifact_is_unrun() {
+        let derived = gate_run("gate_missing", &[], &["clippy"]);
+        assert_eq!(status(&derived), Some(Status::Unrun));
+        assert!(!derived.0.passes());
+        assert_eq!(derived.1.len(), 1);
+        assert!(
+            derived
+                .1
+                .first()
+                .unwrap()
+                .message
+                .contains("clippy.result.json is missing")
+        );
+    }
+
+    #[test]
+    fn gate_target_invalid_schema_or_corrupt_fails() {
+        let dir = test_dir("gate_invalid");
+        let out_dir = dir.join("target/ci-artifacts");
+        fs::create_dir_all(&out_dir).unwrap();
+        fs::write(out_dir.join("corrupt.result.json"), "not json").unwrap();
+        let wrong_schema = GateOutcome {
+            schema: 999,
+            gate: "bad_schema".to_string(),
+            verdict: Verdict::Pass,
+            exit_code: Some(0),
+            duration_secs: 0.1,
+            summary: None,
+            log_file: "bad.log".to_string(),
+        };
+        wrong_schema.save_to_dir(&out_dir).unwrap();
+
+        let derived = derive_with_base(
+            &[definition(), condition("gate", &["corrupt", "bad_schema"])],
+            &default_config(),
+            &dir,
+        );
+        assert_eq!(status(&derived), Some(Status::Fail));
+        assert!(!derived.0.passes());
+        assert_eq!(derived.1.len(), 2);
     }
 }

@@ -111,6 +111,9 @@ pub struct MethodConfig {
     /// Relative path to the verification result log artifact (for example, `target/ci-artifacts/test.log`).
     #[serde(default)]
     pub result_artifact: Option<String>,
+    /// Relative path to the directory containing gate outcome artifacts (for example, `target/ci-artifacts`).
+    #[serde(default)]
+    pub result_dir: Option<String>,
     /// Relative path to the log of a secondary interpreter run of the same
     /// tests (for example, `target/ci-artifacts/miri.log`); a passing target
     /// of a crate the log covers but does not record is a W-2 warning.
@@ -625,6 +628,15 @@ fn check_condition_methods(
             }
             Some(_) if condition.targets.is_empty() => {
                 Some(format!("condition {id} names no target"))
+            }
+            Some(m) if m == "doc-status" => {
+                let doc =
+                    condition.id.split(QUALIFIER).next().unwrap_or_default();
+                condition.targets.iter().find(|t| *t == doc).map(|target| {
+                    format!(
+                        "condition {id} target '{target}' cannot target its own document"
+                    )
+                })
             }
             Some(_) => None,
         };
@@ -1330,6 +1342,17 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
                 "{method}"
             );
         }
+    }
+
+    #[test]
+    fn doc_status_targeting_own_document_is_a_defect() {
+        let source = "# Widget (widget)\n\n- **FR-1 — Size**: The widget shall report.\n\n| VC-1.1 | FR-1 | `doc-status` | `widget` | Other |\n";
+        assert_eq!(
+            messages(source, &rules()),
+            [
+                "condition widget#VC-1.1 target 'widget' cannot target its own document"
+            ]
+        );
     }
 
     #[test]

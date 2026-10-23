@@ -368,6 +368,7 @@ version = "0.1.0"
 dependencies = [
  "anstream",
  "anstyle",
+ "control-rs-compare",
  "control-rs-ets",
  "control-rs-ets-host",
  "lexopt",
