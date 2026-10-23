@@ -1,6 +1,6 @@
 # Tracer Link Graph (tracer-link-graph)
 
-![Date Badge](https://img.shields.io/badge/Date-October_21,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_22,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 ![Design Status Badge](https://img.shields.io/badge/Design%20Status-Shipped-blue)
 
@@ -17,6 +17,12 @@ resolving what a link names, finding links that depend on themselves and
 ordering status evaluation so that a linked status is known before a link reads
 it. A link that depends on itself is never intended and is hard to find by hand
 in a large collection of requirements [1].
+
+The graph is a pure function of the rows. A full `cargo gate` run reads the same
+rows in `trace-reqs` and in `trace-check` and, before this revision, resolved
+and cut the graph three times: once in `trace-reqs`, once in `trace-check` for
+derivation and once more for `--graph`. This document also specifies how that
+work is done once per process.
 
 ---
 
@@ -43,6 +49,9 @@ in a large collection of requirements [1].
   diagram that opens in a common viewer without a bespoke tool, showing each
   vertex with its status and marking every link that lies on a cycle. The
   diagram is read-only; links change by editing the Markdown.
+- **FR-6 — One graph per process**: Each binary obtains the acyclic link graph
+  of its rows once. `trace-check` derives statuses and renders the diagram from
+  that one graph.
 
 #### 2.2 Non-Functional Requirements
 
@@ -89,16 +98,18 @@ flowchart LR
     A -->|link defects| D1[trace-reqs output]
     A --> B[cut cycles]
     B -->|cycle defects| D1
-    B --> C[derive]
+    B --> G[acyclic graph]
+    G --> C[derive]
     C -->|condition statuses| D2[trace-check report]
-    C --> E[render]
+    G --> E[render]
+    C --> E
     E -->|Mermaid or DOT| D3[graph file]
 ```
 
 `trace-reqs` runs `resolve` and `cut_cycles` and prints their defects.
-`trace-check` runs all three and supplies the status of non-link conditions.
-With `--graph`, it also renders the resolved link structure and the derived
-statuses as a Mermaid or Graphviz DOT file.
+`trace-check` runs `resolve` and `cut_cycles` once, then runs `derive` with the
+status of non-link conditions and, with `--graph`, passes the same graph and
+the derived statuses to `render`, which writes a Mermaid or Graphviz DOT file.
 
 ---
 
@@ -320,29 +331,59 @@ still writes it. Nothing reads the file back.
 
 #### 4.5 Binary Wiring
 
-Serves: FR-3, FR-4, FR-5
+Serves: FR-3, FR-4, FR-5, FR-6
 
 `control_rs_ci::trace::reqs` gains the constant `LINK_METHOD`, the method name
-`link`. `trace-reqs` calls `resolve` and
-`cut_cycles` from its checks and reports both defect lists. `trace-check` calls
-the same two functions, reports the same defects, then calls `derive` with its
-result-log evaluation of a condition as `leaf` and reports the derived statuses
-in `trace-report.json`. With `--graph <path>` it calls `render` on the derived
-statuses and writes the text, creating missing parent directories, after the
-report and also when the gate fails; the format follows the extension (`.mmd` or
-`.dot`) and any other extension is a usage error, checked before the run. A
-link condition is excluded from the `Review` and `Deferred` lists of the report,
-and the per-status counts include it. `trace-check` builds the graph a second
-time for `--graph`.
+`link`. `trace-reqs` calls `resolve` and `cut_cycles` from its checks and
+reports both defect lists. `trace-check` calls `link_graph` once, reports the
+defects it returns, then calls `derive` on that graph with its result-log
+evaluation of a condition as `leaf` and reports the derived statuses in
+`trace-report.json`. With `--graph <path>` it calls `render` on the same graph
+and the derived statuses and writes the text, creating missing parent
+directories, after the report and also when the gate fails; the format follows
+the extension (`.mmd` or `.dot`) and any other extension is a usage error,
+checked before the run. A link condition is excluded from the `Review` and
+`Deferred` lists of the report, and the per-status counts include it.
+
+The graph is built once in `trace-check`. The CI gate passes `--graph` and
+previously built the graph twice in that process; the local `cargo
+trace-check` alias omits `--graph` and built it once. The entry points that
+tests call keep their signatures: `status::derive_with_base` calls
+`link_graph` and passes its result to a new `status::derive_with_graph`, which
+the binary calls with the graph it obtained. `derive_with_graph` merges the
+link defects it receives into its sorted defect list and reads the rows from
+the graph, so each link defect is reported once.
 
 ```rust
+// control_rs_ci::trace::link
+
+/// The acyclic link graph of `rows` and its defects: `resolve` then
+/// `cut_cycles`, resolution defects then cycle defects, each in row order.
+pub fn link_graph(rows: &[Row]) -> Built<'_, Acyclic>;
+
+impl<'a> LinkGraph<'a, Acyclic> {
+    /// The rows the graph was built from.
+    pub const fn rows(&self) -> &'a [Row];
+}
+
+// control_rs_ci::trace::status
+
+/// Derives condition and requirement status relative to `base` from the rows
+/// of `graph`, their acyclic link graph, and its `link_defects`.
+pub fn derive_with_graph(
+    graph: &LinkGraph<'_, Acyclic>,
+    link_defects: Defects,
+    config: &TraceConfig,
+    base: &Path,
+) -> Derived;
+
 /// Required and optional flag values of a command line.
 pub type Flags<const N: usize, const M: usize> =
 (FlagValues<N>, [Option<PathBuf>; M]);
 
-/// The link view of `reqs` in `format`, with the condition statuses of `report`.
+/// The link view of `graph` in `format`, with the condition statuses of `report`.
 pub fn render_graph(
-    reqs: &[Row],
+    graph: &LinkGraph<'_, Acyclic>,
     report: &TraceReport,
     format: GraphFormat,
 ) -> String;
@@ -390,6 +431,7 @@ is an I/O error of the binary, reported as its other write errors are.
 | Interactive editor with write-back to the Markdown        | Needs a round trip through Markdown tables and contradicts C-4; it needs a design of its own.                                                                                                                                                   | n/a       |
 | Diagram of every requirement and condition                | Draws the whole workspace and hides the links among it; the link view keeps the figure readable.                                                                                                                                                | n/a       |
 | Rendered SVG or PNG                                       | Needs a Graphviz binary in CI and cannot be diffed; text formats review in a pull request (NFR-3).                                                                                                                                              | [9]       |
+| Building the graph again for `--graph`                    | Repeats `resolve`, the Tarjan pass and the counting sort on rows already processed in the same process; `render` takes the graph `derive` read (FR-6).                                                                                          | n/a       |
 
 ---
 
@@ -414,6 +456,7 @@ is an I/O error of the binary, reported as its other write errors are.
 | VC-10.2   | FR-5        | `libtest`    | `trace_tests::cli::graph_flag_writes_mermaid_or_dot_by_extension`, `trace_tests::cli::graph_flag_with_another_extension_is_a_usage_error`, `trace_tests::cli::a_failing_gate_still_writes_the_graph`                                                                                                                                                                                                                                                                                   | `trace-check --graph` writes a Mermaid file for `.mmd` and a DOT file for `.dot`, exits 2 for another extension, and writes the file when the gate fails                                                                                                                                   |
 | VC-11.1   | NFR-3       | `libtest`    | `control_rs_ci::trace::link::tests::render_is_byte_identical_across_runs`                                                                                                                                                                                                                                                                                                                                                                                                              | Rendering the same rows and statuses twice gives identical bytes in both formats                                                                                                                                                                                                           |
 | VC-12.1   | C-4         | `inspection` | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | No binary or module reads a graph file                                                                                                                                                                                                                                                     |
+| VC-13.1   | FR-6        | `inspection` | —                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      | `status.rs` and `trace-check.rs` obtain the graph through one call of `link_graph` per run and call neither `resolve` nor `cut_cycles` directly; `render_graph` and `derive_with_graph` take a graph                                                                                       |
 
 #### 6.3 Limits
 
@@ -426,6 +469,8 @@ is an I/O error of the binary, reported as its other write errors are.
   rendering in Mermaid or Graphviz.
 - The 100 000-document chain exercises depth, not breadth; width is covered by
   the edge-count test.
+- FR-6 is shown by inspection of the call sites, not by timing them; no
+  wall-clock saving is claimed.
 
 ---
 
@@ -438,6 +483,10 @@ arrays of at most $V + E$ entries, and the tracer's existing 1 s budget is
 unchanged. The explicit search stack holds one frame per vertex on the current
 path, on the heap. Status values are the existing `Status` enum; there is no
 numeric policy.
+
+`trace-check` resolves and cuts the graph once and passes it to `derive` and
+`render`, so the CI gate, which passes `--graph`, runs one Tarjan pass in that
+process instead of two.
 
 ---
 
@@ -454,34 +503,30 @@ numeric policy.
 - A link condition is excluded from the `Review` sign-off list on the ground
   that the named document lists its own. If a link must be signed off
   separately, 4.3 changes. Affects FR-3.
+- `requirement-traceability-design.md` says the gate does not pass `--graph`;
+  `gate.toml` passes it, so that document needs the matching revision. Affects
+  FR-6.
 
 ---
 
 ### 9. Development Plan
 
-| Phase                    | Delivers                                                     | Requirements        | Effort   | Status   |
-|:-------------------------|:-------------------------------------------------------------|:--------------------|:---------|:---------|
-| 1. Resolution            | `LinkGraph<Resolved>`, `resolve` and its defects             | FR-1, C-1, C-2, C-3 | 1.5 days | Complete |
-| 2. Cycle removal         | Iterative Tarjan pass, cyclic edge removal, evaluation order | FR-2, NFR-1, NFR-2  | 2 days   | Complete |
-| 3. Derivation and wiring | `derive`, calls from `trace-reqs` and `trace-check`          | FR-3, FR-4          | 2 days   | Complete |
-| 4. Graph export          | `render`, `--graph` for `trace-check`                        | FR-5, NFR-3, C-4    | 1.5 days | Complete |
+| Phase                    | Delivers                                                                       | Requirements        | Effort   | Status   |
+|:-------------------------|:-------------------------------------------------------------------------------|:--------------------|:---------|:---------|
+| 1. Resolution            | `LinkGraph<Resolved>`, `resolve` and its defects                               | FR-1, C-1, C-2, C-3 | 1.5 days | Complete |
+| 2. Cycle removal         | Iterative Tarjan pass, cyclic edge removal, evaluation order                   | FR-2, NFR-1, NFR-2  | 2 days   | Complete |
+| 3. Derivation and wiring | `derive`, calls from `trace-reqs` and `trace-check`                            | FR-3, FR-4          | 2 days   | Complete |
+| 4. Graph export          | `render`, `--graph` for `trace-check`                                          | FR-5, NFR-3, C-4    | 1.5 days | Complete |
+| 5. One graph per process | `link_graph`, `derive_with_graph`, `render_graph` over the graph `derive` read | FR-6, NFR-3         | 0.5 day  | Complete |
 
 ---
 
 ### 10. Revision History
 
-| Revision | Date             | Author                             | Description                                                                                                                                                                              |
-|:---------|:-----------------|:-----------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5 | Initial design document.                                                                                                                                                                 |
-| 1.2      | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5 | Added the link graph export. Affects C-1, C-2, C-3, C-4, FR-1, FR-2, FR-3, FR-4, FR-5, NFR-1, NFR-2, NFR-3.                                                                              |
-| 1.3      | October 20, 2026 | @MitchellDScott                    | Removed AI-generated mark after human review. Affects C-1, C-2, C-3, C-4, FR-1, FR-2, FR-3, FR-4, FR-5, NFR-1, NFR-2, NFR-3.                                                             |
-| 1.4      | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5 | Empty requirement and document rule, render palette, row-reading rules, public aliases and binary wiring. Affects C-1, C-2, C-3, C-4, FR-1, FR-2, FR-3, FR-4, FR-5, NFR-1, NFR-2, NFR-3. |
-| 1.5      | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5 | Binary wiring signatures, the qualifier constant and phase status. Affects C-1, C-2, C-3, C-4, FR-1, FR-2, FR-3, FR-4, FR-5, NFR-1, NFR-2, NFR-3.                                        |
-| 2.0      | October 20, 2026 | @MitchellDScott, Claude Sonnet 5.5 | link is a fixed method name: resolve takes no method set, render_graph takes no configuration, and the link_methods configuration is removed.                                            |
-| 3.0      | October 20, 2026 | @MitchellDScott, Claude Opus 5.5   | Raised graph fill contrast; Mermaid vertices get a dark 2 px outline.                                                                                                                    |
-| 3.1      | October 20, 2026 | @MitchellDScott, Claude Opus 5.5   | Mermaid vertex colours are written as one style line per vertex instead of classDef classes.                                                                                             |
-| 4.0 | October 21, 2026 | @MitchellDScott, Claude Opus 5.5 | cut_cycles replaces condense; derive returns condition and requirement statuses; linear evaluation order; usize indices and compressed sparse row adjacency |
-| 4.1 | October 21, 2026 | @MitchellDScott, Claude Opus 5.5 | Cites Feder and Motwani as the primary source of the document vertex |
+| Revision | Date             | Author                                              | Description                                                                                     |
+|:---------|:-----------------|:----------------------------------------------------|:------------------------------------------------------------------------------------------------|
+| 1.0      | October 21, 2026 | @MitchellDScott, Claude Sonnet 5.5, Claude Opus 5.5 | Link graph: target resolution, cycle removal, status derivation and the Mermaid and DOT export. |
+| 2.0      | October 22, 2026 | @MitchellDScott, Claude Sonnet 5.5, Claude Opus 5.5 | One graph per process (FR-6).                                                                   |
 
 ---
 
