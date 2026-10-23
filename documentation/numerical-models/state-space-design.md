@@ -620,23 +620,14 @@ is made independently by `transfer-function-design.md` §5 for
 
 ### 10. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                                           |
-|:---------|:----------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 26, 2026   | @MitchellDScott | Initial draft: LTI state-space representations, layouts, and continuous/discrete models.                                               |
-| 1.1      | August 16, 2026 | @MitchellDScott | Storage & subprogram integration: bound system matrices ($A, B, C, D$) to decoupled `DenseStorage` and LAPACK solvers.               |
-| 1.2      | August 25, 2026 | @MitchellDScott | Discretization & simulation: added zero-order hold (ZOH), bilinear/Tustin discretization, and algebraic interconnects.                 |
-| 1.3      | August 25, 2026 | @MitchellDScott | V&V standardization: aligned test oracles with matrix exponential and Padé approximation error bounds.                                |
-| 1.4      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView`/`StorageViewMut` and `DenseStorage` traits.                                |
-| 1.5      | August 26, 2026 | @MitchellDScott | Crate-wide standards cite `vv-standards.md`.                                                                                          |
-| 1.6      | August 28, 2026 | @MitchellDScott | Host-scale V&V: stiff LTI (high $\kappa(A)$) within $N_x \le 32$; umbrella Instant timing. Caps unchanged.                             |
-| 1.8      | August 28, 2026 | @MitchellDScott | Tustin four-block map: $C_d = C M^{-1}$, $D_d = D + C_d B h$.                                                                          |
-| 1.9      | August 28, 2026 | @MitchellDScott | §6.4 FR-5 artifact is `test_similarity_transform_poles_and_step`; FR-3 includes `test_feedback_singular_loop_matrix`.                |
-| 1.10     | August 31, 2026 | @MitchellDScott | Added harold multi-source cross-validation oracle and updated validation crate paths.                                                 |
-| 1.11      | September 22, 2026 | @MitchellDScott | Retargeted §6 validation to `control-rs-verification` (SciPy oracle) and listed the cases not yet cross-validated. |
-| 1.12      | September 23, 2026 | @MitchellDScott | Field bounds use `T: Scalar + SaturatingDiv` (`num-traits-design.md` FR-6). |
-| 1.13      | September 24, 2026 | @MitchellDScott | §4.6 `step` matches shipped code (`T: Scalar + Copy`, saturating products). §4.4 error enum without `thiserror`. §7 bounds recomputed per axis. `ArrayStorage` alias, view constructors, TF §5 reference and §6.7 coverage claim corrected. |
-| 1.14      | September 30, 2026 | @MitchellDScott | §4.7 output dimensions constrained by `DimAdd`/`DimMul` on the canonical `TypeNum`; FR-3 verification adds `compile_fail` doctests. |
-| 1.15 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. |
+| Revision | Date               | Author          | Description                                                                                       |
+|:---------|:-------------------|:----------------|:--------------------------------------------------------------------------------------------------|
+| 1.0      | August 29, 2026    | @MitchellDScott | LTI state-space models: ZOH and Tustin discretization, interconnects and host-scale verification. |
+| 2.0      | September 2, 2026  | @MitchellDScott | harold cross-validation oracle.                                                                   |
+| 3.0      | September 23, 2026 | @MitchellDScott | Validation retargeted to `control-rs-verification`.                                               |
+| 4.0      | September 24, 2026 | @MitchellDScott | Field bounds use `SaturatingDiv`.                                                                 |
+| 5.0      | September 25, 2026 | @MitchellDScott | `step` matches the shipped code; §7 bounds per axis.                                              |
+| 6.0      | September 30, 2026 | @MitchellDScott | Type-level interconnect output dimensions (FR-3).                                                 |
 
 ---
 

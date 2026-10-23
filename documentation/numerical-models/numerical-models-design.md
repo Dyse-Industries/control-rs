@@ -179,12 +179,8 @@ Acceptance items specified in the model designs with no signal in the suite:
 
 ### 10. Revision History
 
-| Revision | Date                | Author              | Description                                                                                                                                                                                                                                                         |
-|----------|---------------------|---------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.15     | August 28, 2026     | @MitchellDScott     | Multi-source validators (`rust-row`, Apple `rust-accelerate`).                                                                                                                                                                                                      |
-| 1.16     | August 29, 2026     | @MitchellDScott     | Overhauled validation architecture to use Universal Orchestrator (`validate.rs`).                                                                                                                                                                                   |
-| 1.17     | August 29, 2026     | @MitchellDScott     | Migrated to self-contained model validators (`src/<model>_validation.rs` & `python3/<model>_validation.py`), added central in-process `src/main.rs` orchestrator, integrated strict `cross_validation()` checking, and added tight nanosecond operation timers. |
-| 1.18 | August 31, 2026 | @MitchellDScott | Added alternative-library oracles (JAX x64, python-flint 256-bit arb ball arithmetic, and harold LTI toolbox) across cross-validation suites, reconciled covariance heatmap vs direct inversion tolerances, and updated validation paths.                      |
-| 1.19     | September 22, 2026  | @MitchellDScott     | Restated for the `control-rs-verification` / `cargo compare` architecture: per-model HDF5 emitters writing to `target/verification/`, SciPy true oracle, alternative-library oracles (JAX, python-flint, ONNX Runtime, TFLite) as suite variants with per-peer bounds and `missing_ok.<library>` omissions, restored CCF realization, Q7 raw and `TableActivation` sweep signals; timing moved to criterion benches. |
-| 1.20      | September 24, 2026 | @MitchellDScott | Comparison loads `.cargo/compare.toml`, whose suite directory is `control-rs-verification`. |
-| 1.21 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. |
+| Revision | Date               | Author          | Description                                                                           |
+|:---------|:-------------------|:----------------|:--------------------------------------------------------------------------------------|
+| 1.0      | September 2, 2026  | @MitchellDScott | Multi-source validators, alternative-library oracles and the validation orchestrator. |
+| 2.0      | September 23, 2026 | @MitchellDScott | `control-rs-verification` and `cargo compare` architecture.                           |
+| 3.0      | September 25, 2026 | @MitchellDScott | Comparison loads `.cargo/compare.toml`.                                               |

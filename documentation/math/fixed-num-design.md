@@ -719,16 +719,13 @@ sequence an integer core would otherwise run (ARM, 1996).
 
 ### 10. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                                               |
-|:---------|:----------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 24, 2026 | @MitchellDScott | Initial specification for `math::fixed_num`: `Fixed<Repr, SHIFT>` representation, sealed `FixedRepr` trait, and widening multiplication.  |
-| 1.1      | August 24, 2026 | @MitchellDScott | Convergent rounding & architecture: grounded rescaling in IEEE 754-2019/DSP standards and established `Fixed` with `Quantized` alias.     |
-| 1.2      | August 25, 2026 | @MitchellDScott | Representability gating: established sealed `OneRepresentable` / `TwoRepresentable` marker traits with compile-time failure verification. |
-| 1.3      | August 31, 2026 | @MitchellDScott | Dim trait bound integration: formalize type-level `DimMax` bounds, streamline `FixedRepr`, and unify compile-time scale gating.           |
-| 1.4      | September 23, 2026 | @MitchellDScott | Division: `Div`, `DivAssign`, `SaturatingDiv` and `TryDiv` with a pre-shifted `u128` quotient and ties-to-even rounding (FR-3, §4.3). |
-| 1.5      | September 24, 2026 | @MitchellDScott | §8 rescale note: `i8` computation scales are `SHIFT <= 6` (`Scalar`) and `<= 5` (`SaturatingInteger`). |
-| 1.6 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. |
-| 1.7 | October 16, 2026 | Claude Sonnet 5.5 | Adds FR-8 (multiply accumulate), the `FixedRepr::Acc` table in §4.3, VC-14.1 and VC-14.2, §8 item 9 and Phase 6, which the `MulAcc` implementation and `num-traits-design.md` FR-7 already cite. |
+| Revision | Date               | Author                             | Description                                                                                 |
+|:---------|:-------------------|:-----------------------------------|:--------------------------------------------------------------------------------------------|
+| 1.0      | August 29, 2026    | @MitchellDScott                    | `Fixed<Repr, SHIFT>`, sealed `FixedRepr`, convergent rounding and representability markers. |
+| 2.0      | September 2, 2026  | @MitchellDScott                    | Type-level `DimMax` bounds for scale gating.                                                |
+| 3.0      | September 24, 2026 | @MitchellDScott                    | Division (FR-3).                                                                            |
+| 4.0      | September 25, 2026 | @MitchellDScott                    | `i8` computation scale limits.                                                              |
+| 5.0      | October 19, 2026   | @MitchellDScott, Claude Sonnet 5.5 | Multiply accumulate (FR-8).                                                                 |
 
 ---
 

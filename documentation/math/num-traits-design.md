@@ -641,18 +641,13 @@ for Complex<T>`). Every implementor must name `Real` and provide
 
 ### 10. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                                               |
-|:---------|:----------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 1, 2026  | @MitchellDScott | Initial draft introducing numeric trait hierarchy and verification standards.                                                             |
-| 1.1      | August 2, 2026  | @MitchellDScott | Hardware-aligned hierarchy: replaced algebraic Ring/Field with `Zero`, `One`, `Integer`, `Float`, and `Scalar`.                           |
-| 1.2      | August 22, 2026 | @MitchellDScott | Complex scalar support: added `Conjugate` trait, `Scalar::Real` projection, and retracted `Complex: Float` in favor of `Complex: Scalar`. |
-| 1.3      | August 24, 2026 | @MitchellDScott | Comparison decoupling: dropped `PartialOrd` from `Zero`/`One` and `Complex<T>`, restricting ordering to `Signed` and `Scalar::Real`.      |
-| 1.4      | August 24, 2026 | @MitchellDScott | Full implementation and verification of numeric traits and complex number primitives.                                                     |
-| 1.5      | September 23, 2026 | @MitchellDScott | FR-6 total arithmetic contract: `Scalar` requires the saturating traits, added `SaturatingDiv`/`SaturatingNeg`, §4.4, Alternative 8. `Quantized` implements `SaturatingDiv` (`fixed-num-design.md` §4.3). |
-| 1.6      | September 24, 2026 | @MitchellDScott | §4.2 and §4.3: `Quantized` is `Scalar` only where `1` is representable (`fixed-num-design.md` FR-7); `Q7`/`Q15`/`Q31`/`Q63` are not. |
-| 1.7 | October 13, 2026 | Claude Sonnet 5.5 | Test-suite verification table, retargeted Complex MulAcc bounds and retitle. |
-| 1.8 | October 13, 2026 | Claude Sonnet 5.5 | Adds FR-7 MulAcc and section 4.5 for the classical-control realizations; header migrated to the Approval and Doc Status badge grammar. |
-| 1.9 | October 16, 2026 | Claude Sonnet 5.5 | Cites ADR-0003 for `MulAcc`; §8 items 9 and 10 record the integer coverage and the saturating `conj` and `abs`; `Quantized` rows cite `fixed-num-design.md` FR-8, which now exists. |
+| Revision | Date               | Author                             | Description                                                                                  |
+|:---------|:-------------------|:-----------------------------------|:---------------------------------------------------------------------------------------------|
+| 1.0      | August 29, 2026    | @MitchellDScott                    | Numeric trait hierarchy (`Zero`, `One`, `Integer`, `Float`, `Scalar`) and `Complex: Scalar`. |
+| 2.0      | September 24, 2026 | @MitchellDScott                    | Total arithmetic contract (FR-6).                                                            |
+| 3.0      | September 25, 2026 | @MitchellDScott                    | `Quantized` is `Scalar` only where `1` is representable.                                     |
+| 4.0      | October 16, 2026   | @MitchellDScott, Claude Sonnet 5.5 | Multiply accumulate (FR-7) and the test-suite verification table.                            |
+| 5.0      | October 19, 2026   | @MitchellDScott, Claude Sonnet 5.5 | `MulAcc` cites ADR-0003; integer coverage and saturating `conj` and `abs`.                   |
 
 ---
 

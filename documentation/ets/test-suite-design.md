@@ -477,19 +477,11 @@ descriptor statics, which are data.
 
 ### 10. Revision History
 
-| Revision | Date           | Author          | Description                                                                                                           |
-|:---------|:---------------|:----------------|:----------------------------------------------------------------------------------------------------------------------|
-| 1.0      | May 23, 2026   | @MitchellDScott | Initial specification for exportable embedded test suites and descriptors.                                            |
-| 1.1      | July 18, 2026  | @MitchellDScott | Linker discovery & atomics: integrated linker GC mitigation, ARMv6-M atomic wrappers, and `control-rs-ets` alignment. |
-| 1.2      | August 6, 2026 | @MitchellDScott | Tooling hardening: unified linker script name (`ets_suites.x`) and host-side ELF section metadata parsing.            |
-| 1.3      | September 9, 2026 | @MitchellDScott | Packaging alignment: allocated host discovery and transport to `control-rs-ets-host` and interactive driver to `control-rs-tui`. |
-| 1.4 | September 9, 2026 | @MitchellDScott | Project split: relocated to `documentation/ets/test-suite-design.md`; host tooling references retargeted to `control-rs-ets-host` and `control-rs-ci`. |
-| 1.5      | September 9, 2026 | @MitchellDScott | Citation pass: grounded the cross-crate registration hazard that motivates the `KEEP` directive, added evidence-backed rejections for `inventory`, `ctor`, `static_init`, `embedded-test` and the CLI crates, restructured §6 per `vv-standards.md`. |
-| 1.6      | September 9, 2026 | @MitchellDScott | Structural hardening: demoted badge to Draft, numbered §2 subsections, eliminated rogue FR-4, mapped NFR-4 to §6.7, mapped C-2/C-3 in §6.4, clarified firmware deployment and attribute extensions, standardized references. |
-| 1.7      | September 9, 2026 | @MitchellDScott | Dropped the author-year / `[n]` mapping table. |
-| 1.8      | September 18, 2026 | @MitchellDScott | Serial/QEMU isolation: bridge connects to already-running firmware; `TryReset` is cooperative, not a power cycle. |
-| 1.9      | September 24, 2026 | @MitchellDScott | FR-2 names `control-rs-tui` as the settings editor; the `control-rs-ci` `ets` gate runs suites headless and edits no settings. Discovery is over the wire (no host ELF parsing, Step 4 shipped); the section holds `&'static SuiteDescriptor` pointers; unused `--gc-keep-exported` / `-u` retention dropped; `linkme` row restated. |
-| 1.10     | September 24, 2026 | @MitchellDScott | Discovery replies begin with `TargetInfo` (host-comm Step 4). |
+| Revision | Date               | Author          | Description                                                                                                  |
+|:---------|:-------------------|:----------------|:-------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 29, 2026    | @MitchellDScott | Exportable test suites and descriptors; `ets_suites.x` linker discovery and ARMv6-M atomics.                 |
+| 2.0      | September 18, 2026 | @MitchellDScott | Moved to `documentation/ets/`; host tooling in `control-rs-ets-host`; citation pass; cooperative `TryReset`. |
+| 3.0      | September 25, 2026 | @MitchellDScott | Discovery over the wire, starting with `TargetInfo`; `control-rs-tui` edits settings (FR-2).                 |
 
 ---
 

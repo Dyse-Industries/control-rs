@@ -1073,25 +1073,13 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 
 ### 10. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                                                           |
-|:---------|:----------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | July 12, 2026   | @MitchellDScott | Initial draft: core matrix representation, operations, and zero-allocation scratch patterns.                                                          |
-| 1.1      | July 26, 2026   | @MitchellDScott | Matrix decompositions: added LU, QR, Cholesky, and LDLT factorizations with LAPACK subroutine mapping.                                                |
-| 1.2      | August 16, 2026 | @MitchellDScott | Storage subsystem parameterization: integrated decoupled storage traits (`DenseStorage`, `PackedStorage`) with static array backends.                |
-| 1.3      | August 19, 2026 | @MitchellDScott | View & layout abstractions: added column-major and row-major storage types, submatrices, and strided views.                                          |
-| 1.4      | August 25, 2026 | @MitchellDScott | Unified matrix representation: consolidated `Matrix<T, R, C, S>` struct across dense and packed backends with specialized type aliases.              |
-| 1.5      | August 25, 2026 | @MitchellDScott | V&V standardization: upgraded test oracles, residual bounds ($\tau = 20.0$), and structured matrix verification.                                      |
-| 1.6      | August 26, 2026 | @MitchellDScott | Storage view retarget: updated references to `StorageView`/`StorageViewMut` and `Const<N>` dimensions.                                                |
-| 1.7      | August 26, 2026 | @MitchellDScott | Collapsed subprogram inventory; crate-wide standards cite `vv-standards.md`.                                                                          |
-| 1.8      | August 28, 2026 | @MitchellDScott | Host-scale V&V: Hilbert and $1000\times 1000$ rows; umbrella $\tau\kappa\varepsilon$ and Instant timing. Caps unchanged.                             |
-| 1.9      | August 28, 2026 | @MitchellDScott | Host-scale $1024\times 1024$ `ArrayStorage` (no heap); C-2 MCU cap unchanged.                                                                        |
-| 1.10     | August 28, 2026 | @MitchellDScott | Example crate: Hilbert $n=8$ and timed GEMM $n=64$; $1024\times 1024$ remains out. Caps unchanged.                                                  |
-| 1.11     | August 28, 2026 | @MitchellDScott | §6.4 FR-5 artifact is `test_symmetric_construction`; packed storage remains in `storage_tests.rs`. Factor residuals live in `matrix_test_suite`. |
-| 1.12     | August 31, 2026 | @MitchellDScott | Added JAX x64 multi-source cross-validation oracle, updated validation crate paths, and reconciled EKF covariance heatmap tolerances.                 |
-| 1.13      | September 22, 2026 | @MitchellDScott | Retargeted §6 validation to `control-rs-verification` and listed the cases not yet cross-validated. |
-| 1.14      | September 23, 2026 | @MitchellDScott | §4.5 operators delegate to named saturating methods (`num-traits-design.md` FR-6); `Sub`/`Neg` element-wise; field bounds use `SaturatingDiv`. |
-| 1.15      | September 24, 2026 | @MitchellDScott | Backends: only `DefaultBlas` in `src/`; accelerated backends are `examples/subprograms` markers passed to `_with::<B>` (A2). §4.8 records the shipped conversion surface (no `Matrix → Polynomial` or `Matrix → Tensor`). C-2 and §7 recomputed per axis with no element cap. Cholesky error mapping; C-4 reference; storage FR-4..FR-6; §6.7 coverage claims. |
-| 1.16 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. |
+| Revision | Date               | Author          | Description                                                                                     |
+|:---------|:-------------------|:----------------|:------------------------------------------------------------------------------------------------|
+| 1.0      | August 29, 2026    | @MitchellDScott | `Matrix<T, R, C, S>` over decoupled storage, LAPACK factorizations and host-scale verification. |
+| 2.0      | September 2, 2026  | @MitchellDScott | JAX x64 cross-validation oracle.                                                                |
+| 3.0      | September 23, 2026 | @MitchellDScott | Validation retargeted to `control-rs-verification`.                                             |
+| 4.0      | September 24, 2026 | @MitchellDScott | Operators delegate to saturating methods.                                                       |
+| 5.0      | September 25, 2026 | @MitchellDScott | Only `DefaultBlas` in `src/`; shipped conversion surface; C-2 per axis.                         |
 
 ---
 

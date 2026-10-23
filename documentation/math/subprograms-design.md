@@ -1162,15 +1162,11 @@ Disassembly under `opt-level=3` (LLVM 22.1.6) on `x86_64-apple-darwin`,
 
 ### 10. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                                     |
-|:---------|:----------------|:----------------|:--------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 21, 2026 | @MitchellDScott | Extracted BLAS/LAPACK subprogram specifications into dedicated modular document.                                                |
-| 1.1      | August 24, 2026 | @MitchellDScott | Subprogram trait definitions: standardized Level 1-3 BLAS and LAPACK factorizations (`Getrf`, `Potrf`, `Geqrf`, `Syev`/`Heev`). |
-| 1.2      | August 25, 2026 | @MitchellDScott | Verification closure: defined test oracles, caller-workspace conventions, and packed matrix solver coverage.                    |
-| 1.3      | August 26, 2026 | @MitchellDScott | Backend scope: C-4 excludes external libraries from `src/`; §4.5 recast as an extension point served by example implementors.   |
-| 1.4      | September 23, 2026 | @MitchellDScott | Field kernels bound `T: Scalar + SaturatingDiv`; kernel arithmetic follows the saturating contract (`num-traits-design.md` FR-6). |
-| 1.5      | September 24, 2026 | @MitchellDScott | §5: const-generic strides and the `transpose_view` rejection corrected to the runtime-stride model; dangling §4.2.x / §5.x / §4.6 references retargeted; runtime-dispatch row states call-site backend choice. §8 ETS targets match `ci-design.md` C-5. |
-| 1.6 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. |
+| Revision | Date               | Author          | Description                                                                                 |
+|:---------|:-------------------|:----------------|:--------------------------------------------------------------------------------------------|
+| 1.0      | August 29, 2026    | @MitchellDScott | BLAS and LAPACK subprogram traits, test oracles and external backends outside `src/` (C-4). |
+| 2.0      | September 24, 2026 | @MitchellDScott | Field kernels follow the saturating contract.                                               |
+| 3.0      | September 25, 2026 | @MitchellDScott | Runtime-stride model; references retargeted.                                                |
 
 ---
 

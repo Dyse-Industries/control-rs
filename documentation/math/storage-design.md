@@ -1302,14 +1302,8 @@ Accessed: Aug. 18, 2026.
 
 ### 10. Revision History
 
-| Revision | Date            | Author          | Description                                                                                                                                           |
-|:---------|:----------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 21, 2026 | @MitchellDScott | Extracted storage backend designs into dedicated modular specification.                                                                               |
-| 1.1      | August 21, 2026 | @MitchellDScott | Backend expansions: added strided views, complex/Hermitian storage (`HermitianPackedStorage`), and sparse backends (COO/CSR/CSC).                    |
-| 1.2      | August 22, 2026 | @MitchellDScott | Dimension parameterization: bound storage traits to type-level dimensions (`R: Dim, C: Dim`).                                                         |
-| 2.0      | August 24, 2026 | @MitchellDScott | Decoupled storage subsystems: established distinct `DenseStorage`, `PackedStorage`, and `SparseStorage` architectures without cross-subsystem inheritance. |
-| 2.1      | August 24, 2026 | @MitchellDScott | Strided view refinement: separated runtime strided views (`StorageView` / `StorageViewMut`) from compile-time marker views (`StaticStorageView`).    |
-| 2.2      | August 25, 2026 | @MitchellDScott | Inherent structured projections: replaced `FromDenseStorage` with inherent projection constructors (`from_dense_diagonal`, `from_dense_triangle`).    |
-| 2.3      | September 24, 2026 | @MitchellDScott | §8 consumer note resolved (model docs use `DenseStorage` / `Storage`); C-5 citations attributed to this document. |
-| 2.4      | September 30, 2026 | @MitchellDScott | `DenseStorageMut` gains `unsafe submatrix_mut_unchecked` (mutable strided window; caller proves the window fits) and safe same-shape `copy_from`; block placement in numerical models goes through them. |
-| 2.5 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. |
+| Revision | Date               | Author          | Description                                                                 |
+|:---------|:-------------------|:----------------|:----------------------------------------------------------------------------|
+| 1.0      | August 29, 2026    | @MitchellDScott | Dense, packed and sparse storage, strided views and structured projections. |
+| 2.0      | September 25, 2026 | @MitchellDScott | Consumer note resolved; C-5 citations.                                      |
+| 3.0      | September 30, 2026 | @MitchellDScott | `submatrix_mut_unchecked` and `copy_from` on `DenseStorageMut`.             |

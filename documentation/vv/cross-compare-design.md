@@ -58,7 +58,7 @@ numerical tolerance bounds.
   mismatches, NaNs/infinities, and tolerance breaches are accumulated and terminate
   with non-zero exit code.
 - **FR-11 — Decoupled Diagnostic Plot Generation (withdrawn)**: Withdrawn as a
-  binary functional requirement in revision 1.13; diagnostic visualization is
+  binary functional requirement in revision 5.0; diagnostic visualization is
   provided by non-Rust companion scripts governed by C-3.
 - **FR-12 — Pure Rust HDF5 Compatibility**: Reading and writing `.h5` containers
   operates via pure-Rust implementations to eliminate host C-library compiler and
@@ -728,24 +728,14 @@ ships yet: FR-11 is unimplemented, and it gates nothing (C-3).
 
 ### 10. Revision History
 
-| Revision | Date | Author | Description |
-|:---|:---|:---|:---|
-| 1.0 | September 19, 2026 | @MitchellDScott | Initial draft establishing the decoupled Host Oracle and HDF5 Comparison System design. |
-| 1.1 | September 19, 2026 | @MitchellDScott | Renamed comparison tool to `control-rs-h5` (`cargo h5`) and standardized validation suite location within `examples/`. |
-| 1.2 | September 19, 2026 | @MitchellDScott | Upgraded plotting to interactive Plotly/HTML dashboards; added explicit per-suite binary structure and config-driven runner (prohibiting dynamic searching). |
-| 1.3 | September 19, 2026 | @MitchellDScott | Established two-tier configuration (root `oracle.toml` without variants, per-suite `oracle.toml` with variants), single root orchestrator example (`examples/oracle`), and isolated single-emitter execution. |
-| 1.4 | September 19, 2026 | @MitchellDScott | Specified published crate architecture for `oracle-harness` (emitting `oracle` and `h5` binaries) and `control-rs-ci` (custom gate integration), with zero-dependency example decoupling. |
-| 1.5 | September 19, 2026 | @MitchellDScott | Unified `oracle.toml` into a single modular configuration schema used identically across root and suite levels, allowing variant definitions from inside or outside suites. |
-| 1.6 | September 19, 2026 | @MitchellDScott | Standardized diagnostic plotting on headless Python Matplotlib (`control_rs_plot`), dropping interactive HTML for static publication-grade figures. |
-| 1.7 | September 19, 2026 | @MitchellDScott | Formalized extensible multi-method comparison engine (`ComparisonEvaluator` trait) covering numeric, text/regex, contextual embedding, and control-domain evaluators with composite satisfaction policies (`all_of`/`any_of`). |
-| 1.8 | September 20, 2026 | @MitchellDScott | Unified crate name to `control-rs-compare` with standalone `compare` binary (`cargo compare`), `compare.toml`, recursive `ls`-style dataset discovery, and multi-tier tolerance resolution (TOML table + HDF5 attributes). |
-| 1.9 | September 20, 2026 | @MitchellDScott | Integrated background research on parallel numerical reductions, pairwise tree error bounds (Higham, 2002), reproducible summation (Demmel and Nguyen, 2013), and chunked array I/O (Folk et al., 2011); formulated parallel chunked comparison architecture and comparator worker pool. |
-| 1.10 | September 22, 2026 | @MitchellDScott | Added FR-16 annotated signal omission (`missing_ok.<peer>`) for multi-oracle suites; workspace example references `control-rs-verification`. |
-| 1.11 | September 23, 2026 | @MitchellDScott | Added FR-17 baseline margin drift warnings against the previous `cross-val-report.json` (§4.8). |
-| 1.12      | September 24, 2026 | @MitchellDScott | Gate is the `.cargo/gate.toml` `[cross-compare]` table, not parsed by the runner. Containers live in `<out_dir>` (`target/verification/`); root and per-suite examples match the shipped files. FR-17 and FR-11 marked unimplemented; Phase 5 complete, Phase 6 added. Crates are `publish = false` until PR10. |
-| 1.13      | September 27, 2026 | @MitchellDScott | Demoted FR-11 (diagnostic plotting is non-Rust companion tooling per C-3); reaffirmed FR-17 planned status under Phase 6. |
-| 1.14      | October 1, 2026 | @MitchellDScott | FR-5 lists the implemented methods; an unsupported method fails the comparison. Removed the unimplemented `interval`, `envelope`, `regex_match`, semantic-similarity and freshness claims and the `regex` and `strsim` dependencies. |
-| 1.15 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. |
+| Revision | Date               | Author          | Description                                                                                                 |
+|:---------|:-------------------|:----------------|:------------------------------------------------------------------------------------------------------------|
+| 1.0      | September 20, 2026 | @MitchellDScott | Host oracles and HDF5 comparison: `control-rs-compare`, comparison methods and parallel chunked comparison. |
+| 2.0      | September 23, 2026 | @MitchellDScott | Annotated signal omission (FR-16).                                                                          |
+| 3.0      | September 24, 2026 | @MitchellDScott | Baseline margin drift warnings (FR-17).                                                                     |
+| 4.0      | September 25, 2026 | @MitchellDScott | Gate is the `[cross-compare]` table; containers in `target/verification/`.                                  |
+| 5.0      | September 28, 2026 | @MitchellDScott | Diagnostic plotting (FR-11) is companion tooling.                                                           |
+| 6.0      | October 2, 2026    | @MitchellDScott | FR-5 lists the implemented methods only.                                                                    |
 
 ---
 
