@@ -329,6 +329,8 @@ mod tests {
         room: usize,
         chunks: Chunks,
         written: Vec<u8>,
+        zero_writes: usize,
+        closed_on_failure: bool,
     }
 
     impl ScriptedStream {
@@ -337,6 +339,8 @@ mod tests {
                 room,
                 chunks,
                 written: Vec::new(),
+                zero_writes: 0,
+                closed_on_failure: false,
             }
         }
     }
@@ -360,10 +364,21 @@ mod tests {
         }
 
         fn write(&mut self, buf: &[u8]) -> CountOf<Self> {
+            assert!(!buf.is_empty(), "write called with empty buffer");
             let n = buf.len().min(self.room);
+            if n == 0 {
+                self.zero_writes = self.zero_writes.saturating_add(1);
+                assert!(self.zero_writes <= 3, "drain_tx looped on zero write");
+            } else {
+                self.zero_writes = 0;
+            }
             self.room = self.room.saturating_sub(n);
             self.written.extend_from_slice(buf.get(..n).unwrap());
             Ok(n)
+        }
+
+        fn close_on_failure(&mut self) {
+            self.closed_on_failure = true;
         }
     }
 
@@ -544,5 +559,13 @@ mod tests {
         );
         let full = [0x5A_u8; MAX_MESSAGE_SIZE];
         assert_eq!(encode_frame(&full, &mut dest), Ok(MAX_FRAME_SIZE));
+    }
+
+    #[test]
+    fn stream_link_close_on_failure_calls_stream() {
+        let mut link = StreamLink::new(ScriptedStream::new(Vec::new(), 0));
+        assert!(!link.stream().closed_on_failure);
+        link.close_on_failure();
+        assert!(link.stream().closed_on_failure);
     }
 }
