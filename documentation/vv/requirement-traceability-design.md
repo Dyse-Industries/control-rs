@@ -1,6 +1,6 @@
 # Requirement Traceability Infrastructure (requirement-traceability)
 
-![Date Badge](https://img.shields.io/badge/Date-October_20,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_23,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 ![Design Status Badge](https://img.shields.io/badge/Design%20Status-Ready-brightgreen)
 
@@ -781,9 +781,7 @@ Four choices keep the stronger levels additive:
 | 5.0      | October 4, 2026    | @MitchellDScott                                     | Tracer gap closures: libtest binaries, doctests and the `deferred` method.                                                                                                                                                                                                                                                                              |
 | 6.0      | October 16, 2026   | @MitchellDScott, Claude Opus 5.5                    | No document template is assumed.                                                                                                                                                                                                                                                                                                                        |
 | 7.0      | October 21, 2026   | @MitchellDScott, Claude Sonnet 5.5, Claude Opus 5.5 | Links (FR-13) and the `--graph` argument.                                                                                                                                                                                                                                                                                                               |
-| 8.0      | October 21, 2026   | @MitchellDScott, Antigravity                        | Replaced console log scraping (pytest, gtest) with structured compare and junit automated methods; fixed method set to libtest, kani, compare, junit, link, and doc-status; documented result parsing for compare and junit; documented doc-status derivation rules; required ambiguous automated outcomes and omitted condition leaves to fail closed. |
-| 2.10     | October 22, 2026   | @MitchellDScott, Claude Opus 5.5                    | Methods are TraceCheckMethod instances in one METHODS table; every method needs a target; doc-status reads the target's status, Draft warns W-4; Review, Deferred and roadmap targets removed; only libtest drops a target segment; report schema 5.                                                                                                    |
-| 2.11     | October 22, 2026   | @MitchellDScott, Claude Opus 5.5                    | A method.<m> table names any method in METHODS; a link condition outside the link graph fails; criteria of VC-8.2 and VC-17.2 name no method code span.                                                                                                                                                                                                 |
+| 8.0 | October 23, 2026 | @MitchellDScott, Antigravity, Claude Opus 5.5 | Structured compare and junit methods in one METHODS table; doc-status reads document status; report schema 5. |
 
 ---
 

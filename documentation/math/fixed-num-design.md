@@ -1,6 +1,6 @@
 # Fixed-Point Scalar Type (fixed-num)
 
-![Date Badge](https://img.shields.io/badge/Date-October_13,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_23,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 ![Design Status Badge](https://img.shields.io/badge/Design%20Status-Stale-lightgrey)
 
@@ -727,7 +727,7 @@ sequence an integer core would otherwise run (ARM, 1996).
 | 3.0      | September 24, 2026 | @MitchellDScott                    | Division (FR-3).                                                                            |
 | 4.0      | September 25, 2026 | @MitchellDScott                    | `i8` computation scale limits.                                                              |
 | 5.0      | October 19, 2026   | @MitchellDScott, Claude Sonnet 5.5 | Multiply accumulate (FR-8).                                                                 |
-| 6.0      | October 21, 2026   | Antigravity                        | Migrated review condition rows to doc-status method.                                        |
+| 6.0 | October 23, 2026 | Antigravity, Claude Opus 5.5 | Review condition rows use the doc-status method. |
 
 ---
 

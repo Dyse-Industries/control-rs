@@ -1,6 +1,6 @@
 # Numeric Trait Hierarchy (num-traits)
 
-![Date Badge](https://img.shields.io/badge/Date-October_13,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_23,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 ![Design Status Badge](https://img.shields.io/badge/Design%20Status-Stale-lightgrey)
 
@@ -650,8 +650,7 @@ for Complex<T>`). Every implementor must name `Real` and provide
 | 3.0      | September 25, 2026 | @MitchellDScott                    | `Quantized` is `Scalar` only where `1` is representable.                                     |
 | 4.0      | October 16, 2026   | @MitchellDScott, Claude Sonnet 5.5 | Multiply accumulate (FR-7) and the test-suite verification table.                            |
 | 5.0      | October 19, 2026   | @MitchellDScott, Claude Sonnet 5.5 | `MulAcc` cites ADR-0003; integer coverage and saturating `conj` and `abs`.                   |
-| 6.0      | October 21, 2026   | Antigravity                        | Migrated condition rows to libtest compile_fail doctests and doc-status methods.             |
-| 1.11     | October 22, 2026   | @MitchellDScott, Claude Opus 5.5   | doc-status targets name the document ID.                                                     |
+| 6.0 | October 23, 2026 | Antigravity, @MitchellDScott, Claude Opus 5.5 | Negative-trait conditions use compile_fail doctests; doc-status targets name the document ID. |
 
 ---
 
