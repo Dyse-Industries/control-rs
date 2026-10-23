@@ -197,6 +197,8 @@ mod tests {
     /// A reader fed by a channel; a hang-up ends the stream.
     struct ChannelReader(Feed);
 
+    struct MonitoredReader(Arc<()>);
+
     /// A writer that records messages.
     struct Recorder(Recorded);
 
@@ -207,6 +209,14 @@ mod tests {
                 Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(None),
                 Err(_) => Err(io::Error::from(io::ErrorKind::BrokenPipe)),
             }
+        }
+    }
+
+    impl MessageReader for MonitoredReader {
+        fn next_message(&mut self) -> MessageOf {
+            let _ = &self.0;
+            thread::sleep(Duration::from_millis(10));
+            Ok(None)
         }
     }
 
@@ -287,5 +297,18 @@ mod tests {
         let (mut link, _tx, _) = link();
         link.close();
         assert!(link.exited().unwrap());
+    }
+
+    #[test]
+    fn dropping_link_stops_and_joins_reader_thread() {
+        let flag = Arc::new(());
+        let link = MessageLink::new(
+            MonitoredReader(Arc::clone(&flag)),
+            Recorder(Arc::new(Mutex::new(Vec::new()))),
+            "test".to_string(),
+        );
+        assert_eq!(Arc::strong_count(&flag), 2);
+        drop(link);
+        assert_eq!(Arc::strong_count(&flag), 1);
     }
 }

@@ -468,16 +468,35 @@ mod tests {
     fn a_block_size_pauses_the_sender_until_the_next_flow_control() {
         let message: Vec<u8> = (0..60).collect();
         let mut tx = Segmenter::new(&message).unwrap();
+        assert!(!tx.is_waiting());
         let mut frame = [0u8; 8];
         tx.next_frame(&mut frame);
         tx.flow_control(&[0x30, 2, 5]).unwrap();
         assert_eq!(tx.separation_time(), 5);
+        assert!(!tx.is_waiting());
         assert!(tx.next_frame(&mut frame).is_some());
         assert!(tx.next_frame(&mut frame).is_some());
         assert_eq!(tx.next_frame(&mut frame), None);
         assert!(tx.is_waiting());
         tx.flow_control(&[0x30, 0, 0]).unwrap();
+        assert!(!tx.is_waiting());
         assert!(tx.next_frame(&mut frame).is_some());
+    }
+
+    #[test]
+    fn transfer_completing_on_block_boundary_does_not_wait() {
+        let message: Vec<u8> = (0..20).collect();
+        let mut tx = Segmenter::new(&message).unwrap();
+        assert!(!tx.is_waiting());
+        let mut frame = [0u8; 8];
+        assert!(tx.next_frame(&mut frame).is_some());
+        assert!(tx.is_waiting());
+        tx.flow_control(&[0x30, 2, 0]).unwrap();
+        assert!(!tx.is_waiting());
+        assert!(tx.next_frame(&mut frame).is_some());
+        assert!(tx.next_frame(&mut frame).is_some());
+        assert!(!tx.is_waiting());
+        assert!(tx.is_done());
     }
 
     #[test]
