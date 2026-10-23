@@ -128,8 +128,8 @@ type GateTargets = (Vec<ItemOutcome>, Vec<Status>);
 /// Outcomes and statuses of the targets of one `doc-status` condition.
 type DocTargets = (Vec<ItemOutcome>, Vec<Status>);
 
-/// Internal parse result for a single `JUnit` test case content.
-type JunitCaseParseResult<'a> = (Option<bool>, &'a str);
+/// Stack of `JUnit` test suite names.
+type SuiteStack = Vec<Option<String>>;
 
 /// Target context when recording a `JUnit` test case.
 #[derive(Debug, Clone, Copy)]
@@ -137,6 +137,16 @@ struct JunitCaseCtx<'a> {
     name: &'a str,
     class: Option<&'a str>,
     suite: Option<&'a str>,
+}
+
+/// State of an active `<testcase>` element being processed.
+#[derive(Debug)]
+struct ActiveTestCase {
+    name: String,
+    classname: Option<String>,
+    suite: Option<String>,
+    has_failure: bool,
+    is_skipped: bool,
 }
 
 /// What a result log says about one target.
@@ -590,109 +600,19 @@ pub fn parse_compare_results(json_str: &str) -> ResultLog {
     log
 }
 
-/// Value of attribute `attr` on an XML open tag.
-///
-/// Matches `attr=` only at a token boundary so that looking up `name` does not
-/// bind the trailing `name=` of `classname=` (or `filename=`, and similar).
-fn extract_xml_attr(tag: &str, attr: &str) -> Option<String> {
-    let pattern = format!("{attr}=");
-    let bytes = tag.as_bytes();
-    let mut from = 0usize;
-    while let Some(rel) = tag.get(from..).and_then(|s| s.find(&pattern)) {
-        let idx = from.saturating_add(rel);
-        let boundary = idx == 0
-            || bytes.get(idx.saturating_sub(1)).is_some_and(|b| {
-                b.is_ascii_whitespace() || *b == b'<' || *b == b'/'
-            });
-        if !boundary {
-            from = idx.saturating_add(1);
-            continue;
+fn get_xml_attr(
+    e: &quick_xml::events::BytesStart<'_>,
+    key: &str,
+) -> Option<String> {
+    for attr in e.attributes().flatten() {
+        if attr.key.local_name().as_ref() == key
+            && let Ok(val) =
+                attr.normalized_value(quick_xml::XmlVersion::Implicit1_0)
+        {
+            return Some(val.into_owned());
         }
-        let after_eq = tag.get(idx.saturating_add(pattern.len())..)?;
-        let quote = after_eq.chars().next()?;
-        if quote != '"' && quote != '\'' {
-            from = idx.saturating_add(1);
-            continue;
-        }
-        let after_quote = after_eq.get(quote.len_utf8()..)?;
-        let end = after_quote.find(quote)?;
-        return after_quote.get(..end).map(str::to_string);
     }
     None
-}
-
-/// Index of `needle` in `haystack`, ignoring matches inside `<![CDATA[...]]>`.
-///
-/// `JUnit` producers put log text in CDATA under `system-out` / `system-err`. A
-/// literal `</testcase>` in that text must not close the case early or a later
-/// `<failure>` / `<error>` is dropped and the case records as Pass.
-fn find_outside_cdata(haystack: &str, needle: &str) -> Option<usize> {
-    if needle.is_empty() {
-        return Some(0);
-    }
-    let mut i = 0usize;
-    let mut in_cdata = false;
-    while i < haystack.len() {
-        let rest = haystack.get(i..).unwrap_or_default();
-        if in_cdata {
-            let Some(rel) = rest.find("]]>") else {
-                break;
-            };
-            i = i.saturating_add(rel).saturating_add(3);
-            in_cdata = false;
-            continue;
-        }
-        if rest.starts_with("<![CDATA[") {
-            i = i.saturating_add("<![CDATA[".len());
-            in_cdata = true;
-            continue;
-        }
-        if rest.starts_with(needle) {
-            return Some(i);
-        }
-        i = i.saturating_add(1);
-    }
-    None
-}
-
-fn parse_junit_case_content<'a>(
-    open_tag: &str,
-    open_end: usize,
-    rest: &'a str,
-) -> JunitCaseParseResult<'a> {
-    let is_self_closing = open_tag.trim_end().ends_with('/');
-    if is_self_closing {
-        return (
-            Some(true),
-            rest.get(open_end.saturating_add(1)..).unwrap_or_default(),
-        );
-    }
-    let after_open = rest.get(open_end.saturating_add(1)..).unwrap_or_default();
-    find_outside_cdata(after_open, "</testcase>").map_or_else(
-        || {
-            (
-                None,
-                rest.get(open_end.saturating_add(1)..).unwrap_or_default(),
-            )
-        },
-        |close_idx| {
-            let inner = after_open.get(..close_idx).unwrap_or_default();
-            let after_close = after_open
-                .get(close_idx.saturating_add("</testcase>".len())..)
-                .unwrap_or_default();
-            // Failure/error markers inside CDATA are producer text, not
-            // elements; only tags outside CDATA judge the case.
-            if find_outside_cdata(inner, "<failure").is_some()
-                || find_outside_cdata(inner, "<error").is_some()
-            {
-                (Some(false), after_close)
-            } else if find_outside_cdata(inner, "<skipped").is_some() {
-                (None, after_close)
-            } else {
-                (Some(true), after_close)
-            }
-        },
-    )
 }
 
 fn record_junit_case(log: &mut ResultLog, ctx: JunitCaseCtx<'_>, passed: bool) {
@@ -709,12 +629,118 @@ fn record_junit_case(log: &mut ResultLog, ctx: JunitCaseCtx<'_>, passed: bool) {
     }
 }
 
+fn handle_junit_start(
+    e: &quick_xml::events::BytesStart<'_>,
+    suite_stack: &mut SuiteStack,
+    active_case: &mut Option<ActiveTestCase>,
+) {
+    match e.local_name().as_ref() {
+        "testsuite" => suite_stack.push(get_xml_attr(e, "name")),
+        "testcase" => {
+            let name = get_xml_attr(e, "name");
+            let classname = get_xml_attr(e, "classname");
+            let suite = suite_stack
+                .iter()
+                .rev()
+                .find_map(|s| s.as_deref())
+                .map(str::to_string);
+            if let Some(name) = name {
+                *active_case = Some(ActiveTestCase {
+                    name,
+                    classname,
+                    suite,
+                    has_failure: false,
+                    is_skipped: false,
+                });
+            }
+        }
+        "failure" | "error" => {
+            if let Some(case) = active_case {
+                case.has_failure = true;
+            }
+        }
+        "skipped" => {
+            if let Some(case) = active_case {
+                case.is_skipped = true;
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_junit_empty(
+    e: &quick_xml::events::BytesStart<'_>,
+    suite_stack: &SuiteStack,
+    active_case: &mut Option<ActiveTestCase>,
+    log: &mut ResultLog,
+) {
+    match e.local_name().as_ref() {
+        "testcase" => {
+            if let Some(name) = get_xml_attr(e, "name") {
+                let classname = get_xml_attr(e, "classname");
+                let suite = suite_stack.iter().rev().find_map(|s| s.as_deref());
+                record_junit_case(
+                    log,
+                    JunitCaseCtx {
+                        name: &name,
+                        class: classname.as_deref(),
+                        suite,
+                    },
+                    true,
+                );
+            }
+        }
+        "failure" | "error" => {
+            if let Some(case) = active_case {
+                case.has_failure = true;
+            }
+        }
+        "skipped" => {
+            if let Some(case) = active_case {
+                case.is_skipped = true;
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_junit_end(
+    tag: &str,
+    suite_stack: &mut SuiteStack,
+    active_case: &mut Option<ActiveTestCase>,
+    log: &mut ResultLog,
+) {
+    match tag {
+        "testsuite" => {
+            suite_stack.pop();
+        }
+        "testcase" => {
+            if let Some(case) = active_case.take()
+                && !case.is_skipped
+            {
+                let passed = !case.has_failure;
+                record_junit_case(
+                    log,
+                    JunitCaseCtx {
+                        name: &case.name,
+                        class: case.classname.as_deref(),
+                        suite: case.suite.as_deref(),
+                    },
+                    passed,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Parses `JUnit` XML test results into a [`ResultLog`].
 ///
 /// Scans `<testcase>` elements for `name` and `classname` attributes, judging each
 /// case by the presence of `<failure>` or `<error>` child elements. Skipped test cases
 /// are ignored (remaining `Unrun`). Conflicting outcomes for the same target are marked
-/// ambiguous.
+/// ambiguous. XML comments, CDATA sections, and processing instructions are safely
+/// skipped by the underlying XML reader.
 ///
 /// # Arguments
 /// * `text` - `JUnit` XML string or a saved `junit.xml` artifact.
@@ -727,65 +753,31 @@ fn record_junit_case(log: &mut ResultLog, ctx: JunitCaseCtx<'_>, passed: bool) {
 #[must_use]
 pub fn parse_junit_results(text: &str) -> ResultLog {
     let mut log = ResultLog::default();
-    let mut current_suite: Option<String> = None;
-    let mut rest = text;
+    let mut reader = quick_xml::Reader::from_str(text);
+    let mut suite_stack: SuiteStack = Vec::new();
+    let mut active_case: Option<ActiveTestCase> = None;
+    let mut buf = Vec::new();
 
-    while !rest.is_empty() {
-        let Some(tag_start) = rest.find('<') else {
-            break;
-        };
-        rest = rest.get(tag_start..).unwrap_or_default();
-
-        if rest.starts_with("</testsuite") {
-            current_suite = None;
-            if let Some(end) = rest.find('>') {
-                rest = rest.get(end.saturating_add(1)..).unwrap_or_default();
-            } else {
-                break;
+    loop {
+        buf.clear();
+        match reader.read_event_into(&mut buf) {
+            Ok(quick_xml::events::Event::Start(ref e)) => {
+                handle_junit_start(e, &mut suite_stack, &mut active_case);
             }
-            continue;
-        }
-
-        if rest.starts_with("<testsuite") && !rest.starts_with("<testsuites") {
-            let tag_end = rest.find('>').unwrap_or(rest.len());
-            let tag_str = rest.get(..tag_end).unwrap_or_default();
-            if let Some(name) = extract_xml_attr(tag_str, "name") {
-                current_suite = Some(name);
+            Ok(quick_xml::events::Event::Empty(ref e)) => {
+                handle_junit_empty(e, &suite_stack, &mut active_case, &mut log);
             }
-            rest = rest.get(tag_end.min(rest.len())..).unwrap_or_default();
-            if rest.starts_with('>') {
-                rest = rest.get(1..).unwrap_or_default();
-            }
-            continue;
-        }
-
-        if rest.starts_with("<testcase") {
-            let Some(open_end) = rest.find('>') else {
-                break;
-            };
-            let open_tag = rest.get(..open_end).unwrap_or_default();
-            let name_opt = extract_xml_attr(open_tag, "name");
-            let class_opt = extract_xml_attr(open_tag, "classname");
-
-            let (passed_opt, next_rest) =
-                parse_junit_case_content(open_tag, open_end, rest);
-            rest = next_rest;
-
-            if let (Some(name), Some(passed)) = (name_opt, passed_opt) {
-                record_junit_case(
+            Ok(quick_xml::events::Event::End(ref e)) => {
+                handle_junit_end(
+                    e.local_name().as_ref(),
+                    &mut suite_stack,
+                    &mut active_case,
                     &mut log,
-                    JunitCaseCtx {
-                        name: &name,
-                        class: class_opt.as_deref(),
-                        suite: current_suite.as_deref(),
-                    },
-                    passed,
                 );
             }
-            continue;
+            Ok(quick_xml::events::Event::Eof) | Err(_) => break,
+            _ => {}
         }
-
-        rest = rest.get(1..).unwrap_or_default();
     }
 
     log
@@ -1845,6 +1837,52 @@ mod tests {
         assert_eq!(log.outcomes.get("pkg::safety_check"), Some(&false));
         assert_eq!(log.outcomes.get("mentions_failure"), Some(&true));
         assert_ne!(log.outcomes.get("safety_check"), Some(&true));
+    }
+
+    /// Comments and suite-level CDATA can embed a literal `<testcase .../>`.
+    /// The XML reader must skip those as tokens and not record ghost outcomes.
+    #[test]
+    fn junit_comment_or_cdata_testcase_does_not_false_pass() {
+        let text = r#"<?xml version="1.0"?>
+        <testsuite name="SuiteA">
+            <!-- <testcase classname="pkg" name="ghost_pass"/> -->
+            <system-out><![CDATA[<testcase classname="pkg" name="cdata_ghost"/>]]></system-out>
+            <testcase classname="pkg" name="real_test"/>
+            <!-- </testcase> in comment before failure -->
+            <testcase classname="pkg" name="real_fail">
+                <!-- </testcase> -->
+                <failure message="boom"/>
+            </testcase>
+        </testsuite>"#;
+        let log = parse_junit_results(text);
+        assert_eq!(log.outcomes.get("ghost_pass"), None);
+        assert_eq!(log.outcomes.get("cdata_ghost"), None);
+        assert_eq!(log.outcomes.get("real_test"), Some(&true));
+        assert_eq!(log.outcomes.get("real_fail"), Some(&false));
+    }
+
+    /// Entity decoding and multi-line attributes are handled according to XML standards.
+    #[test]
+    fn junit_entities_and_multiline_attributes() {
+        let text = r#"<testsuite name="SuiteA">
+            <testcase
+                classname="pkg.ClassA"
+                name="test_with_&amp;_and_&quot;quotes&quot;"
+            />
+            <testcase
+                name="test_fail"
+                classname="pkg.ClassA"
+            >
+                <failure message="fail"/>
+            </testcase>
+        </testsuite>"#;
+        let log = parse_junit_results(text);
+        assert_eq!(log.outcomes.get("test_with_&_and_\"quotes\""), Some(&true));
+        assert_eq!(
+            log.outcomes.get("pkg.ClassA::test_with_&_and_\"quotes\""),
+            Some(&true)
+        );
+        assert_eq!(log.outcomes.get("test_fail"), Some(&false));
     }
 
     fn write_log(dir: &Path, name: &str, text: &str) {

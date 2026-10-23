@@ -215,7 +215,7 @@ editing tools; and any systems-engineering view.
    condition may name multiple:
 
    | Method            | Target format                                  | Result log (`target/ci-artifacts/`)                                      |
-         |:------------------|:-----------------------------------------------|:-------------------------------------------------------------------------|
+            |:------------------|:-----------------------------------------------|:-------------------------------------------------------------------------|
    | `libtest`         | `crate::module::tests::test_name`              | `test.log` (`test <path> ... ok`)                                        |
    | `libtest` doctest | `crate::<file> - <item>`                       | `test.log` (`test <file> - <item> (line N) ... ok`)                      |
    | `kani`            | `crate::module::proofs::harness_name`          | `kani.log` (`Checking harness <path>...`)                                |
@@ -552,13 +552,15 @@ rules. A target matches a logged identifier exactly:
   test case with failure or error maps to a failed target. Skipped test cases
   are omitted (remaining `Unrun`). Conflicting outcomes across repeats are
   ambiguous: the target is a `Fail` defect.
-  Attributes on `<testcase>` (`name`, `classname`) are matched at XML token
-  boundaries (preceded by ASCII whitespace, `<`, or `/`) so that an earlier
-  `classname=` attribute does not bind as the test case's `name`. Test case
-  close tags (`</testcase>`) and judgment elements (`<failure`, `<error`,
-  `<skipped`) are scanned outside `<![CDATA[...]]>` blocks, preventing literal
-  tags in embedded log streams (`<system-out>`, `<system-err>`) from closing
-  the case early or falsifying case outcome.
+  Attributes on `<testcase>` (`name`, `classname`) are parsed via the
+  `quick-xml` reader so that attribute order, XML entity decoding, multi-line
+  tags and whitespace are handled according to XML token standards. Test case
+  close tags (`</testcase>`), comments (`<!-- ... -->`), and judgment elements
+  (`<failure`, `<error`, `<skipped`) are handled by reader event tokens outside
+  `<![CDATA[...]]>` blocks, preventing literal tags in embedded log streams
+  (`<system-out>`, `<system-err>`) from closing the case early or falsifying
+  case
+  outcome.
 - **`gate` (`<gate>.result.json`)**: A gate slug maps to a passing target iff
   `<result_dir>/<gate>.result.json` exists, deserializes into a valid
   `GateOutcome` record via `GateOutcome::load_from_file`, and its `verdict` is
