@@ -1,1509 +1,868 @@
-//! Discovery, run queue and session state machine for host-side ETS.
+//! The single command and telemetry session with a target.
+//!
+//! # Description
+//!
+//! A [`Session`] owns a [`HostLink`], is the only writer on it and runs one executable at a
+//! time. [`Session::open`] checks the wire revision and discovers the target into a
+//! [`Catalog`]. Cases run through [`Session::run_case`] and [`Session::run_cases`]; lifecycle
+//! tasks run through [`Session::run_task`] (`task_run`). Settings are read and written by name or
+//! index over the session, from target-reported information alone.
+//!
+//! # Core Concepts
+//!
+//! - **Blocking**: Every call polls the link until its reply arrives or a deadline passes. A
+//!   frontend that must stay responsive runs the session on a worker thread.
+//! - **Device state**: The session tracks idle, running an item and resetting. Silence or a
+//!   closed link during an active run, with no report, is an unreported fault.
+//! - **Recovery**: After a target panic or an unresponsive run the session sends `TryReset`,
+//!   resets the link, rechecks the revision and rediscovers. Collected results survive.
+//!
+//! # Usage
+//!
+//! ```no_run
+//! use control_rs_ets_host::session::Session;
+//! use control_rs_ets_host::target::Target;
+//! use control_rs_ets_host::ETSBridge;
+//!
+//! let bridge = ETSBridge::new(Target::qemu_arm(), false)?;
+//! let mut session = Session::open(bridge)?;
+//! let ids = session.catalog().case_ids();
+//! for id in ids {
+//!     let outcome = session.run_case(id)?;
+//!     println!("{id:?}: {:?}", outcome.status);
+//! }
+//! # Ok::<(), control_rs_ets_host::HostError>(())
+//! ```
+//!
+//! # Limitations
+//!
+//! - **Single target**: One session drives one target; nothing establishes that two sessions in
+//!   one process are independent.
 
-use control_rs_ets::wire::Param;
+use std::thread;
+use std::time::{Duration, Instant};
+
 use control_rs_ets::wire::{
-    Command as CommCommand, ExecMode, PROTOCOL_VERSION,
+    Command, ExecMode, PROTOCOL_VERSION, Param, ParamKey, Verdict,
 };
 
-use crate::bridge::{BridgeMessage, OwnedTelemetry, TestState};
-use crate::runner::TestOutcome;
+use crate::bridge::{OwnedTelemetry, TestState};
+use crate::catalog::{Catalog, ExecEntry, ItemId, SettingEntry, TargetDetails};
+use crate::error::HostError;
+use crate::link::{HostLink, LinkEvent, Polled, discover};
 
-/// Flag indicating that all `SettingInfo` items (`0..setting_count-1`) have been received.
-pub const SETTINGS_READY: u8 = 0b0000_0100; // 0x04
-/// Flag indicating that `SuiteInfo` metadata (name, test/setting counts) has been received.
-pub const SUITE_INFO_READY: u8 = 0b0000_0001; // 0x01
-/// Complete readiness mask for a test suite (`SUITE_INFO_READY | TESTS_READY | SETTINGS_READY`).
-pub const SUITE_READY_MASK: u8 = 0b0000_0111; // 0x07
-/// Flag indicating that all `TestInfo` items (`0..test_count-1`) have been received.
-pub const TESTS_READY: u8 = 0b0000_0010; // 0x02
+/// Pause between polls of an idle link.
+const POLL_PAUSE: Duration = Duration::from_millis(1);
 
-/// Pair of `(suite_id, test_id)` identifying a test case.
-pub type TestIndex = (u16, u16);
+/// Result of a session operation.
+pub type SessionError = HostError;
 
-/// Lifecycle phases of a host-side ETS testing session.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize,
-)]
-pub enum SessionPhase {
-    /// Target test discovery in progress. Telemetry is collected directly into suite readiness masks.
-    Discovering,
-    /// Discovery has been validated. Discovered tests are actively executing or queued.
-    Running,
-    /// Target panic or reset recovery in progress while unexecuted tests remain.
-    Recovering,
-}
+/// Result of a session call that returns a value.
+pub type SessionResult<T> = Result<T, SessionError>;
 
-/// Representation of a configuration setting in a test suite.
-#[derive(Debug, Clone)]
-pub struct SettingItem {
-    /// Identifier assigned to this setting within its suite.
-    pub setting_id: u16,
-    /// Name of the setting.
-    pub name: String,
-    /// Doc-comment description of the setting.
-    pub description: String,
-    /// Current value of the setting.
-    pub value: Param,
-}
-
-/// Representation of a single test case under discovery.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TestItem {
-    /// Identifier assigned to this test within its suite.
-    pub test_id: u16,
-    /// Identifier of the suite containing this test case.
-    pub suite_id: u16,
-    /// Name of the suite containing this test case.
-    pub suite_name: String,
-    /// Name of the test case.
-    pub name: String,
-    /// Doc-comment description of the test case.
-    pub description: String,
-    /// Current execution state of the test.
-    pub state: TestState,
-    /// CPU cycles consumed during the test run if completed.
-    pub cycles: Option<u64>,
-    /// Elapsed time of the test run in microseconds if completed.
-    pub time_us: Option<u64>,
-    /// Peak stack memory usage in bytes if completed.
-    pub stack_peak: Option<u32>,
-}
-
-/// Representation of a test suite containing tests and settings.
-#[derive(Debug, Clone)]
-pub struct SuiteItem {
-    /// Identifier assigned to this suite.
-    pub suite_id: u16,
-    /// Name of the suite.
-    pub name: String,
-    /// Doc-comment description of the suite.
-    pub description: String,
-    /// Expected number of tests in the suite from `SuiteInfo`.
-    pub test_count: u16,
-    /// Expected number of settings in the suite from `SuiteInfo`.
-    pub setting_count: u16,
-    /// Collection of tests inside this suite.
-    pub tests: Vec<TestItem>,
-    /// Collection of config settings inside this suite.
-    pub settings: Vec<SettingItem>,
-    /// Bitmask of initialized components (`SUITE_INFO_READY | TESTS_READY | SETTINGS_READY`).
-    pub ready_mask: u8,
-    /// Bitmask tracking individual test indices (bit t is set when test t arrives).
-    pub test_slots_mask: u64,
-    /// Bitmask tracking individual setting indices (bit s is set when setting s arrives).
-    pub setting_slots_mask: u64,
-}
-
-/// Host-side ETS session state (discovery, run queue, results).
-pub struct SessionState {
-    /// Current lifecycle phase of the session.
-    pub phase: SessionPhase,
-    /// Currently executing test (`suite_id`, `test_id`).
-    pub current_running: Option<TestIndex>,
-    /// Flag signaling whether discovery has been validated (kept in sync with phase).
-    pub discovery_complete: bool,
-    /// Flag signaling that test execution has finished or reached terminal state.
-    pub exit_loop: bool,
-    /// Buffer of log and diagnostic messages collected from the target.
-    pub logs: String,
-    /// Collection of test results recorded so far.
-    pub results: Vec<TestOutcome>,
-    /// Queue of tests pending execution `(suite_id, test_id)`.
-    pub run_queue: Vec<TestIndex>,
-    /// Discovered suites and their tests/settings.
-    pub suites: Vec<SuiteItem>,
-    /// Latest `TargetInfo` received (FR-8).
-    pub target_info: Option<TargetInfo>,
-    /// Target protocol version that differs from the host's
-    /// `PROTOCOL_VERSION` (`0` when discovery completed without `TargetInfo`).
-    /// Once set, every further message is ignored.
-    pub protocol_mismatch: Option<u8>,
-}
-
-/// Target metadata from `Telemetry::TargetInfo`.
+/// What a session tracks about the target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct TargetInfo {
-    /// Target's `PROTOCOL_VERSION`.
-    pub protocol_version: u8,
-    /// Board identifier (`0` when unknown).
-    pub board_id: u16,
-    /// Core clock in hertz (`0` when unknown).
-    pub core_clock_hz: u32,
-    /// FPU bits: 0 single, 1 double precision.
-    pub fpu_flags: u8,
+pub enum DeviceState {
+    /// Nothing is running.
+    Idle,
+    /// The target is being reset and rediscovered.
+    Resetting,
+    /// The item is running.
+    Running(ItemId),
 }
 
-/// Side effects requested by [`SessionState`] while processing bridge messages.
-#[derive(Debug)]
-pub enum SessionAction {
-    /// Request target restart and bridge reconnection.
-    PanicRestart,
-    /// Send a command packet to the target.
-    Send(CommCommand<'static>),
+/// How a case ended.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CaseStatus {
+    /// The target reported a verdict.
+    Done(Verdict),
+    /// The target reported a panic or exception.
+    Faulted {
+        /// Source file of the panic.
+        file: String,
+        /// Source line of the panic.
+        line: u32,
+        /// Panic message.
+        message: String,
+    },
+    /// The target went silent without a report.
+    UnreportedFault,
 }
 
-impl SuiteItem {
-    /// Creates a new, uninitialized suite descriptor.
-    #[must_use]
-    pub const fn new(suite_id: u16) -> Self {
-        Self {
-            suite_id,
-            name: String::new(),
-            description: String::new(),
-            test_count: 0,
-            setting_count: 0,
-            tests: Vec::new(),
-            settings: Vec::new(),
-            ready_mask: 0,
-            test_slots_mask: 0,
-            setting_slots_mask: 0,
-        }
-    }
-
-    /// Returns true if this suite has received all info, test, and setting frames.
-    #[must_use]
-    pub const fn is_ready(&self) -> bool {
-        (self.ready_mask & SUITE_READY_MASK) == SUITE_READY_MASK
-    }
-
-    /// Resets all readiness masks and clears transient items for re-discovery.
-    pub fn reset_discovery(&mut self) {
-        self.ready_mask = 0;
-        self.test_slots_mask = 0;
-        self.setting_slots_mask = 0;
-        self.tests.clear();
-        self.settings.clear();
-    }
+/// Statistics a target reports for a finished run.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Stats {
+    /// CPU cycles.
+    pub cycles: u64,
+    /// Largest release jitter in nanoseconds.
+    pub jitter_max_ns: u32,
+    /// Releases that arrived before the previous step finished.
+    pub missed_releases: u32,
+    /// Peak stack bytes.
+    pub stack_peak: u32,
+    /// Longest step in nanoseconds.
+    pub step_max_ns: u32,
+    /// Shortest step in nanoseconds.
+    pub step_min_ns: u32,
+    /// Steps executed.
+    pub steps: u64,
+    /// Run duration in nanoseconds.
+    pub time_ns: u64,
 }
 
-impl TestItem {
-    /// Converts this [`TestItem`] into a [`TestOutcome`].
-    #[must_use]
-    pub fn into_outcome(self) -> TestOutcome {
-        TestOutcome {
-            suite_id: self.suite_id,
-            test_id: self.test_id,
-            suite_name: self.suite_name,
-            test_name: self.name,
-            state: self.state,
-            cycles: self.cycles,
-            time_us: self.time_us,
-            stack_peak: self.stack_peak,
-        }
-    }
+/// The result of one case.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CaseOutcome {
+    /// The case.
+    pub id: ItemId,
+    /// Message that came with the verdict, if any.
+    pub message: Option<String>,
+    /// Statistics, when the target reported them.
+    pub stats: Option<Stats>,
+    /// How the case ended.
+    pub status: CaseStatus,
 }
 
-impl Default for SessionState {
+/// Outcomes collected by a session; they survive recovery.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ResultStore {
+    /// Case outcomes in run order.
+    pub cases: Vec<CaseOutcome>,
+    /// Target resets performed.
+    pub resets: u32,
+}
+
+/// Receives each case outcome as it completes.
+pub trait CaseObserver {
+    /// Called after each case.
+    fn on_outcome(&mut self, _outcome: &CaseOutcome) {}
+}
+
+/// Deadlines of a session.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionOptions {
+    /// How long one case may run before the target counts as silent.
+    pub case_timeout: Duration,
+    /// How long discovery may take.
+    pub discovery_timeout: Duration,
+    /// How long a setting request waits for its echo.
+    pub reply_timeout: Duration,
+    /// How long a stopping run may take before the target is reset.
+    pub stop_timeout: Duration,
+}
+
+/// The session with one target.
+pub struct Session<L: HostLink<Error = HostError>> {
+    pub(crate) catalog: Catalog,
+    pub(crate) console: String,
+    pub(crate) device: DeviceState,
+    pub(crate) link: L,
+    pub(crate) log: Vec<String>,
+    pub(crate) opts: SessionOptions,
+    pub(crate) details: TargetDetails,
+    pub(crate) results: ResultStore,
+}
+
+/// What a wait for the next event produced.
+pub(crate) enum Wait {
+    /// The link is gone.
+    Closed,
+    /// A telemetry message arrived.
+    Event(Box<OwnedTelemetry>),
+    /// The deadline passed.
+    Timeout,
+}
+
+impl Default for SessionOptions {
     fn default() -> Self {
-        Self::new()
+        Self {
+            case_timeout: Duration::from_secs(30),
+            discovery_timeout: Duration::from_secs(10),
+            reply_timeout: Duration::from_secs(2),
+            stop_timeout: Duration::from_secs(2),
+        }
     }
 }
 
-impl SessionState {
-    /// Creates a new, empty session state in the discovering phase.
+impl CaseObserver for () {}
+
+impl<L: HostLink<Error = HostError>> Session<L> {
+    /// Opens a session: checks the wire revision and discovers the target.
+    ///
+    /// # Errors
+    /// Returns [`HostError::ProtocolMismatch`] when the target speaks another revision,
+    /// [`HostError::Discovery`] when discovery does not finish, or a transport error.
+    pub fn open(link: L) -> SessionResult<Self> {
+        Self::open_with(link, SessionOptions::default())
+    }
+
+    /// Opens a session with explicit deadlines.
+    ///
+    /// # Errors
+    /// See [`Session::open`].
+    pub fn open_with(link: L, opts: SessionOptions) -> SessionResult<Self> {
+        let mut session = Self::new(link, opts);
+        session.discover()?;
+        Ok(session)
+    }
+
+    /// Creates a session without discovering the target.
+    ///
+    /// A frontend calls [`Session::discover`] until it succeeds, for a target that is still
+    /// booting.
     #[must_use]
-    pub const fn new() -> Self {
+    pub const fn new(link: L, opts: SessionOptions) -> Self {
         Self {
-            phase: SessionPhase::Discovering,
-            current_running: None,
-            discovery_complete: false,
-            exit_loop: false,
-            logs: String::new(),
-            results: Vec::new(),
-            run_queue: Vec::new(),
-            suites: Vec::new(),
-            target_info: None,
-            protocol_mismatch: None,
+            catalog: Catalog { suites: Vec::new() },
+            console: String::new(),
+            device: DeviceState::Idle,
+            link,
+            log: Vec::new(),
+            opts,
+            details: TargetDetails {
+                board_id: 0,
+                core_clock_hz: 0,
+                fpu_flags: 0,
+                protocol_version: 0,
+                release_source: false,
+            },
+            results: ResultStore {
+                cases: Vec::new(),
+                resets: 0,
+            },
         }
     }
 
-    /// Appends a raw message to the internal log buffer.
-    pub fn log(&mut self, msg: &str) {
-        self.logs.push_str(msg);
-    }
-
-    /// Ensures that `self.suites` contains an entry at index `suite_id` and
-    /// returns it.
+    /// Whether the link reports that the target process or device exited.
     ///
-    /// Missing slots below `suite_id` are filled with empty descriptors.
-    /// `None` is returned only when the slot cannot be addressed, which the
-    /// `u16` identifier space rules out on every supported host.
-    pub fn ensure_suite_slot(
-        &mut self,
-        suite_id: u16,
-    ) -> Option<&mut SuiteItem> {
-        if let Ok(first) = u16::try_from(self.suites.len())
-            && first <= suite_id
-        {
-            self.suites.extend((first..=suite_id).map(SuiteItem::new));
-        }
-        self.suites.get_mut(usize::from(suite_id))
+    /// # Errors
+    /// Returns the link error if the status cannot be queried.
+    pub fn exited(&mut self) -> SessionResult<bool> {
+        self.link.exited()
     }
 
-    /// Suite and test names for `(suite_id, test_id)`, empty when unknown.
-    fn case_names(&self, suite_id: u16, test_id: u16) -> (String, String) {
-        let suite = self.suites.get(usize::from(suite_id));
-        let suite_name = suite.map_or_else(String::new, |s| s.name.clone());
-        let test_name = suite
-            .and_then(|s| s.tests.iter().find(|t| t.test_id == test_id))
-            .map_or_else(String::new, |t| t.name.clone());
-        (suite_name, test_name)
-    }
-
-    /// Mutable access to the discovered test `(suite_id, test_id)`.
-    fn test_mut(
-        &mut self,
-        suite_id: u16,
-        test_id: u16,
-    ) -> Option<&mut TestItem> {
-        self.suites
-            .get_mut(usize::from(suite_id))?
-            .tests
-            .iter_mut()
-            .find(|t| t.test_id == test_id)
-    }
-
-    /// Returns a reference to a recorded outcome matching `(suite_id, test_id)`.
+    /// Describes the link.
     #[must_use]
-    pub fn find_outcome(
-        &self,
-        suite_id: u16,
-        test_id: u16,
-    ) -> Option<&TestOutcome> {
-        self.results
-            .iter()
-            .find(|r| r.suite_id == suite_id && r.test_id == test_id)
+    pub fn link_description(&self) -> &str {
+        self.link.describe()
     }
 
-    /// Returns a mutable reference to a recorded outcome matching `(suite_id, test_id)`.
-    pub fn find_outcome_mut(
-        &mut self,
-        suite_id: u16,
-        test_id: u16,
-    ) -> Option<&mut TestOutcome> {
-        self.results
-            .iter_mut()
-            .find(|r| r.suite_id == suite_id && r.test_id == test_id)
+    /// What `TargetInfo` reported at the last discovery.
+    #[must_use]
+    pub const fn details(&self) -> TargetDetails {
+        self.details
     }
 
-    /// Records or updates a test outcome keyed by `(suite_id, test_id)`.
-    pub fn record_outcome(&mut self, outcome: TestOutcome) {
-        if let Some(existing) =
-            self.find_outcome_mut(outcome.suite_id, outcome.test_id)
-        {
-            *existing = outcome;
-        } else {
-            self.results.push(outcome);
-        }
+    /// Takes the log lines (target logs and console text) received since the last call.
+    pub fn take_log(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.log)
     }
 
-    /// Enqueues all discovered tests across all suites for execution.
+    /// What discovery reported.
+    #[must_use]
+    pub const fn catalog(&self) -> &Catalog {
+        &self.catalog
+    }
+
+    /// Console text the target printed outside the protocol.
+    #[must_use]
+    pub fn console(&self) -> &str {
+        &self.console
+    }
+
+    /// What the session believes the target is doing.
+    #[must_use]
+    pub const fn device_state(&self) -> DeviceState {
+        self.device
+    }
+
+    /// Closes the link.
+    pub fn close(&mut self) {
+        self.link.close();
+    }
+
+    /// Outcomes collected so far.
+    #[must_use]
+    pub const fn results(&self) -> &ResultStore {
+        &self.results
+    }
+
+    /// Reads one setting.
     ///
-    /// When a case is already in flight (`current_running`), that case is
-    /// omitted from the rebuilt queue so the next metric report does not
-    /// immediately re-run it.
-    pub fn enqueue_all(&mut self) -> Option<SessionAction> {
-        if self.phase != SessionPhase::Running {
-            return None;
+    /// # Errors
+    /// Returns a transport error, or [`HostError::Refused`] when the target does not answer.
+    pub fn get_setting(
+        &mut self,
+        suite: u16,
+        key: ParamKey<'_>,
+    ) -> SessionResult<SettingEntry> {
+        self.param_request(suite, key, None)
+    }
+
+    /// Writes one setting by name and returns the value the target stored.
+    ///
+    /// The target answers with the stored value whether or not the write succeeded, so the
+    /// caller compares the returned value with the requested one.
+    ///
+    /// # Errors
+    /// Returns a transport error, or [`HostError::Refused`] when the target does not answer.
+    pub fn set_setting(
+        &mut self,
+        suite: u16,
+        name: &str,
+        value: Param,
+    ) -> SessionResult<SettingEntry> {
+        self.param_request(suite, ParamKey::Name(name), Some(value))
+    }
+
+    /// Runs one case to its verdict.
+    ///
+    /// A target panic or silence is recorded in the outcome and the target is recovered; only a
+    /// transport failure is an error.
+    ///
+    /// # Errors
+    /// Returns [`HostError::Refused`] for an unknown id or a task, or a transport error.
+    pub fn run_case(&mut self, id: ItemId) -> SessionResult<CaseOutcome> {
+        let allowed = self
+            .catalog
+            .exec(id)
+            .is_some_and(|e| !e.is_task() && e.allows(ExecMode::Atomic));
+        if !allowed {
+            return Err(refused("not a case of this target"));
         }
-        let in_flight = self.current_running;
-        self.run_queue.clear();
-        for suite in &self.suites {
-            for test in &suite.tests {
-                let id = (suite.suite_id, test.test_id);
-                if in_flight == Some(id) {
-                    continue;
+        self.link.send(&Command::RunExecutable {
+            suite: id.0,
+            item: id.1,
+            mode: ExecMode::Atomic,
+            max_steps: 0,
+            period_ns: 0,
+        })?;
+        self.device = DeviceState::Running(id);
+        let outcome = self.collect_case(id)?;
+        self.results.cases.push(outcome.clone());
+        Ok(outcome)
+    }
+
+    /// Runs `ids` in order and never starts a task.
+    ///
+    /// A target panic is recorded against its case and the sequence continues with the next id.
+    ///
+    /// # Errors
+    /// Returns a transport error.
+    pub fn run_cases<O: CaseObserver>(
+        &mut self,
+        ids: impl IntoIterator<Item = ItemId>,
+        observer: &mut O,
+    ) -> SessionResult<()> {
+        for id in ids {
+            if self.catalog.exec(id).is_some_and(ExecEntry::is_task) {
+                continue;
+            }
+            let outcome = self.run_case(id)?;
+            observer.on_outcome(&outcome);
+        }
+        Ok(())
+    }
+
+    /// Resets the target and rediscovers it.
+    ///
+    /// # Errors
+    /// Returns a transport error or a discovery error.
+    pub fn recover(&mut self) -> SessionResult<()> {
+        self.device = DeviceState::Resetting;
+        let _ = self.link.send(&Command::TryReset);
+        self.link.reset()?;
+        self.results.resets = self.results.resets.saturating_add(1);
+        self.discover()
+    }
+
+    /// Checks the wire revision and discovers the target, filling the catalog.
+    ///
+    /// # Errors
+    /// Returns [`HostError::ProtocolMismatch`] when the target speaks another revision,
+    /// [`HostError::Discovery`] when discovery does not finish in time, or a transport error.
+    pub fn discover(&mut self) -> SessionResult<()> {
+        self.catalog = Catalog::default();
+        discover(&mut self.link)?;
+        let until = deadline(self.opts.discovery_timeout);
+        let mut revision = None;
+        loop {
+            match self.wait_event(until) {
+                Wait::Closed => return Err(closed()),
+                Wait::Timeout => return Err(HostError::Discovery),
+                Wait::Event(event) => match *event {
+                    OwnedTelemetry::TargetInfo {
+                        protocol_version,
+                        board_id,
+                        core_clock_hz,
+                        fpu_flags,
+                        release_source,
+                    } => {
+                        if protocol_version != PROTOCOL_VERSION {
+                            return Err(HostError::ProtocolMismatch {
+                                host: u32::from(PROTOCOL_VERSION),
+                                target: u32::from(protocol_version),
+                            });
+                        }
+                        self.details = TargetDetails {
+                            board_id,
+                            core_clock_hz,
+                            fpu_flags,
+                            protocol_version,
+                            release_source,
+                        };
+                        revision = Some(protocol_version);
+                    }
+                    OwnedTelemetry::DiscoveryComplete => break,
+                    other => self.catalog.apply(&other),
+                },
+            }
+        }
+        if revision.is_none() {
+            return Err(HostError::Discovery);
+        }
+        for (suite, index) in self.catalog.missing_settings() {
+            let _ = self.get_setting(suite, ParamKey::Index(index))?;
+        }
+        if !self.catalog.missing_executables().is_empty() {
+            return Err(HostError::Discovery);
+        }
+        self.device = DeviceState::Idle;
+        Ok(())
+    }
+
+    /// Waits for the outcome of the case `id`, recovering the target after a fault.
+    fn collect_case(&mut self, id: ItemId) -> SessionResult<CaseOutcome> {
+        let until = deadline(self.opts.case_timeout);
+        let mut outcome = CaseOutcome {
+            id,
+            message: None,
+            stats: None,
+            status: CaseStatus::UnreportedFault,
+        };
+        let mut verdict = None;
+        loop {
+            match self.wait_event(until) {
+                Wait::Closed => return Err(closed()),
+                Wait::Timeout => {
+                    if let Some(v) = verdict {
+                        // The verdict arrived and only the statistics are missing.
+                        outcome.status = CaseStatus::Done(v);
+                        self.device = DeviceState::Idle;
+                        return Ok(outcome);
+                    }
+                    outcome.status = CaseStatus::UnreportedFault;
+                    // A failed recovery surfaces on the next command; the outcome is kept.
+                    let _ = self.recover();
+                    return Ok(outcome);
                 }
-                self.run_queue.push(id);
+                Wait::Event(event) => match *event {
+                    OwnedTelemetry::TestStateChange {
+                        suite_id,
+                        test_id,
+                        verdict: Some(v),
+                        message,
+                        ..
+                    } if (suite_id, test_id) == id => {
+                        verdict = Some(v);
+                        outcome.message = message;
+                    }
+                    OwnedTelemetry::RunStats {
+                        suite_id, test_id, ..
+                    } if (suite_id, test_id) == id => {
+                        outcome.stats = stats_of(&event);
+                        if let Some(v) = verdict {
+                            outcome.status = CaseStatus::Done(v);
+                            self.device = DeviceState::Idle;
+                            return Ok(outcome);
+                        }
+                    }
+                    OwnedTelemetry::TargetPanic {
+                        file,
+                        line,
+                        message,
+                        ..
+                    } => {
+                        outcome.status = CaseStatus::Faulted {
+                            file,
+                            line,
+                            message,
+                        };
+                        let _ = self.recover();
+                        return Ok(outcome);
+                    }
+                    _ => {}
+                },
             }
-        }
-        if self.current_running.is_none() {
-            self.start_next_or_exit()
-        } else {
-            None
         }
     }
 
-    /// Returns cases that have not finished when a run aborts.
-    ///
-    /// Includes the in-flight `current_running` case when it is not already
-    /// recorded in `results`, then the remaining `run_queue` entries.
-    #[must_use]
-    pub fn pending_cases(&self) -> Vec<TestIndex> {
-        let mut pending = Vec::new();
-        if let Some((s_id, t_id)) = self.current_running
-            && self.find_outcome(s_id, t_id).is_none()
-        {
-            pending.push((s_id, t_id));
-        }
-        for id in &self.run_queue {
-            if !pending.contains(id) {
-                pending.push(*id);
-            }
-        }
-        pending
-    }
-
-    /// Enqueues a specific test for execution.
-    pub fn enqueue_test(
+    /// Sends a `Param` request and waits for the echoed value.
+    fn param_request(
         &mut self,
-        suite_id: u16,
-        test_id: u16,
-    ) -> Option<SessionAction> {
-        if self.phase != SessionPhase::Running {
-            return None;
-        }
-        if self.current_running.is_none() {
-            self.current_running = Some((suite_id, test_id));
-            Some(SessionAction::Send(run_command(suite_id, test_id)))
-        } else {
-            self.run_queue.push((suite_id, test_id));
-            None
-        }
-    }
-
-    /// Stops any currently running tests and clears the run queue.
-    pub fn stop(&mut self) {
-        self.run_queue.clear();
-        self.current_running = None;
-    }
-
-    /// Dequeues the next test to run, or marks the session loop complete if queue is empty.
-    pub fn start_next_or_exit(&mut self) -> Option<SessionAction> {
-        self.current_running = None;
-        if self.run_queue.is_empty() {
-            self.exit_loop = true;
-            None
-        } else {
-            let (next_s, next_t) = self.run_queue.remove(0);
-            self.current_running = Some((next_s, next_t));
-            Some(SessionAction::Send(run_command(next_s, next_t)))
-        }
-    }
-
-    /// Processes an incoming bridge message and updates session state accordingly.
-    pub fn handle_message(&mut self, msg: BridgeMessage) -> Vec<SessionAction> {
-        if self.protocol_mismatch.is_some() {
-            return Vec::new();
-        }
-        match msg {
-            BridgeMessage::RawConsole(line) => {
-                let formatted = format!("      [ETS] {line}\n");
-                self.log(&formatted);
-                Vec::new()
-            }
-            BridgeMessage::Telemetry(telemetry) => {
-                self.handle_telemetry(telemetry)
+        suite: u16,
+        key: ParamKey<'_>,
+        value: Option<Param>,
+    ) -> SessionResult<SettingEntry> {
+        self.link.send(&Command::Param { suite, key, value })?;
+        let until = deadline(self.opts.reply_timeout);
+        loop {
+            match self.wait_event(until) {
+                Wait::Closed => return Err(closed()),
+                Wait::Timeout => {
+                    return Err(refused("the target did not answer"));
+                }
+                Wait::Event(event) => {
+                    let found = self.note_setting(suite, &event);
+                    if let Some(entry) = found {
+                        return Ok(entry);
+                    }
+                }
             }
         }
     }
 
-    /// Dispatches one telemetry frame to its handler.
-    fn handle_telemetry(
+    /// Records a setting echo for `suite` in the catalog and returns the entry.
+    pub(crate) fn note_setting(
         &mut self,
-        telemetry: OwnedTelemetry,
-    ) -> Vec<SessionAction> {
-        match telemetry {
-            OwnedTelemetry::TestStateChange {
-                suite_id,
-                test_id,
-                state,
-            } => {
-                self.on_test_state_change((suite_id, test_id), state);
-                Vec::new()
-            }
-            OwnedTelemetry::MetricReport {
-                suite_id,
-                test_id,
-                cycles,
-                time_us,
-                stack_peak,
-            } => self.on_metric_report(TestOutcome {
-                suite_id,
-                test_id,
-                suite_name: String::new(),
-                test_name: String::new(),
-                state: TestState::Passed,
-                cycles: Some(cycles),
-                time_us: Some(time_us),
-                stack_peak: Some(stack_peak),
-            }),
-            OwnedTelemetry::TargetPanic {
-                message,
-                file,
-                line,
-                ..
-            } => self.on_target_panic(&message, &file, line),
-            OwnedTelemetry::Log { .. } => Vec::new(),
-            OwnedTelemetry::TargetInfo {
-                protocol_version,
-                board_id,
-                core_clock_hz,
-                fpu_flags,
-                ..
-            } => {
-                self.on_target_info(TargetInfo {
-                    protocol_version,
-                    board_id,
-                    core_clock_hz,
-                    fpu_flags,
-                });
-                Vec::new()
-            }
-            catalog => self.handle_catalog(catalog),
-        }
-    }
-
-    /// Applies a `SettingInfo` / `ParamValue` echo to the suite table (FR-11).
-    fn apply_setting_info(&mut self, telemetry: OwnedTelemetry) {
-        if let OwnedTelemetry::SettingInfo {
+        suite: u16,
+        event: &OwnedTelemetry,
+    ) -> Option<SettingEntry> {
+        let OwnedTelemetry::SettingInfo {
             suite_id,
             setting_id,
-            name,
-            value,
-            description,
             ..
-        } = telemetry
-        {
-            self.on_setting_info(
-                suite_id,
-                SettingItem {
-                    setting_id,
-                    name,
-                    description,
-                    value,
-                },
-            );
-        }
-    }
-
-    /// Handles discovery frames. Suite and test catalog entries are ignored once the run has
-    /// started. [`OwnedTelemetry::SettingInfo`] (from `ParamValue`) still applies while
-    /// `Running` so a refused or accepted `Param` write refreshes the host value (FR-11).
-    fn handle_catalog(
-        &mut self,
-        telemetry: OwnedTelemetry,
-    ) -> Vec<SessionAction> {
-        if self.phase == SessionPhase::Running {
-            self.apply_setting_info(telemetry);
-            return Vec::new();
-        }
-        match telemetry {
-            OwnedTelemetry::SuiteInfo {
-                suite_id,
-                name,
-                description,
-                test_count,
-                setting_count,
-            } => self.on_suite_info(SuiteItem {
-                name,
-                description,
-                test_count,
-                setting_count,
-                ..SuiteItem::new(suite_id)
-            }),
-            OwnedTelemetry::TestInfo {
-                suite_id,
-                test_id,
-                name,
-                description,
-            } => self.on_test_info((suite_id, test_id), name, description),
-            setting @ OwnedTelemetry::SettingInfo { .. } => {
-                self.apply_setting_info(setting);
-            }
-            OwnedTelemetry::DiscoveryComplete => {
-                return self.on_discovery_complete();
-            }
-            OwnedTelemetry::TestStateChange { .. }
-            | OwnedTelemetry::MetricReport { .. }
-            | OwnedTelemetry::TargetPanic { .. }
-            | OwnedTelemetry::TargetInfo { .. }
-            | OwnedTelemetry::TaskSample { .. }
-            | OwnedTelemetry::TeardownReport { .. }
-            | OwnedTelemetry::Log { .. } => {}
-        }
-        Vec::new()
-    }
-
-    /// Records suite metadata and marks components with a zero count ready.
-    fn on_suite_info(&mut self, info: SuiteItem) {
-        let Some(suite) = self.ensure_suite_slot(info.suite_id) else {
-            return;
+        } = *event
+        else {
+            return None;
         };
-        suite.name = info.name;
-        suite.description = info.description;
-        suite.test_count = info.test_count;
-        suite.setting_count = info.setting_count;
-        suite.ready_mask |= SUITE_INFO_READY;
-        if info.test_count == 0 {
-            suite.ready_mask |= TESTS_READY;
+        if suite_id != suite {
+            return None;
         }
-        if info.setting_count == 0 {
-            suite.ready_mask |= SETTINGS_READY;
-        }
-    }
-
-    /// Records a discovered test, carrying over any outcome already seen.
-    fn on_test_info(
-        &mut self,
-        (suite_id, test_id): TestIndex,
-        name: String,
-        description: String,
-    ) {
-        let prev = self.find_outcome(suite_id, test_id);
-        let state = prev.map_or(TestState::Pending, |p| p.state);
-        let cycles = prev.and_then(|p| p.cycles);
-        let time_us = prev.and_then(|p| p.time_us);
-        let stack_peak = prev.and_then(|p| p.stack_peak);
-
-        let Some(suite) = self.ensure_suite_slot(suite_id) else {
-            return;
-        };
-        suite.test_slots_mask |= slot_bit(test_id);
-        let item = TestItem {
-            suite_id,
-            test_id,
-            suite_name: suite.name.clone(),
-            name,
-            description,
-            state,
-            cycles,
-            time_us,
-            stack_peak,
-        };
-        if let Some(existing) =
-            suite.tests.iter_mut().find(|t| t.test_id == test_id)
-        {
-            *existing = item;
-        } else {
-            suite.tests.push(item);
-        }
-        if slots_complete(
-            suite.tests.len(),
-            suite.test_count,
-            suite.test_slots_mask,
-        ) {
-            suite.ready_mask |= TESTS_READY;
-        }
-    }
-
-    /// Records a discovered setting.
-    fn on_setting_info(&mut self, suite_id: u16, item: SettingItem) {
-        let Some(suite) = self.ensure_suite_slot(suite_id) else {
-            return;
-        };
-        suite.setting_slots_mask |= slot_bit(item.setting_id);
-        if let Some(existing) = suite
+        self.catalog.apply(event);
+        self.catalog
+            .suites
+            .get(usize::from(suite))?
             .settings
-            .iter_mut()
-            .find(|s| s.setting_id == item.setting_id)
-        {
-            *existing = item;
-        } else {
-            suite.settings.push(item);
-        }
-        if slots_complete(
-            suite.settings.len(),
-            suite.setting_count,
-            suite.setting_slots_mask,
-        ) {
-            suite.ready_mask |= SETTINGS_READY;
-        }
+            .get(usize::from(setting_id))?
+            .clone()
     }
 
-    /// Validates the catalog and starts execution, or restarts discovery.
-    /// Records target metadata and checks the wire contract (FR-8).
-    fn on_target_info(&mut self, info: TargetInfo) {
-        self.target_info = Some(info);
-        if info.protocol_version != PROTOCOL_VERSION {
-            self.reject_protocol(info.protocol_version);
-        }
+    /// Records one log line in the console and the log queue.
+    fn note_log(&mut self, line: String) {
+        self.console.push_str(&line);
+        self.console.push('\n');
+        self.log.push(line);
     }
 
-    /// Ends the session on a wire-contract mismatch; `0` means the target
-    /// never sent `TargetInfo`.
-    fn reject_protocol(&mut self, target: u8) {
-        self.log(&format!(
-            "Protocol mismatch: host expects {PROTOCOL_VERSION}, target reported {target}. Ending session.\n"
-        ));
-        self.protocol_mismatch = Some(target);
-        self.exit_loop = true;
-    }
-
-    fn on_discovery_complete(&mut self) -> Vec<SessionAction> {
-        if self.target_info.is_none() {
-            self.reject_protocol(0);
-            return Vec::new();
-        }
-        if self.suites.is_empty()
-            || !self.suites.iter().all(SuiteItem::is_ready)
-        {
-            self.log(
-                "Discovery validation failed (incomplete or non-contiguous slots). Retrying discovery.\n",
-            );
-            for s in &mut self.suites {
-                s.reset_discovery();
-            }
-            return Vec::new();
-        }
-
-        self.run_queue.clear();
-        for suite in &self.suites {
-            for test in &suite.tests {
-                if self.find_outcome(suite.suite_id, test.test_id).is_none() {
-                    self.run_queue.push((suite.suite_id, test.test_id));
+    /// Waits for the next telemetry message until `until`.
+    pub(crate) fn wait_event(&mut self, until: Instant) -> Wait {
+        loop {
+            match self.link.poll() {
+                Polled::Event(LinkEvent::Telemetry(OwnedTelemetry::Log {
+                    level,
+                    target,
+                    message,
+                })) => {
+                    let tag = match level {
+                        0 => "ERROR",
+                        1 => "WARN",
+                        _ => "INFO",
+                    };
+                    self.note_log(format!("[{tag}] {target}: {message}"));
                 }
+                Polled::Event(LinkEvent::Telemetry(t)) => {
+                    return Wait::Event(Box::new(t));
+                }
+                Polled::Event(LinkEvent::Console(text)) => {
+                    self.note_log(text);
+                }
+                Polled::Idle => {
+                    if Instant::now() >= until {
+                        return Wait::Timeout;
+                    }
+                    thread::sleep(POLL_PAUSE);
+                }
+                Polled::Closed => return Wait::Closed,
             }
-        }
-
-        self.phase = SessionPhase::Running;
-        self.discovery_complete = true;
-
-        self.start_next_or_exit().into_iter().collect()
-    }
-
-    /// Applies a test state transition; a failure is recorded immediately.
-    fn on_test_state_change(
-        &mut self,
-        (suite_id, test_id): TestIndex,
-        new_state: TestState,
-    ) {
-        if let Some(test) = self.test_mut(suite_id, test_id) {
-            test.state = new_state;
-        }
-
-        if new_state == TestState::Failed {
-            let (suite_name, test_name) = self.case_names(suite_id, test_id);
-            if self.find_outcome(suite_id, test_id).is_none() {
-                self.record_outcome(TestOutcome {
-                    suite_id,
-                    test_id,
-                    suite_name,
-                    test_name,
-                    state: TestState::Failed,
-                    cycles: None,
-                    time_us: None,
-                    stack_peak: None,
-                });
-            }
-            self.current_running = Some((suite_id, test_id));
-        }
-    }
-
-    /// Records a passing metric report and starts the next queued test.
-    ///
-    /// `report` carries the metrics; its name fields are filled in here.
-    fn on_metric_report(
-        &mut self,
-        mut report: TestOutcome,
-    ) -> Vec<SessionAction> {
-        if let Some(test) = self.test_mut(report.suite_id, report.test_id) {
-            test.state = TestState::Passed;
-            test.cycles = report.cycles;
-            test.time_us = report.time_us;
-            test.stack_peak = report.stack_peak;
-        }
-        (report.suite_name, report.test_name) =
-            self.case_names(report.suite_id, report.test_id);
-        self.record_outcome(report);
-        self.start_next_or_exit().into_iter().collect()
-    }
-
-    /// Logs a target panic, fails the in-flight test and requests a restart.
-    fn on_target_panic(
-        &mut self,
-        message: &str,
-        file: &str,
-        line: u32,
-    ) -> Vec<SessionAction> {
-        self.log(&format!("target panicked: '{message}' at {file}:{line}\n"));
-
-        match self.phase {
-            SessionPhase::Discovering => {
-                self.log("Target panic occurred during discovery phase.\n");
-            }
-            SessionPhase::Running => self.fail_in_flight_test(),
-            SessionPhase::Recovering => {
-                self.log("Target panic occurred during recovery phase.\n");
-            }
-        }
-
-        let remaining_to_run = match self.phase {
-            SessionPhase::Discovering => true,
-            SessionPhase::Running | SessionPhase::Recovering => {
-                self.suites.iter().any(|suite| {
-                    suite.tests.iter().any(|test| {
-                        self.find_outcome(suite.suite_id, test.test_id)
-                            .is_none()
-                    })
-                })
-            }
-        };
-
-        self.current_running = None;
-        for s in &mut self.suites {
-            s.reset_discovery();
-        }
-
-        self.discovery_complete = false;
-        self.phase = SessionPhase::Recovering;
-        if !remaining_to_run {
-            self.exit_loop = true;
-        }
-        vec![
-            SessionAction::Send(CommCommand::TryReset),
-            SessionAction::PanicRestart,
-        ]
-    }
-
-    /// Marks the in-flight test failed after a panic in the running phase.
-    fn fail_in_flight_test(&mut self) {
-        let Some((s_id, t_id)) = self.current_running else {
-            self.log(
-                "Target panic occurred outside test execution in running phase.\n",
-            );
-            return;
-        };
-        let Some(test) = self.test_mut(s_id, t_id) else {
-            return;
-        };
-        test.state = TestState::Failed;
-        let (suite_name, test_name) = self.case_names(s_id, t_id);
-        if self.find_outcome(s_id, t_id).is_none() {
-            self.record_outcome(TestOutcome {
-                suite_id: s_id,
-                test_id: t_id,
-                suite_name,
-                test_name,
-                state: TestState::Failed,
-                cycles: None,
-                time_us: None,
-                stack_peak: None,
-            });
         }
     }
 }
 
-/// Bit for slot `id` in a 64-bit slot mask; ids of 64 and above map to 0.
-fn slot_bit(id: u16) -> u64 {
-    1u64.checked_shl(u32::from(id)).unwrap_or(0)
-}
-
-/// Whether `have` items with slot `mask` complete a set of `count` items.
-///
-/// Counts above 64 cannot be tracked per slot and complete on length alone.
-fn slots_complete(have: usize, count: u16, mask: u64) -> bool {
-    if count == 0 || have != usize::from(count) {
-        return false;
-    }
-    let expected = match count {
-        64 => u64::MAX,
-        1..64 => slot_bit(count).saturating_sub(1),
-        _ => return true,
-    };
-    mask & expected == expected
-}
-
-/// Builds the command that runs a case in atomic mode.
+/// The host-side view of a wire `ItemState`.
 #[must_use]
-pub const fn run_command(suite: u16, item: u16) -> CommCommand<'static> {
-    CommCommand::RunExecutable {
-        suite,
-        item,
-        mode: ExecMode::Atomic,
-        max_steps: 0,
-        period_ns: 0,
+pub(crate) const fn state_of(
+    state: TestState,
+    verdict: Option<Verdict>,
+) -> control_rs_ets::wire::ItemState {
+    use control_rs_ets::wire::ItemState;
+    match (state, verdict) {
+        (_, Some(v)) => ItemState::Done(v),
+        (TestState::Running, None) => ItemState::Running,
+        (TestState::Pending, None) => ItemState::Idle,
+        _ => ItemState::Faulted,
+    }
+}
+
+/// The statistics carried by a `RunStats` event.
+pub(crate) const fn stats_of(event: &OwnedTelemetry) -> Option<Stats> {
+    match *event {
+        OwnedTelemetry::RunStats {
+            cycles,
+            jitter_max_ns,
+            missed_releases,
+            stack_peak,
+            step_max_ns,
+            step_min_ns,
+            steps,
+            time_ns,
+            ..
+        } => Some(Stats {
+            cycles,
+            jitter_max_ns,
+            missed_releases,
+            stack_peak,
+            step_max_ns,
+            step_min_ns,
+            steps,
+            time_ns,
+        }),
+        _ => None,
+    }
+}
+
+/// The instant `after` from now.
+pub(crate) fn deadline(after: Duration) -> Instant {
+    let now = Instant::now();
+    now.checked_add(after).unwrap_or(now)
+}
+
+/// A request the host refuses.
+pub(crate) fn refused(reason: &str) -> HostError {
+    HostError::Refused {
+        reason: reason.to_string(),
+    }
+}
+
+/// The link ended while a reply was due.
+pub(crate) fn closed() -> HostError {
+    HostError::Transport {
+        source: "the link closed while waiting for the target".into(),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::testing::{Fake, ScriptLink, quick};
 
-    /// A session that already received a matching `TargetInfo` (FR-8).
-    fn matched() -> SessionState {
-        let mut s = SessionState::new();
-        s.target_info = Some(crate::session::TargetInfo {
-            protocol_version: control_rs_ets::wire::PROTOCOL_VERSION,
-            board_id: 0,
-            core_clock_hz: 0,
-            fpu_flags: 0,
+    /// Collects the ids of finished cases.
+    struct Collect(Vec<ItemId>);
+
+    impl CaseObserver for Collect {
+        fn on_outcome(&mut self, outcome: &CaseOutcome) {
+            self.0.push(outcome.id);
+        }
+    }
+
+    fn open(fake: Fake) -> Session<ScriptLink> {
+        Session::open_with(fake.link(), quick()).unwrap()
+    }
+
+    #[test]
+    fn open_poll_close() {
+        let mut s = open(Fake::default());
+        assert_eq!(s.device_state(), DeviceState::Idle);
+        assert_eq!(s.console(), "");
+        s.close();
+        assert!(s.link.exited().unwrap());
+        assert_eq!(s.link.describe(), "script");
+    }
+
+    #[test]
+    fn target_logs_and_console_text_are_queued() {
+        let mut link = Fake::default().link();
+        link.preload.push(LinkEvent::Console("boot".to_string()));
+        link.preload.push(LinkEvent::Telemetry(OwnedTelemetry::Log {
+            level: 1,
+            target: "pid".to_string(),
+            message: "clamped".to_string(),
+        }));
+        let mut s = Session::open_with(link, quick()).unwrap();
+        assert_eq!(s.take_log(), ["boot", "[WARN] pid: clamped"]);
+        assert_eq!(s.take_log(), Vec::<String>::new());
+        assert!(s.console().contains("clamped"));
+        assert_eq!(s.link_description(), "script");
+        assert!(!s.details().release_source);
+        assert_eq!(s.details().board_id, 7);
+        assert!(!s.exited().unwrap());
+    }
+
+    #[test]
+    fn discovery_and_run_queue() {
+        let mut s = open(Fake::default());
+        assert_eq!(s.catalog().case_ids(), [(0, 0), (0, 1)]);
+        let mut seen = Collect(Vec::new());
+        s.run_cases([(0, 0)], &mut seen).unwrap();
+        assert_eq!(seen.0, [(0, 0)]);
+        let outcome = s.results().cases.first().unwrap();
+        assert_eq!(outcome.status, CaseStatus::Done(Verdict::Pass));
+        assert_eq!(outcome.stats.map(|st| st.cycles), Some(10));
+        assert!(s.run_case((0, 9)).is_err());
+    }
+
+    #[test]
+    fn run_cases_excludes_tasks() {
+        let mut s = open(Fake::default());
+        let mut seen = Collect(Vec::new());
+        let all: Vec<ItemId> = s.catalog().exec_ids().collect();
+        assert!(all.contains(&(0, 2)));
+        s.run_cases(all, &mut seen).unwrap();
+        assert_eq!(seen.0, [(0, 0), (0, 1)]);
+        assert!(s.run_case((0, 2)).is_err());
+    }
+
+    #[test]
+    fn panic_restart_keeps_results() {
+        let mut s = open(Fake {
+            panic_item: Some(1),
+            ..Fake::default()
         });
-        s
+        let mut seen = Collect(Vec::new());
+        s.run_cases([(0, 0), (0, 1), (0, 0)], &mut seen).unwrap();
+        let cases = &s.results().cases;
+        assert_eq!(cases.len(), 3);
+        assert_eq!(
+            cases.get(1).unwrap().status,
+            CaseStatus::Faulted {
+                file: "f.rs".to_string(),
+                line: 3,
+                message: "boom".to_string(),
+            }
+        );
+        assert_eq!(
+            cases.get(2).unwrap().status,
+            CaseStatus::Done(Verdict::Pass)
+        );
+        assert_eq!(s.results().resets, 1);
+        assert_eq!(s.link.resets, 1);
     }
 
-    fn make_test_suite_telemetry(
-        suite_id: u16,
-        suite_name: &str,
-        test_count: u16,
-        setting_count: u16,
-    ) -> Vec<OwnedTelemetry> {
-        let mut frames = Vec::new();
-        frames.push(OwnedTelemetry::SuiteInfo {
-            suite_id,
-            name: suite_name.to_string(),
-            description: format!("Description for {suite_name}"),
-            test_count,
-            setting_count,
+    #[test]
+    fn wire_revision_mismatch() {
+        let link = Fake {
+            version: PROTOCOL_VERSION.wrapping_add(1),
+            ..Fake::default()
+        }
+        .link();
+        let err = Session::open_with(link, quick()).err().unwrap();
+        assert!(matches!(err, HostError::ProtocolMismatch { .. }));
+    }
+
+    #[test]
+    fn setting_query_and_update() {
+        let mut s = open(Fake::default());
+        let by_name = s.get_setting(0, ParamKey::Name("gain")).unwrap();
+        let by_index = s.get_setting(0, ParamKey::Index(0)).unwrap();
+        assert_eq!(by_name, by_index);
+        let echoed = s.set_setting(0, "gain", Param::U8(5)).unwrap();
+        assert_eq!(echoed.value, Param::U8(5));
+        let refused = s.set_setting(0, "gain", Param::U8(200)).unwrap();
+        assert_eq!(refused.value, Param::U8(5));
+        assert!(s.get_setting(0, ParamKey::Name("none")).is_err());
+    }
+
+    #[test]
+    fn device_state_tracking() {
+        let mut s = open(Fake::default());
+        assert_eq!(s.device_state(), DeviceState::Idle);
+        s.run_case((0, 0)).unwrap();
+        assert_eq!(s.device_state(), DeviceState::Idle);
+        s.link.mute = true;
+        s.link.closed = true;
+        assert!(matches!(
+            s.run_case((0, 1)),
+            Err(HostError::Transport { .. })
+        ));
+        assert_eq!(s.device_state(), DeviceState::Running((0, 1)));
+    }
+
+    #[test]
+    fn silent_reset_during_run_is_unreported_fault() {
+        let mut s = open(Fake {
+            hang_on: Some(0),
+            ..Fake::default()
         });
-        for t in 0..test_count {
-            frames.push(OwnedTelemetry::TestInfo {
-                suite_id,
-                test_id: t,
-                name: format!("test_{t}"),
-                description: format!("Desc for test {t}"),
-            });
-        }
-        for s in 0..setting_count {
-            frames.push(OwnedTelemetry::SettingInfo {
-                suite_id,
-                setting_id: s,
-                name: format!("setting_{s}"),
-                description: format!("Desc for setting {s}"),
-                value: Param::U8(u8::try_from(s).unwrap()),
-                count: setting_count,
-                min: Param::U8(0),
-                max: Param::U8(u8::MAX),
-            });
-        }
-        frames
+        let outcome = s.run_case((0, 0)).unwrap();
+        assert_eq!(outcome.status, CaseStatus::UnreportedFault);
+        assert_eq!(s.results().resets, 1);
+        assert_eq!(s.device_state(), DeviceState::Idle);
     }
 
     #[test]
-    fn test_bitmask_discovery_and_readiness() {
-        let mut state = matched();
-        assert_eq!(state.phase, SessionPhase::Discovering);
-        assert!(!state.discovery_complete);
-        assert!(state.suites.is_empty());
-
-        let frames = make_test_suite_telemetry(0, "MathSuite", 2, 1);
-        for f in frames {
-            let actions =
-                state.handle_message(BridgeMessage::Telemetry(f.clone()));
-            assert!(actions.is_empty());
-        }
-
-        // Suite 0 is fully ready in suites vector
-        assert_eq!(state.suites.len(), 1);
-        assert!(state.suites.first().unwrap().is_ready());
-        assert_eq!(state.suites.first().unwrap().ready_mask, SUITE_READY_MASK);
-        assert!(!state.discovery_complete);
-
-        // DiscoveryComplete commits atomically
-        let actions = state.handle_message(BridgeMessage::Telemetry(
-            OwnedTelemetry::DiscoveryComplete,
-        ));
-        assert_eq!(actions.len(), 1);
-        assert!(matches!(
-            *actions.first().unwrap(),
-            SessionAction::Send(CommCommand::RunExecutable {
-                suite: 0,
-                item: 0,
-                mode: ExecMode::Atomic,
-                ..
-            })
-        ));
-
-        assert_eq!(state.phase, SessionPhase::Running);
-        assert!(state.discovery_complete);
-        assert_eq!(state.suites.len(), 1);
-        assert_eq!(state.suites.first().unwrap().tests.len(), 2);
-        assert_eq!(state.suites.first().unwrap().settings.len(), 1);
-        assert_eq!(state.run_queue, vec![(0, 1)]);
-        assert_eq!(state.current_running, Some((0, 0)));
-    }
-
-    #[test]
-    fn test_validation_rejects_incomplete_test_slots() {
-        let mut state = matched();
-
-        // Send SuiteInfo expecting 3 tests
-        let _ = state.handle_message(BridgeMessage::Telemetry(
-            OwnedTelemetry::SuiteInfo {
-                suite_id: 0,
-                name: "S0".to_string(),
-                description: "desc".to_string(),
-                test_count: 3,
-                setting_count: 0,
-            },
-        ));
-        // Send test 0 and test 2 (missing test 1)
-        let _ = state.handle_message(BridgeMessage::Telemetry(
-            OwnedTelemetry::TestInfo {
-                suite_id: 0,
-                test_id: 0,
-                name: "t0".to_string(),
-                description: "d".to_string(),
-            },
-        ));
-        let _ = state.handle_message(BridgeMessage::Telemetry(
-            OwnedTelemetry::TestInfo {
-                suite_id: 0,
-                test_id: 2,
-                name: "t2".to_string(),
-                description: "d".to_string(),
-            },
-        ));
-
-        assert!(!state.suites.first().unwrap().is_ready());
-        assert_eq!(state.suites.first().unwrap().ready_mask & TESTS_READY, 0);
-
-        // DiscoveryComplete fails validation
-        let actions = state.handle_message(BridgeMessage::Telemetry(
-            OwnedTelemetry::DiscoveryComplete,
-        ));
-        assert!(actions.is_empty());
-        assert_eq!(state.phase, SessionPhase::Discovering);
-        assert!(!state.discovery_complete);
-        assert!(state.logs.contains("Discovery validation failed"));
-    }
-
-    #[test]
-    fn ci_ets_state_runs_queue_and_records_pass_fail() {
-        let mut state = matched();
-
-        let frames = make_test_suite_telemetry(0, "Suite0", 2, 0);
-        for f in frames {
-            let _ = state.handle_message(BridgeMessage::Telemetry(f));
-        }
-        let actions = state.handle_message(BridgeMessage::Telemetry(
-            OwnedTelemetry::DiscoveryComplete,
-        ));
-        assert_eq!(actions.len(), 1);
-        assert_eq!(state.current_running, Some((0, 0)));
-
-        // Test 0 completes with metrics
-        let actions = state.handle_message(BridgeMessage::Telemetry(
-            OwnedTelemetry::MetricReport {
-                suite_id: 0,
-                test_id: 0,
-                cycles: 1000,
-                time_us: 50,
-                stack_peak: 256,
-            },
-        ));
-        assert_eq!(actions.len(), 1);
-        assert!(matches!(
-            *actions.first().unwrap(),
-            SessionAction::Send(CommCommand::RunExecutable {
-                suite: 0,
-                item: 1,
-                mode: ExecMode::Atomic,
-                ..
-            })
-        ));
-        assert_eq!(state.current_running, Some((0, 1)));
-        assert_eq!(state.results.len(), 1);
-        assert_eq!(state.results.first().unwrap().state, TestState::Passed);
-        assert_eq!(state.results.first().unwrap().suite_id, 0);
-        assert_eq!(state.results.first().unwrap().test_id, 0);
-
-        // Test 1 fails
-        let _ = state.handle_message(BridgeMessage::Telemetry(
-            OwnedTelemetry::TestStateChange {
-                suite_id: 0,
-                test_id: 1,
-                state: TestState::Failed,
-            },
-        ));
-        assert_eq!(state.results.len(), 2);
-        assert_eq!(state.results.get(1).unwrap().state, TestState::Failed);
-        assert_eq!(state.results.get(1).unwrap().suite_id, 0);
-        assert_eq!(state.results.get(1).unwrap().test_id, 1);
-        // Failed state does not advance queue until TargetPanic or complete
-        assert_eq!(state.current_running, Some((0, 1)));
-    }
-
-    #[test]
-    fn failed_before_target_panic_does_not_blame_next_test() {
-        let mut state = matched();
-
-        let frames = make_test_suite_telemetry(0, "Suite0", 3, 0);
-        for f in frames {
-            let _ = state.handle_message(BridgeMessage::Telemetry(f));
-        }
-        let _ = state.handle_message(BridgeMessage::Telemetry(
-            OwnedTelemetry::DiscoveryComplete,
-        ));
-        assert_eq!(state.current_running, Some((0, 0)));
-        assert_eq!(state.run_queue, vec![(0, 1), (0, 2)]);
-
-        // Case 0 fails
-        let actions = state.handle_message(BridgeMessage::Telemetry(
-            OwnedTelemetry::TestStateChange {
-                suite_id: 0,
-                test_id: 0,
-                state: TestState::Failed,
-            },
-        ));
-        assert!(actions.is_empty());
-        assert_eq!(state.current_running, Some((0, 0)));
-        assert_eq!(state.run_queue, vec![(0, 1), (0, 2)]);
-
-        // TargetPanic arrives immediately after
-        let panic_actions = state.handle_message(BridgeMessage::Telemetry(
-            OwnedTelemetry::TargetPanic {
-                message: "assertion failed".to_string(),
-                file: "src/test.rs".to_string(),
-                line: 42,
-                fault_status: 0,
-                suite_id: None,
-                test_id: None,
-            },
-        ));
-        assert_eq!(panic_actions.len(), 2);
-        assert!(matches!(
-            *panic_actions.first().unwrap(),
-            SessionAction::Send(CommCommand::TryReset)
-        ));
-        assert!(matches!(
-            *panic_actions.get(1).unwrap(),
-            SessionAction::PanicRestart
-        ));
-
-        assert_eq!(state.phase, SessionPhase::Recovering);
-        assert_eq!(state.current_running, None);
-        assert_eq!(state.results.len(), 1);
-        assert_eq!(state.results.first().unwrap().suite_id, 0);
-        assert_eq!(state.results.first().unwrap().test_id, 0);
-        assert_eq!(state.results.first().unwrap().state, TestState::Failed);
-    }
-
-    #[test]
-    fn duplicate_discovery_complete_does_not_requeue_in_flight() {
-        let mut state = matched();
-        let frames = make_test_suite_telemetry(0, "Suite0", 2, 0);
-        for f in frames {
-            let _ = state.handle_message(BridgeMessage::Telemetry(f));
-        }
-        let _ = state.handle_message(BridgeMessage::Telemetry(
-            OwnedTelemetry::DiscoveryComplete,
-        ));
-        assert_eq!(state.current_running, Some((0, 0)));
-        assert_eq!(state.run_queue, vec![(0, 1)]);
-
-        // Second duplicate DiscoveryComplete arriving late while running
-        let actions = state.handle_message(BridgeMessage::Telemetry(
-            OwnedTelemetry::DiscoveryComplete,
-        ));
-        assert!(actions.is_empty());
-        assert_eq!(state.current_running, Some((0, 0)));
-        assert_eq!(state.run_queue, vec![(0, 1)]);
-    }
-
-    #[test]
-    fn enqueue_all_while_running_excludes_in_flight_case() {
-        let mut state = matched();
-        let frames = make_test_suite_telemetry(0, "Suite0", 3, 0);
-        for f in frames {
-            let _ = state.handle_message(BridgeMessage::Telemetry(f));
-        }
-        let _ = state.handle_message(BridgeMessage::Telemetry(
-            OwnedTelemetry::DiscoveryComplete,
-        ));
-        assert_eq!(state.current_running, Some((0, 0)));
-
-        let _ = state.enqueue_all();
-        assert_eq!(state.current_running, Some((0, 0)));
-        assert_eq!(state.run_queue, vec![(0, 1), (0, 2)]);
-    }
-
-    #[test]
-    fn pre_discovery_target_panic_does_not_false_drain() {
-        let mut state = matched();
-        let actions = state.handle_message(BridgeMessage::Telemetry(
-            OwnedTelemetry::TargetPanic {
-                message: "early boot panic".to_string(),
-                file: "main.rs".to_string(),
-                line: 10,
-                fault_status: 0,
-                suite_id: None,
-                test_id: None,
-            },
-        ));
-        assert!(!state.exit_loop);
-        assert_eq!(state.phase, SessionPhase::Recovering);
-        assert_eq!(actions.len(), 2);
-    }
-
-    fn target_panic(message: &str) -> OwnedTelemetry {
-        OwnedTelemetry::TargetPanic {
-            message: message.to_string(),
-            file: "t.rs".to_string(),
-            line: 1,
-            fault_status: 0,
-            suite_id: None,
-            test_id: None,
-        }
-    }
-
-    #[test]
-    fn ci_ets_state_telemetry_metrics_and_rediscovery() {
-        let mut state = matched();
-        let frames = make_test_suite_telemetry(0, "S0", 3, 0);
-        for f in frames {
-            let _ = state.handle_message(BridgeMessage::Telemetry(f));
-        }
-        let _ = state.handle_message(BridgeMessage::Telemetry(
-            OwnedTelemetry::DiscoveryComplete,
-        ));
-
-        // Pass case 0
-        let _ = state.handle_message(BridgeMessage::Telemetry(
-            OwnedTelemetry::MetricReport {
-                suite_id: 0,
-                test_id: 0,
-                cycles: 100,
-                time_us: 10,
-                stack_peak: 32,
-            },
-        ));
-        assert_eq!(state.current_running, Some((0, 1)));
-
-        // Panic on case 1 (case 2 remains)
-        let _ = state
-            .handle_message(BridgeMessage::Telemetry(target_panic("boom")));
-        assert_eq!(state.phase, SessionPhase::Recovering);
-        assert!(!state.exit_loop);
-
-        // Rediscover
-        let frames2 = make_test_suite_telemetry(0, "S0", 3, 0);
-        for f in frames2 {
-            let _ = state.handle_message(BridgeMessage::Telemetry(f));
-        }
-        let actions = state.handle_message(BridgeMessage::Telemetry(
-            OwnedTelemetry::DiscoveryComplete,
-        ));
-
-        // Case 0 and 1 preserved, Case 2 dispatched
-        assert_eq!(actions.len(), 1);
-        assert!(matches!(
-            *actions.first().unwrap(),
-            SessionAction::Send(CommCommand::RunExecutable {
-                suite: 0,
-                item: 2,
-                mode: ExecMode::Atomic,
-                ..
-            })
-        ));
-        assert_eq!(state.phase, SessionPhase::Running);
-        assert_eq!(state.current_running, Some((0, 2)));
-
-        // Pass case 2
-        let _ = state.handle_message(BridgeMessage::Telemetry(
-            OwnedTelemetry::MetricReport {
-                suite_id: 0,
-                test_id: 2,
-                cycles: 200,
-                time_us: 20,
-                stack_peak: 32,
-            },
-        ));
-        assert!(state.exit_loop);
-        assert_eq!(state.results.len(), 3);
-        assert_eq!(state.results.first().unwrap().state, TestState::Passed);
-        assert_eq!(state.results.get(1).unwrap().state, TestState::Failed);
-        assert_eq!(state.results.get(2).unwrap().state, TestState::Passed);
-    }
-
-    #[test]
-    fn pending_cases_includes_in_flight_before_queue() {
-        let mut state = matched();
-        let frames = make_test_suite_telemetry(0, "S0", 3, 0);
-        for f in frames {
-            let _ = state.handle_message(BridgeMessage::Telemetry(f));
-        }
-        let _ = state.handle_message(BridgeMessage::Telemetry(
-            OwnedTelemetry::DiscoveryComplete,
-        ));
-        assert_eq!(state.current_running, Some((0, 0)));
-        assert_eq!(state.run_queue, vec![(0, 1), (0, 2)]);
-        assert_eq!(state.pending_cases(), vec![(0, 0), (0, 1), (0, 2)]);
-    }
-
-    #[test]
-    fn session_enqueue_and_stop_helpers() {
-        let mut state = matched();
-        let frames = make_test_suite_telemetry(0, "S0", 2, 0);
-        for f in frames {
-            let _ = state.handle_message(BridgeMessage::Telemetry(f));
-        }
-        let _ = state.handle_message(BridgeMessage::Telemetry(
-            OwnedTelemetry::DiscoveryComplete,
-        ));
-
-        state.stop();
-        assert_eq!(state.current_running, None);
-        assert_eq!(state.run_queue, []);
-
-        let action = state.enqueue_test(0, 1);
-        assert_eq!(state.current_running, Some((0, 1)));
-        assert!(matches!(
-            action,
-            Some(SessionAction::Send(CommCommand::RunExecutable {
-                suite: 0,
-                item: 1,
-                mode: ExecMode::Atomic,
-                ..
-            }))
-        ));
-    }
-
-    #[test]
-    fn version_mismatch_refused() {
-        let mut state = SessionState::new();
-        let _ = state.handle_message(BridgeMessage::telemetry(
-            &control_rs_ets::wire::Telemetry::TargetInfo {
-                protocol_version: control_rs_ets::wire::PROTOCOL_VERSION
-                    .wrapping_add(1),
-                board_id: 7,
-                core_clock_hz: 600_000_000,
-                fpu_flags: 1,
-                release_source: false,
-            },
-        ));
-        assert_eq!(
-            state.protocol_mismatch,
-            Some(control_rs_ets::wire::PROTOCOL_VERSION.wrapping_add(1))
-        );
-        assert!(state.exit_loop);
-        let actions = state.handle_message(BridgeMessage::telemetry(
-            &control_rs_ets::wire::Telemetry::SuiteInfo {
-                suite: 0,
-                name: "s",
-                description: "",
-                executable_count: 0,
-                param_count: 0,
-            },
-        ));
-        assert!(actions.is_empty());
-        assert!(state.suites.is_empty());
-    }
-
-    #[test]
-    fn discovery_without_target_info_is_a_mismatch() {
-        let mut state = SessionState::new();
-        let _ = state.handle_message(BridgeMessage::telemetry(
-            &control_rs_ets::wire::Telemetry::DiscoveryComplete,
-        ));
-        assert_eq!(state.protocol_mismatch, Some(0));
-    }
-
-    #[test]
-    fn matching_target_info_is_recorded() {
-        let mut state = SessionState::new();
-        let _ = state.handle_message(BridgeMessage::telemetry(
-            &control_rs_ets::wire::Telemetry::TargetInfo {
-                protocol_version: control_rs_ets::wire::PROTOCOL_VERSION,
-                board_id: 7,
-                core_clock_hz: 600_000_000,
-                fpu_flags: 1,
-                release_source: false,
-            },
-        ));
-        assert_eq!(state.protocol_mismatch, None);
-        assert_eq!(
-            state.target_info.map(|t| t.core_clock_hz),
-            Some(600_000_000)
-        );
-    }
-
-    fn outcome(suite_id: u16, test_id: u16, state: TestState) -> TestOutcome {
-        TestOutcome {
-            suite_id,
-            test_id,
-            suite_name: String::new(),
-            test_name: String::new(),
-            state,
-            cycles: None,
-            time_us: None,
-            stack_peak: None,
-        }
-    }
-
-    fn feed(state: &mut SessionState, frames: Vec<OwnedTelemetry>) {
-        for frame in frames {
-            let _ = state.handle_message(BridgeMessage::Telemetry(frame));
-        }
-    }
-
-    #[test]
-    fn reset_discovery_clears_masks_and_items() {
-        let mut state = matched();
-        feed(&mut state, make_test_suite_telemetry(0, "S", 2, 2));
-        let suite = state.suites.first_mut().unwrap();
-        assert_eq!(suite.ready_mask, SUITE_READY_MASK);
-        assert!(suite.test_slots_mask != 0 && suite.setting_slots_mask != 0);
-        suite.reset_discovery();
-        assert_eq!(suite.ready_mask, 0);
-        assert_eq!(suite.test_slots_mask, 0);
-        assert_eq!(suite.setting_slots_mask, 0);
-        assert!(suite.tests.is_empty() && suite.settings.is_empty());
-    }
-
-    #[test]
-    fn tests_are_found_by_suite_and_test_id() {
-        let mut state = matched();
-        feed(&mut state, make_test_suite_telemetry(0, "A", 3, 0));
-        feed(&mut state, make_test_suite_telemetry(1, "B", 2, 0));
-        let found = state.test_mut(1, 1).map(|t| (t.suite_id, t.test_id));
-        assert_eq!(found, Some((1, 1)));
-        let found = state.test_mut(0, 2).map(|t| (t.suite_id, t.test_id));
-        assert_eq!(found, Some((0, 2)));
-        assert!(state.test_mut(1, 2).is_none());
-        assert!(state.test_mut(5, 0).is_none());
-    }
-
-    #[test]
-    fn outcomes_are_keyed_by_suite_and_test() {
-        let mut state = SessionState::new();
-        state.record_outcome(outcome(0, 0, TestState::Passed));
-        state.record_outcome(outcome(0, 1, TestState::Failed));
-        state.record_outcome(outcome(1, 0, TestState::Passed));
-        assert_eq!(state.results.len(), 3);
-        assert_eq!(
-            state.find_outcome_mut(0, 1).map(|o| o.state),
-            Some(TestState::Failed)
-        );
-        assert_eq!(
-            state
-                .find_outcome_mut(1, 0)
-                .map(|o| (o.suite_id, o.test_id)),
-            Some((1, 0))
-        );
-        assert!(state.find_outcome_mut(1, 1).is_none());
-
-        // Recording an existing key replaces it in place.
-        state.record_outcome(outcome(0, 1, TestState::Passed));
-        assert_eq!(state.results.len(), 3);
-        assert_eq!(
-            state.find_outcome(0, 1).map(|o| o.state),
-            Some(TestState::Passed)
-        );
-    }
-
-    #[test]
-    fn enqueue_all_only_acts_while_running() {
-        let mut state = matched();
-        feed(&mut state, make_test_suite_telemetry(0, "S", 2, 0));
-        state.run_queue = vec![(9, 9)];
-        assert!(state.enqueue_all().is_none());
-        assert_eq!(state.run_queue, vec![(9, 9)], "the queue was rebuilt");
-
-        state.phase = SessionPhase::Running;
-        let action = state.enqueue_all();
-        assert!(matches!(
-            action,
-            Some(SessionAction::Send(CommCommand::RunExecutable {
-                suite: 0,
-                item: 0,
-                mode: ExecMode::Atomic,
-                ..
-            }))
-        ));
-        assert_eq!(state.run_queue, vec![(0, 1)]);
-        assert_eq!(state.current_running, Some((0, 0)));
-    }
-
-    #[test]
-    fn suites_without_tests_or_settings_are_ready_after_their_info() {
-        let mut state = matched();
-        feed(&mut state, make_test_suite_telemetry(0, "NoTests", 0, 2));
-        let suite = state.suites.first().unwrap();
-        assert_eq!(suite.ready_mask & TESTS_READY, TESTS_READY);
-        assert_eq!(suite.ready_mask & SETTINGS_READY, SETTINGS_READY);
-
-        let mut state = matched();
-        feed(&mut state, make_test_suite_telemetry(0, "Bare", 0, 0));
-        assert!(state.suites.first().unwrap().is_ready());
-    }
-
-    #[test]
-    fn a_setting_seen_twice_is_updated_in_place() {
-        let mut state = matched();
-        let setting = |id: u16, value: u8| OwnedTelemetry::SettingInfo {
-            suite_id: 0,
-            setting_id: id,
-            name: format!("s{id}"),
-            description: String::new(),
-            value: Param::U8(value),
-            count: 4,
-            min: Param::U8(0),
-            max: Param::U8(u8::MAX),
-        };
-        feed(
-            &mut state,
-            vec![
-                OwnedTelemetry::SuiteInfo {
-                    suite_id: 0,
-                    name: "S".to_string(),
-                    description: String::new(),
-                    test_count: 0,
-                    setting_count: 2,
-                },
-                setting(0, 1),
-                setting(0, 5),
-                setting(1, 7),
-            ],
-        );
-        let suite = state.suites.first().unwrap();
-        assert_eq!(suite.settings.len(), 2);
-        let first = suite.settings.iter().find(|s| s.setting_id == 0).unwrap();
-        assert!(matches!(first.value, Param::U8(5)));
-        assert!(suite.is_ready());
-    }
-
-    #[test]
-    fn a_param_echo_updates_settings_while_running() {
-        let mut state = matched();
-        feed(&mut state, make_test_suite_telemetry(0, "S", 0, 1));
-        feed(&mut state, vec![OwnedTelemetry::DiscoveryComplete]);
-        assert_eq!(state.phase, SessionPhase::Running);
-        let setting = state
-            .suites
-            .first_mut()
-            .and_then(|s| s.settings.first_mut())
-            .expect("discovered setting");
-        assert!(matches!(setting.value, Param::U8(0)));
-        // Optimistic host edit then target echo of the stored (refused) value.
-        setting.value = Param::U8(99);
-        feed(
-            &mut state,
-            vec![OwnedTelemetry::SettingInfo {
-                suite_id: 0,
-                setting_id: 0,
-                name: "setting_0".to_string(),
-                description: "Desc for setting 0".to_string(),
-                value: Param::U8(0),
-                count: 1,
-                min: Param::U8(0),
-                max: Param::U8(u8::MAX),
-            }],
-        );
-        let echoed = state
+    fn discovery_and_setting_edit_without_elf() {
+        let mut s = open(Fake {
+            drop_setting: Some(1),
+            ..Fake::default()
+        });
+        let settings: Vec<_> = s
+            .catalog()
             .suites
             .first()
-            .and_then(|s| s.settings.first())
-            .expect("setting after echo");
-        assert!(matches!(echoed.value, Param::U8(0)));
+            .unwrap()
+            .settings
+            .iter()
+            .flatten()
+            .map(|e| e.name.as_str())
+            .collect();
+        assert_eq!(settings, ["gain", "bias"], "the dropped entry is refilled");
+        let echoed = s.set_setting(0, "bias", Param::U8(4)).unwrap();
+        assert_eq!(echoed.name, "bias");
+        assert_eq!(s.catalog().missing_settings(), Vec::<ItemId>::new());
     }
 
     #[test]
-    fn slot_completeness_needs_every_expected_bit() {
-        assert!(
-            !slots_complete(0, 0, 0),
-            "an empty set has nothing to complete"
-        );
-        assert!(!slots_complete(2, 3, 0b111), "count and length differ");
-        assert!(slots_complete(2, 2, 0b11));
-        assert!(slots_complete(2, 2, 0b111), "extra bits do not matter");
-        assert!(!slots_complete(2, 2, 0b101), "slot 1 never arrived");
-        assert!(slots_complete(1, 1, 0b1));
-        assert!(!slots_complete(1, 1, 0b0));
-        assert!(slots_complete(64, 64, u64::MAX));
-        assert!(!slots_complete(64, 64, u64::MAX >> 1));
-        assert!(!slots_complete(64, 64, 0));
-        // Larger sets complete on length alone.
-        assert!(slots_complete(65, 65, 0));
+    fn a_dropped_executable_fails_discovery() {
+        let link = Fake {
+            drop_exec: Some(1),
+            ..Fake::default()
+        }
+        .link();
+        assert!(matches!(
+            Session::open_with(link, quick()).err(),
+            Some(HostError::Discovery)
+        ));
+    }
+
+    #[test]
+    fn a_verdict_without_statistics_is_kept() {
+        let mut s = open(Fake {
+            drop_stats: Some(0),
+            ..Fake::default()
+        });
+        let outcome = s.run_case((0, 0)).unwrap();
+        assert_eq!(outcome.status, CaseStatus::Done(Verdict::Pass));
+        assert_eq!(outcome.stats, None);
+        assert_eq!(s.results().resets, 0);
+        assert_eq!(s.device_state(), DeviceState::Idle);
+    }
+
+    #[test]
+    fn a_target_without_discovery_is_an_error() {
+        let mut quiet = Fake::default().link();
+        quiet.mute = true;
+        assert!(matches!(
+            Session::open_with(quiet, quick()).err(),
+            Some(HostError::Discovery)
+        ));
+        let mut gone = Fake::default().link();
+        gone.mute = true;
+        gone.closed = true;
+        gone.preload.push(LinkEvent::Console("boot".to_string()));
+        assert!(matches!(
+            Session::open_with(gone, quick()).err(),
+            Some(HostError::Transport { .. })
+        ));
+        assert_eq!(open(Fake::default()).console(), "");
     }
 }
