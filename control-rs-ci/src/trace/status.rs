@@ -1783,6 +1783,14 @@ mod tests {
         ]}"#;
         let log = parse_compare_results(text);
         assert!(log.ambiguous.contains("torque"));
+        assert_eq!(log.outcomes.get(""), None);
+
+        let empty_status = r#"{"suites":[
+            {"name":"suite_empty_status","status":"","comparisons":[{"signal":"power","verdict":"pass"}]}
+        ]}"#;
+        let log_empty_status = parse_compare_results(empty_status);
+        assert_eq!(log_empty_status.outcomes.get("suite_empty_status"), None);
+        assert_eq!(log_empty_status.outcomes.get("power"), Some(&true));
 
         let unknown_verdict = r#"{"suites":[
             {"name":"suite_a","status":"Pass","comparisons":[
