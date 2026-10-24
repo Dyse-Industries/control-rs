@@ -1,8 +1,9 @@
 //! Generic quality gate model, execution engine, and outcome data types.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::hash::{Hash, Hasher};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
 use std::sync::{Arc, Mutex};
@@ -16,6 +17,9 @@ use crate::config::{
 };
 use crate::error::{GateError, GateResult};
 
+/// Prefix for the machine-readable outcome trailer comment in `<gate>.log`.
+pub const LOG_TRAILER_PREFIX: &str = "# control-rs-ci-outcome: ";
+
 /// Version of the `GateOutcome` record, incremented on every incompatible
 /// change (NFR-2). `report` rejects records of any other version.
 pub const OUTCOME_SCHEMA: u32 = 1;
@@ -28,6 +32,42 @@ const PUMP_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Suffix of the per-gate outcome artifact.
 pub const RESULT_SUFFIX: &str = ".result.json";
+
+/// Fingerprint capturing inputs that determine gate output.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct InputFingerprint {
+    /// Schema version for the fingerprint.
+    pub schema: u32,
+    /// Hash of the gate command, `args`, `env`, and `cwd`.
+    pub config_hash: String,
+    /// Content hash of all files under the gate's triggered inputs.
+    pub content_hash: String,
+    /// Git commit SHA at the time of log generation, if in a git repository.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub head_commit: Option<String>,
+    /// Git tree hash of the triggered paths, if clean.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tree_hash: Option<String>,
+}
+
+/// Structured outcome envelope written to the tail of `<gate>.log`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct LogEnvelope {
+    /// Schema version; [`OUTCOME_SCHEMA`].
+    pub schema: u32,
+    /// Gate slug.
+    pub gate: String,
+    /// High-level verdict.
+    pub verdict: Verdict,
+    /// Process exit code.
+    pub exit_code: Option<i32>,
+    /// Wall-clock execution duration in seconds.
+    pub duration_secs: f64,
+    /// Outcome summary.
+    pub summary: Option<String>,
+    /// Recorded input fingerprint.
+    pub fingerprint: InputFingerprint,
+}
 
 /// A gate shared between the scheduler and its group threads.
 pub type SharedGate = Arc<Gate>;
@@ -80,6 +120,9 @@ pub struct GateOutcome {
     pub summary: Option<String>,
     /// Relative filename of the captured log output (for example, "fmt.log").
     pub log_file: String,
+    /// Optional input fingerprint for up-to-date detection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<InputFingerprint>,
 }
 
 /// Execution context passed to quality gate runners.
@@ -266,6 +309,7 @@ impl Gate {
             duration_secs: 0.0,
             summary: Some(summary.to_string()),
             log_file: format!("{}.log", self.name),
+            fingerprint: None,
         };
         let _ = outcome.save_to_dir(&ctx.out_dir)?;
         Ok(outcome)
@@ -310,8 +354,9 @@ impl Gate {
             std::fs::create_dir_all(parent)?;
         }
 
+        let fingerprint = self.current_fingerprint(&ctx.workspace_root);
         let mut cmd = self.command_for(&ctx.workspace_root);
-        let outcome = match self.spawn_and_log(&mut cmd, &log_path, echo) {
+        let mut outcome = match self.spawn_and_log(&mut cmd, &log_path, echo) {
             Ok(finished) => self.outcome_from_exit(&finished),
             Err(GateError::Timeout { timeout_secs, .. }) => {
                 let _ = append_log(
@@ -345,8 +390,189 @@ impl Gate {
             }
         };
 
+        outcome.fingerprint = Some(fingerprint);
         let _ = outcome.save_to_dir(&ctx.out_dir)?;
         Ok(outcome)
+    }
+
+    /// Computes the configuration hash of this gate's definition.
+    #[must_use]
+    pub fn config_hash(&self) -> String {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.command.hash(&mut hasher);
+        self.args.hash(&mut hasher);
+        let sorted_env: BTreeMap<_, _> = self.env.iter().collect();
+        for (k, v) in &sorted_env {
+            k.hash(&mut hasher);
+            v.hash(&mut hasher);
+        }
+        self.cwd.hash(&mut hasher);
+        format!("{:016x}", hasher.finish())
+    }
+
+    /// Computes the current input fingerprint for this gate against `root`.
+    #[must_use]
+    pub fn current_fingerprint(&self, root: &Path) -> InputFingerprint {
+        let config_hash = self.config_hash();
+        let audited =
+            crate::diff_trigger::audit_inputs(root, &self.diff_trigger);
+
+        InputFingerprint {
+            schema: OUTCOME_SCHEMA,
+            config_hash,
+            content_hash: audited.content_hash,
+            head_commit: audited.head,
+            tree_hash: audited.tree_hash,
+        }
+    }
+
+    /// Appends the structured outcome trailer envelope to the gate's log file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GateError::Io`] if appending to the log file fails, or
+    /// [`GateError::Json`] if serializing the outcome envelope fails.
+    pub fn append_outcome_trailer(
+        &self,
+        log_path: &Path,
+        outcome: &GateOutcome,
+        fingerprint: &InputFingerprint,
+    ) -> GateResult<()> {
+        let envelope = LogEnvelope {
+            schema: outcome.schema,
+            gate: outcome.gate.clone(),
+            verdict: outcome.verdict,
+            exit_code: outcome.exit_code,
+            duration_secs: outcome.duration_secs,
+            summary: outcome.summary.clone(),
+            fingerprint: fingerprint.clone(),
+        };
+        let serialized = serde_json::to_string(&envelope)?;
+        let trailer_line = format!("\n{LOG_TRAILER_PREFIX}{serialized}\n");
+        append_log(log_path, &trailer_line)
+    }
+
+    /// Attempts to read and validate the outcome envelope from an existing log.
+    ///
+    /// Scans the trailing bytes of `log_path` for [`LOG_TRAILER_PREFIX`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GateError::Io`] if opening, seeking, or reading the log file fails,
+    /// or if no valid outcome trailer is found. Returns [`GateError::Json`] if
+    /// the trailer JSON is malformed.
+    pub fn read_outcome_from_log(
+        &self,
+        log_path: &Path,
+    ) -> GateResult<LogEnvelope> {
+        if !log_path.is_file() {
+            return Err(GateError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "log file missing",
+            )));
+        }
+        let mut file = File::open(log_path)?;
+        let metadata = file.metadata()?;
+        let len = metadata.len();
+        if len == 0 {
+            return Err(GateError::Io(std::io::Error::new(
+                std::io::ErrorKind::UnexpectedEof,
+                "log file is empty",
+            )));
+        }
+
+        let to_read = 8192.min(len);
+        let offset = i64::try_from(to_read).map_err(|_| {
+            GateError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "log offset overflow",
+            ))
+        })?;
+        let negative_offset = offset.checked_neg().ok_or_else(|| {
+            GateError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                "log offset negation overflow",
+            ))
+        })?;
+        file.seek(SeekFrom::End(negative_offset))?;
+        let mut buffer = String::new();
+        file.read_to_string(&mut buffer).map_err(GateError::Io)?;
+
+        for line in buffer.lines().rev() {
+            let line = line.trim();
+            if let Some(json_str) = line.strip_prefix(LOG_TRAILER_PREFIX) {
+                let envelope: LogEnvelope = serde_json::from_str(json_str)?;
+                if envelope.schema == OUTCOME_SCHEMA
+                    && envelope.gate == self.name
+                {
+                    return Ok(envelope);
+                }
+            }
+        }
+
+        Err(GateError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "no valid outcome trailer found in log",
+        )))
+    }
+
+    /// Evaluates whether this gate is up-to-date and returns its cached outcome if valid.
+    #[must_use]
+    pub fn try_read_up_to_date_outcome(
+        &self,
+        ctx: &GateContext,
+    ) -> Option<GateOutcome> {
+        let log_path = ctx.log_path(&self.name);
+        if !log_path.is_file() {
+            return None;
+        }
+
+        // 1. Try reading from <gate>.result.json first
+        let result_path =
+            ctx.out_dir.join(format!("{}{RESULT_SUFFIX}", self.name));
+        let outcome =
+            if let Ok(loaded) = GateOutcome::load_from_file(&result_path) {
+                loaded
+            } else if let Ok(envelope) = self.read_outcome_from_log(&log_path) {
+                GateOutcome {
+                    schema: envelope.schema,
+                    gate: self.name.clone(),
+                    verdict: envelope.verdict,
+                    exit_code: envelope.exit_code,
+                    duration_secs: envelope.duration_secs,
+                    summary: envelope.summary,
+                    log_file: format!("{}.log", self.name),
+                    fingerprint: Some(envelope.fingerprint),
+                }
+            } else {
+                return None;
+            };
+
+        // Only passing verdicts can be reused; failures must reproduce.
+        if outcome.verdict != Verdict::Pass {
+            return None;
+        }
+
+        let recorded_fp = outcome.fingerprint.as_ref()?;
+        let current_fp = self.current_fingerprint(&ctx.workspace_root);
+        if current_fp.config_hash != recorded_fp.config_hash {
+            return None;
+        }
+
+        // Verify inputs are not newer than the log
+        let is_fresh = crate::diff_trigger::is_log_fresh(
+            &ctx.workspace_root,
+            &self.diff_trigger,
+            &log_path,
+            recorded_fp,
+        );
+
+        if !is_fresh {
+            return None;
+        }
+
+        let _ = outcome.save_to_dir(&ctx.out_dir);
+        Some(outcome)
     }
 
     /// Builds the process for this gate, splitting a compound command string
@@ -413,6 +639,7 @@ impl Gate {
             duration_secs: finished.duration_secs,
             summary: Some(summary),
             log_file: format!("{}.log", self.name),
+            fingerprint: None,
         }
     }
 
@@ -430,6 +657,7 @@ impl Gate {
             duration_secs,
             summary: Some(summary),
             log_file: format!("{}.log", self.name),
+            fingerprint: None,
         }
     }
 

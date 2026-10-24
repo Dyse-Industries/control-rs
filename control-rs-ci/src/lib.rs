@@ -209,6 +209,14 @@ pub fn clean_artifacts(
 /// `Verdict::Fail`, or no result could be recorded.
 fn execute_gate(gate: &Gate, tag: &str, env: &RunEnv<'_>) -> bool {
     let name = gate.name();
+
+    if let Some(outcome) = gate.try_read_up_to_date_outcome(env.ctx) {
+        let _guard = env.ui_lock.lock();
+        let dur = outcome.duration_secs;
+        ui::status("Up-to-date", format!("{tag}{name} (cached in {dur:.2}s)"));
+        return outcome.verdict == Verdict::Fail;
+    }
+
     {
         let _guard = env.ui_lock.lock();
         ui::status("Running", format!("{tag}{}", gate.command_display()));
@@ -439,9 +447,9 @@ pub fn run_pipeline(
     }
     let executed_gate_names: Vec<String> =
         selected.iter().map(|g| g.name().to_string()).collect();
-    // Every result is rewritten or absent after this run, so a result from
-    // an earlier run can never stand in for a gate that did not run now.
-    remove_results(&out_dir, &executed_gate_names);
+    // Stale results for gates that must reproduce are cleared; up-to-date gates
+    // and unselected gates keep their existing outcomes.
+    remove_results(&out_dir, &selected, &ctx);
 
     // A disabled gate selected by name records `Skipped` and does not run.
     let (disabled, active_gates): (GateList, GateList) = selected
@@ -584,11 +592,14 @@ fn selected_with_passthrough(
         .collect())
 }
 
-/// Removes `<gate>.result.json` in `out_dir` for each gate about to execute.
-fn remove_results(out_dir: &Path, gates: &[String]) {
+/// Removes `<gate>.result.json` in `out_dir` for each gate about to execute that is not up-to-date.
+fn remove_results(out_dir: &Path, gates: &[SharedGate], ctx: &GateContext) {
     for gate in gates {
-        let path = out_dir.join(format!("{gate}{}", gate::RESULT_SUFFIX));
-        let _ = std::fs::remove_file(path);
+        if gate.try_read_up_to_date_outcome(ctx).is_none() {
+            let path =
+                out_dir.join(format!("{}{}", gate.name(), gate::RESULT_SUFFIX));
+            let _ = std::fs::remove_file(path);
+        }
     }
 }
 

@@ -207,6 +207,7 @@ fn full_report_requires_non_default_fail_gates() {
             duration_secs: 0.0,
             summary: None,
             log_file: "pass.log".to_string(),
+            fingerprint: None,
         },
     );
     assert!(!aggregator.is_passing(&config, &outcomes, None));

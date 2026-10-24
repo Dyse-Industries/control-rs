@@ -39,6 +39,7 @@ mod runner {
             duration_secs: 0.5,
             summary: Some(summary.to_string()),
             log_file: format!("{gate}.log"),
+            fingerprint: None,
         }
     }
 
@@ -120,6 +121,7 @@ mod runner {
             duration_secs: 4.25,
             summary: Some("Memcheck clean (0 leaks, 0 errors)".to_string()),
             log_file: "valgrind.log".to_string(),
+            fingerprint: None,
         };
 
         let serialized = serde_json::to_string_pretty(&outcome).unwrap();

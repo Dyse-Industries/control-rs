@@ -1,8 +1,8 @@
 # Continuous Integration & Quality Gate Infrastructure (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-October_17,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_24,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
-![Design Status Badge](https://img.shields.io/badge/Design%20Status-Ready-brightgreen)
+![Design Status Badge](https://img.shields.io/badge/Design%20Status-Draft-orange)
 
 ---
 
@@ -156,6 +156,17 @@ minimal-parsing design principle**:
   or the gate.toml file.
 - **FR-24 — Environment Variable Gate Trigger**: A caller can override any
   condition on all gates or individual gates.
+- **FR-25 — Automated Log Result Ingestion & Up-to-Date Gating**: The runner must
+  automatically evaluate whether an existing quality gate output log
+  (`target/ci-artifacts/<gate>.log`) is up-to-date with respect to the gate's
+  inputs (its content-hashed `diff-trigger` source paths, configuration in
+  `gate.toml`, and environment). When the existing log is valid, recorded a
+  passing verdict, and no input content or configuration has changed, the runner
+  must ingest the outcome directly without spawning a child process. When the log
+  is absent, corrupted, recorded a failure, or any input content has changed, the
+  runner must automatically reproduce the log by live execution. The pipeline
+  interface remains a single command (`cargo ci` / `cargo gate`) without manual
+  cache flags.
 
 #### 2.2 Non-Functional Requirements
 
@@ -906,6 +917,40 @@ usage error. A push or tag event sets `CONTROL_RS_CI_GATES=run`, since the
 head and base of a push to `main` are equal. Jobs that run gates check out the
 full history so the merge-base resolves.
 
+#### 4.12 Automated Log Ingestion & Reproduction Lifecycle
+
+Every gate execution follows an automatic dependency and freshness check
+modeled on build-system up-to-date semantics:
+
+1. **Input Fingerprint**: For each gate, the runner computes an `InputFingerprint`:
+   - `config_hash`: A 64-bit hexadecimal hash of `(command, args, env, cwd)`.
+   - `content_hash`: A 64-bit hexadecimal hash of relative paths and file contents across `diff-trigger` paths (defaulting to workspace source crates and manifests when unspecified).
+   - `head_commit`: The git commit SHA at the time of log generation, if in a git repository.
+   - `tree_hash`: The git tree hash of the triggered paths, if clean.
+2. **Standard Outcome Preservation**: At the completion of each live gate run,
+   the runner records `InputFingerprint` in `GateOutcome` written to
+   `target/ci-artifacts/<gate>.result.json`, while also supporting a fallback
+   machine-readable trailer comment in `<gate>.log` (`# control-rs-ci-outcome: <JSON>`).
+3. **Up-to-Date Evaluation**:
+   Before dispatching any gate process, the runner checks:
+   - Does `<gate>.log` exist and is non-empty?
+   - Can a valid outcome be loaded from `<gate>.result.json` or parsed from `<gate>.log`?
+   - Was the recorded verdict `Verdict::Pass`? (Failed or warning gates always reproduce).
+   - Does the recorded `config_hash` match the current `gate.toml` definition?
+   - Does the recorded `content_hash` match the current content hash of the gate's triggered paths (or is git commit matched and working tree clean)?
+   If all conditions hold, the gate is **Up-to-date**: the runner writes or
+   preserves `<gate>.result.json`, emits `Up-to-date [<group>] <gate>`, and bypasses
+   process spawning.
+4. **Automatic Reproduction**:
+   If any condition fails, the gate is **Out-of-date**: the runner truncates
+   `<gate>.log`, removes any stale `<gate>.result.json`, launches the process
+   tree, captures output, and records the updated outcome and fingerprint.
+5. **Selective Artifact Reconciliation**:
+   Before execution, `reconcile_artifacts` removes `target/ci-artifacts/<gate>.result.json`
+   only for selected gates that are out-of-date and must be reproduced. Up-to-date
+   gates and unselected gates retain their records, avoiding spurious missing-gate
+   failures in downstream reports.
+
 ---
 
 ### 5. Alternatives
@@ -950,6 +995,10 @@ full history so the merge-base resolves.
 | `test` | Path-Gated Skip Tests                 | Verifies a gate runs when a changed file equals or lies below a `diff-trigger` entry, is skipped otherwise, matches by both paths of a rename and by a deleted file, does not match a sibling name sharing a prefix, always runs without its own `diff-trigger` even when `[runner]` declares one, and adds the `[runner]` entries to a gate that declares a list (FR-22).                           |
 | `test` | Diff Range Tests                      | Verifies the defaults (`origin/main`, `HEAD`), that `--base`/`--head` override `[runner]` and `[runner]` overrides the defaults, and that an unresolvable ref skips no gate (FR-23).                                                                                                                                                                                                                 |
 | `test` | Environment Override Tests            | Verifies `CONTROL_RS_CI_GATES` forces every gate to run or skip, a per-gate variable beats the global one, an unset variable defers to the path check, and another value is a usage error (FR-24).                                                                                                                                                                                                   |
+| `test` | Automated Up-to-Date Ingestion Tests  | Verifies that an unchanged gate ingests the outcome from `<gate>.log` / `<gate>.result.json` in $< 10\,\text{ms}$, records `Verdict::Pass`, preserves `<gate>.result.json`, and does not spawn a process (FR-25). |
+| `test` | Invalidation & Reproduction Tests     | Verifies that modifying any file content matching `diff-trigger`, modifying an arg in `gate.toml`, or having an existing `Fail` verdict forces immediate live reproduction (FR-25).                               |
+| `test` | Content Invariance Tests              | Verifies that rewriting identical content or touching unrelated files outside a gate's `diff-trigger` paths does not invalidate its up-to-date status (FR-25).                                                    |
+| `test` | Selective Reconciliation Tests        | Verifies that running `cargo gate <gate>` updates only the targeted gate's outcome while leaving prior unselected passing results intact, and `cargo ci --clean` removes all artifacts (FR-25).                  |
 
 #### 6.2 Acceptance
 
@@ -965,6 +1014,8 @@ full history so the merge-base resolves.
 | **Virtual Target Coverage**       | `ets-results.json`                    | Targets reported | One passing entry per declared QEMU target, each with $\ge 1$ passed case and none pending     |
 | **Target Firmware Build**         | `cargo build` exit status             | Exit code        | 0 for every declared build-only target                                                         |
 | **Step Summary Size Budget**      | Serialized Byte Count                 | Absolute Size    | `ci-report.md` size $\le 64\,\text{KiB}$ target ($< 1\,\text{MiB}$ platform ceiling) [1]       |
+| **Up-to-Date Ingestion Latency** | System Monotonic Clock                | Elapsed Time     | Ingesting an up-to-date outcome completes within $< 20\,\text{ms}$ without process spawn (FR-25)|
+| **Content Invalidation Precision**| Content Hash Comparison              | Exact Decision   | Modifying file contents within `diff-trigger` invalidates up-to-date status 100% of the time (FR-25)|
 
 #### 6.3 Limits
 
@@ -1056,6 +1107,7 @@ full history so the merge-base resolves.
 | **Phase 6: Selection, Tree Termination & Target Gates**       | Split `default` from `mode` (FR-15) and require selected results; terminate process trees on timeout (FR-16); add `cwd` and the `ets` binary and gate (FR-18, FR-19); align CI jobs. The `target-build` gate (FR-17) moves to PR9.                  | 3                |
 | **Phase 7: Exclusive Stages & Debt Repair**                   | Split `exclusive_gates` into `pre` and `post` with the `fetch` gate; declaration order; configuration validation; versioned outcomes; budget-safe report; valgrind fail-closed; remove retired schema and dead code.                                | 2                |
 | **Phase 8: Path-Gated Skip**                                  | Add `diff-trigger` per gate and under `[runner]`, configurable `--diff`/`--base`/`--head` range with `git diff -z --name-status -M`, and environment variable overrides (`CONTROL_RS_CI_GATES`, `CONTROL_RS_CI_GATE_<NAME>`) (FR-22, FR-23, FR-24). | 1                |
+| **Phase 9: Automated Log Ingestion & Reproduction**             | Implement input fingerprinting (`InputFingerprint`), up-to-date evaluation (`try_read_up_to_date_outcome`), selective artifact reconciliation (`reconcile_artifacts`), and reproduction test harness (FR-25).                                          | 1                |
 
 ---
 
@@ -1068,6 +1120,7 @@ full history so the merge-base resolves.
 | 3.0      | October 2, 2026    | @MitchellDScott                    | `kani` and `miri` gate checks (FR-20, FR-21); lockfile path filter.                                                                                                                                                                                                                                                                                   |
 | 4.0      | October 17, 2026   | @MitchellDScott, Claude Sonnet 5.5 | Path-gated skip (FR-22 to FR-24).                                                                                                                                                                                                                                                                                                                     |
 | 5.0      | October 22, 2026   | @MitchellDScott, Claude            | §4.7 `regression` enforces Criterion's `regressed` verdict only when the regression adds at least 1 µs to the benchmark's time, $t\,c/(1 + c)$ for the `time:` estimate $t$ and the `change:` estimate $c$. A floor on $t$ itself let a regression lift a sub-microsecond benchmark over the floor and fail the gate on a shift within runner jitter. |
+| 6.0 | October 24, 2026 | Antigravity | Automated log result ingestion and reproduction (FR-25) |
 
 ---
 

@@ -2696,6 +2696,7 @@ mod tests {
             duration_secs: 0.1,
             summary: Some("Formatted cleanly".to_string()),
             log_file: "fmt.log".to_string(),
+            fingerprint: None,
         };
         let derived = gate_run("gate_pass", &[outcome], &["fmt"]);
         assert_eq!(status(&derived), Some(Status::Pass));
@@ -2718,6 +2719,7 @@ mod tests {
                 duration_secs: 0.5,
                 summary: None,
                 log_file: "clippy.log".to_string(),
+                fingerprint: None,
             };
             let derived = gate_run(name, &[outcome], &["clippy"]);
             assert_eq!(status(&derived), Some(Status::Fail), "{verdict:?}");
@@ -2756,6 +2758,7 @@ mod tests {
             duration_secs: 0.1,
             summary: None,
             log_file: "bad.log".to_string(),
+            fingerprint: None,
         };
         wrong_schema.save_to_dir(&out_dir).unwrap();
 

@@ -33,6 +33,7 @@ mod report_edge {
             duration_secs: 0.5,
             summary: Some(summary.to_string()),
             log_file: format!("{gate}.log"),
+            fingerprint: None,
         }
     }
 

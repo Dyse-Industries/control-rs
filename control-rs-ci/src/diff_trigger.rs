@@ -1,6 +1,7 @@
 //! Path-gated skip: the check that runs before each gate (FR-22 to FR-24).
 
-use std::path::Path;
+use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Environment variable that forces every gate to run or skip.
@@ -39,6 +40,17 @@ pub struct Triggers<'a> {
     /// Whether a changed file matches the `[runner]` list. Computed once per
     /// invocation, not per gate.
     pub global_hit: bool,
+}
+
+/// Summary of audited input states for a gate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditedInputs {
+    /// Git commit SHA at HEAD, if in a git repository.
+    pub head: Option<String>,
+    /// Git tree hash of HEAD, if in a git repository.
+    pub tree_hash: Option<String>,
+    /// Deterministic content hash across triggered input paths.
+    pub content_hash: String,
 }
 
 /// A caller's forced decision for a gate.
@@ -180,4 +192,137 @@ pub fn should_run(
             "no changed file under its diff-trigger".to_string(),
         ))
     }
+}
+
+/// Scans trigger paths to obtain the content hash, commit SHA, and tree hash.
+#[must_use]
+pub fn audit_inputs(root: &Path, triggers: &[String]) -> AuditedInputs {
+    let (head, tree_hash) =
+        if root.join(".git").exists() && !triggers.is_empty() {
+            let git = |args: &[&str]| {
+                let out = Command::new("git")
+                    .current_dir(root)
+                    .args(args)
+                    .output()
+                    .ok()?;
+                out.status.success().then(|| {
+                    String::from_utf8_lossy(&out.stdout).trim().to_string()
+                })
+            };
+            (
+                git(&["rev-parse", "HEAD"]),
+                git(&["rev-parse", "HEAD^{tree}"]),
+            )
+        } else {
+            (None, None)
+        };
+
+    let content_hash = compute_content_hash(root, triggers);
+    AuditedInputs {
+        head,
+        tree_hash,
+        content_hash,
+    }
+}
+
+fn collect_trigger_files(path: &Path, out: &mut Vec<PathBuf>) {
+    if path.is_file() {
+        out.push(path.to_path_buf());
+    } else if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            let name = entry.file_name();
+            let name_str = name.to_string_lossy();
+            // Skip hidden files and target directories.
+            if name_str.starts_with('.') || name_str == "target" {
+                continue;
+            }
+            collect_trigger_files(&p, out);
+        }
+    }
+}
+
+/// Recursively computes the deterministic content hash for trigger paths.
+#[must_use]
+pub fn compute_content_hash(root: &Path, triggers: &[String]) -> String {
+    let paths_to_check: Vec<&str> = if triggers.is_empty() {
+        vec![
+            "src",
+            "tests",
+            "benches",
+            "examples",
+            "Cargo.toml",
+            "Cargo.lock",
+        ]
+    } else {
+        triggers.iter().map(String::as_str).collect()
+    };
+
+    let mut files = Vec::new();
+    for path_str in paths_to_check {
+        let p = root.join(path_str);
+        collect_trigger_files(&p, &mut files);
+    }
+
+    files.sort();
+
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for path in files {
+        if let Ok(rel) = path.strip_prefix(root) {
+            rel.hash(&mut hasher);
+        } else {
+            path.hash(&mut hasher);
+        }
+        if let Ok(bytes) = std::fs::read(&path) {
+            bytes.hash(&mut hasher);
+        }
+    }
+    format!("{:016x}", hasher.finish())
+}
+
+/// Verifies whether `<gate>.log` is fresh with respect to its triggered inputs.
+#[must_use]
+pub fn is_log_fresh(
+    root: &Path,
+    triggers: &[String],
+    log_path: &Path,
+    recorded_fp: &crate::gate::InputFingerprint,
+) -> bool {
+    if !log_path.is_file() {
+        return false;
+    }
+
+    // 1. Fast Path: Git commit matches and working tree is clean for triggered paths
+    let git_repo = root.join(".git").exists();
+    if let Some(recorded_commit) =
+        recorded_fp.head_commit.as_ref().filter(|_| git_repo)
+    {
+        let mut status_args = vec!["status", "--porcelain", "-z", "--"];
+        let trigger_refs: Vec<&str> =
+            triggers.iter().map(String::as_str).collect();
+        status_args.extend(&trigger_refs);
+        let status_cmd = Command::new("git")
+            .current_dir(root)
+            .args(&status_args)
+            .output();
+        let is_clean =
+            status_cmd.is_ok_and(|s| s.status.success() && s.stdout.is_empty());
+        if is_clean {
+            let rev_cmd = Command::new("git")
+                .current_dir(root)
+                .args(["rev-parse", "HEAD"])
+                .output();
+            if let Ok(rev) = rev_cmd {
+                let current_head =
+                    String::from_utf8_lossy(&rev.stdout).trim().to_string();
+                if &current_head == recorded_commit {
+                    return true;
+                }
+            }
+        }
+    }
+
+    // 2. Deterministic content hash check across triggered inputs
+    let current_content_hash = compute_content_hash(root, triggers);
+    current_content_hash == recorded_fp.content_hash
 }
