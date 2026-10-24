@@ -214,6 +214,8 @@ mod tests {
             assert_eq!(rx.push(&[1; 64], 64), Ok(None));
         }
         assert_eq!(rx.push(&[1; 64], 64), Err(Overflow));
+        // Later full packets in the oversized transfer must remain discarded and not clear the discarding state.
+        assert_eq!(rx.push(&[9; 64], 64), Ok(None));
         // Short terminator of the oversized transfer must not assemble as a message.
         assert_eq!(rx.push(&[9; 24], 64), Ok(None));
         assert_eq!(rx.push(&[2; 3], 64), Ok(Some(&[2u8, 2, 2][..])));
