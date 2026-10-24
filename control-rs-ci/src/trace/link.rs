@@ -2076,6 +2076,9 @@ mod tests {
         assert!(!binds_corrupt(
             |c, n| *c.removed.first_mut().unwrap() = (n, 0)
         ));
+        assert!(!binds_corrupt(
+            |c, n| *c.removed.first_mut().unwrap() = (0, n)
+        ));
     }
 
     #[test]
@@ -2087,10 +2090,12 @@ mod tests {
 
     #[test]
     fn bind_rejects_a_vertex_row_past_the_last_row() {
-        let rows = mixed_rows().len();
-        assert!(!binds_corrupt(
-            |c, _| c.vertices.first_mut().unwrap().1 = rows
-        ));
+        let rows = mixed_rows();
+        let mut cache = acyclic(&rows).0.snapshot();
+        assert!(cache.in_bounds(rows.len()));
+        cache.vertices.first_mut().unwrap().1 = rows.len();
+        assert!(!cache.in_bounds(rows.len()));
+        assert!(cache.bind(&rows).is_none());
     }
 
     #[test]
