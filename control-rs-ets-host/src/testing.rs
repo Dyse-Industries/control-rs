@@ -50,6 +50,8 @@ pub struct Fake {
     pub drop_exec: Option<u16>,
     /// Item that reports its verdict but never its statistics.
     pub drop_stats: Option<u16>,
+    /// Task item that ends with `RunStats` and never sends `Done`.
+    pub orphan_stats: Option<u16>,
     /// Release-source flag of `TargetInfo`.
     pub release_source: bool,
     /// Wire revision reported.
@@ -82,6 +84,7 @@ impl Default for Fake {
             drop_setting: None,
             drop_exec: None,
             drop_stats: None,
+            orphan_stats: None,
             release_source: false,
             version: PROTOCOL_VERSION,
             active: None,
@@ -239,6 +242,9 @@ impl Fake {
             (2, ExecMode::Triggered) => {
                 out.push(sample(0, vec![9]));
                 out.extend(self.finish(1, Verdict::Bounded));
+            }
+            (2, _) if self.orphan_stats == Some(item) => {
+                out.push(stats(item, 1, 0, 0));
             }
             (2, _) => self.active = Some((item, mode, max_steps)),
             _ => {
