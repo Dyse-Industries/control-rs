@@ -9,19 +9,10 @@
 //! [`LinkGraph::derive`] and [`LinkGraph::render`] read the acyclic result.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
-
-use serde::{Deserialize, Serialize};
 
 use super::reqs::LINK_METHOD;
 use super::status::{ConditionStatus, ItemOutcome, Status};
-use super::{
-    CONDITION, DEFINITION, Defect, Defects, QUALIFIER, Row, write_file,
-};
-use crate::error::GateResult;
-
-/// Format version of the snapshot, separate from the row `SCHEMA`.
-pub const CACHE_SCHEMA: u32 = 1;
+use super::{CONDITION, DEFINITION, Defect, Defects, QUALIFIER, Row};
 
 /// Stroke of a removed cyclic edge.
 const CYCLE_STROKE: &str = "#d32f2f";
@@ -54,12 +45,6 @@ pub type RequirementMap<'a> = BTreeMap<&'a str, Status>;
 /// The component of every vertex and the number of components.
 type Components = (Vec<usize>, usize);
 
-/// A graph bound to rows, or `None` when the snapshot does not match them.
-type BoundGraph<'a> = Option<LinkGraph<'a, Acyclic>>;
-
-/// Kind and row index of one vertex of a snapshot.
-type CachedVertex = (VertexKind, usize);
-
 /// A directed edge as `(from, to)` vertex indices.
 type Edge = (usize, usize);
 
@@ -71,12 +56,6 @@ type Resolution = (LinkTarget, Option<Defect>);
 
 /// Vertices by name.
 type Index<'a> = HashMap<&'a str, usize>;
-
-/// Vertices with names, or `None` when a stored row cannot name one.
-type Named<'a> = Option<Vec<LinkVertex<'a>>>;
-
-/// An acyclic graph, its defects and where it came from.
-type Sourced<'a> = (Built<'a, Acyclic>, GraphSource);
 
 /// Targets of each link condition, by vertex; `None` for every other vertex.
 type Links = Vec<Option<Vec<LinkTarget>>>;
@@ -93,17 +72,8 @@ pub enum GraphFormat {
     Dot,
 }
 
-/// Where an acyclic link graph came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum GraphSource {
-    /// Bound from a snapshot.
-    Snapshot,
-    /// Built by [`LinkGraph::resolve`] then [`LinkGraph::cut_cycles`].
-    Built,
-}
-
 /// What one target of a link condition resolved to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum LinkTarget {
     /// A vertex the target names.
     Resolved(usize),
@@ -116,9 +86,7 @@ enum LinkTarget {
 /// The declared order is the tie-break of [`LinkGraph::cut_cycles`]: within
 /// one strongly connected component a condition is evaluated before the
 /// requirement it verifies, and a requirement before its document.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 enum VertexKind {
     /// A verification condition.
     Condition,
@@ -142,33 +110,6 @@ pub struct LinkGraph<'a, S> {
     state: S,
     /// Vertices in interning order.
     vertices: Vec<LinkVertex<'a>>,
-}
-
-/// The owned form of an acyclic link graph, written to and read from a file.
-///
-/// It stores indices and numbers only: [`LinkCache::bind`] recovers the
-/// vertex names from the rows the snapshot was cut from.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct LinkCache {
-    /// [`CACHE_SCHEMA`] of the writer.
-    schema: u32,
-    /// The graph-relevant fields of every row, in order.
-    identity: Vec<RowIdentity>,
-    /// Kind and row index of each vertex, in interning order.
-    vertices: Vec<CachedVertex>,
-    /// Start of the targets of each vertex, then the end of the last.
-    offsets: Vec<usize>,
-    /// Targets of every vertex after the cut, grouped by vertex.
-    targets: Vec<usize>,
-    /// Targets of each link condition.
-    links: Links,
-    /// Whether each vertex is a link condition on a cycle.
-    cyclic: Vec<bool>,
-    /// The evaluation order.
-    order: Vec<usize>,
-    /// Link edges removed as cyclic, in the order they were recorded.
-    removed: Vec<Edge>,
 }
 
 /// The statuses [`LinkGraph::derive`] computes.
@@ -259,26 +200,6 @@ struct LinkVertex<'a> {
     name: &'a str,
     /// Index of the first row that introduces the vertex.
     row: usize,
-}
-
-/// The fields of a row the link graph depends on; `text` is left out.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RowIdentity {
-    /// Qualified ID.
-    id: String,
-    /// Definition or condition.
-    kind: String,
-    /// Parent requirement IDs.
-    parents: Vec<String>,
-    /// Verification method.
-    method: Option<String>,
-    /// Targets named by the condition.
-    targets: Vec<String>,
-    /// Path of the source file.
-    file: String,
-    /// 1-based line number.
-    line: usize,
 }
 
 /// What [`LinkGraph::render`] draws.
@@ -409,7 +330,9 @@ impl<'a> LinkGraphBuilder<'a> {
                 continue;
             };
             if row.targets.is_empty() {
-                defects.push(no_target(row));
+                let message =
+                    format!("condition {} names no link target", row.id);
+                defects.push(Defect::at(row, message));
             }
             // Resolve each named target in order; `targets` stays parallel to
             // `row.targets` so statuses can later be matched back to names.
@@ -472,12 +395,23 @@ impl<'a> LinkGraphBuilder<'a> {
             &self.docs
         };
         let Some(&w) = index.get(name) else {
-            return (LinkTarget::Unresolved, Some(unresolved(row, name)));
+            let message = format!(
+                "condition {} target '{name}' names no selected document, \
+                 requirement or condition",
+                row.id
+            );
+            return (LinkTarget::Unresolved, Some(Defect::at(row, message)));
         };
         self.connect(v, w);
         let empty = self.kind(w) == Some(VertexKind::Document)
             && self.out_degree.get(w).is_none_or(|&d| d == 0);
-        let defect = empty.then(|| empty_document(row, name));
+        let defect = empty.then(|| {
+            let message = format!(
+                "condition {} target '{name}' defines no requirement",
+                row.id
+            );
+            Defect::at(row, message)
+        });
         (LinkTarget::Resolved(w), defect)
     }
 }
@@ -635,7 +569,15 @@ impl<'a> LinkGraph<'a, Resolved> {
         }
         let edges = Adjacency::new(n, &kept);
 
-        let defects = cycle_defects(&cyclic, &vertices, rows);
+        let defects = (0..n)
+            .filter(|&v| cyclic.get(v).copied().unwrap_or(false))
+            .filter_map(|v| vertices.get(v).and_then(|x| rows.get(x.row)))
+            .map(|row| {
+                let message =
+                    format!("condition {} lies on a link cycle", row.id);
+                Defect::at(row, message)
+            })
+            .collect();
 
         let state = Acyclic {
             cyclic,
@@ -762,62 +704,6 @@ impl<'a> LinkGraph<'a, Acyclic> {
     #[must_use]
     pub const fn rows(&self) -> &'a [Row] {
         self.rows
-    }
-
-    /// The snapshot of this graph.
-    #[must_use]
-    pub fn snapshot(&self) -> LinkCache {
-        LinkCache {
-            schema: CACHE_SCHEMA,
-            identity: self.rows.iter().map(RowIdentity::of).collect(),
-            vertices: self.vertices.iter().map(|x| (x.kind, x.row)).collect(),
-            offsets: self.edges.offsets.clone(),
-            targets: self.edges.targets.clone(),
-            links: self.links.clone(),
-            cyclic: self.state.cyclic.clone(),
-            order: self.state.order.clone(),
-            removed: self.state.removed.clone(),
-        }
-    }
-
-    /// The link defects of this graph, resolution defects then cycle defects,
-    /// each in row order: the defects [`link_graph`] reports for its rows.
-    #[must_use]
-    pub fn defects(&self) -> Defects {
-        let mut defects = Defects::new();
-        // Link conditions are interned in row order, so vertex order is the
-        // row order `resolve` reports in.
-        for v in 0..self.vertices.len() {
-            let (Some(targets), Some(row)) =
-                (self.targets_of(v), self.row_of(v))
-            else {
-                continue;
-            };
-            if row.targets.is_empty() {
-                defects.push(no_target(row));
-            }
-            for (name, target) in row.targets.iter().zip(targets) {
-                match *target {
-                    LinkTarget::Unresolved => {
-                        defects.push(unresolved(row, name));
-                    }
-                    LinkTarget::Resolved(w) => {
-                        let empty = kind_at(&self.vertices, w)
-                            == Some(VertexKind::Document)
-                            && self.edges.out(w).is_empty();
-                        if empty {
-                            defects.push(empty_document(row, name));
-                        }
-                    }
-                }
-            }
-        }
-        defects.extend(cycle_defects(
-            &self.state.cyclic,
-            &self.vertices,
-            self.rows,
-        ));
-        defects
     }
 
     /// The link view as a Graphviz `digraph`.
@@ -1030,125 +916,6 @@ impl<'a> LinkGraph<'a, Acyclic> {
     }
 }
 
-impl LinkCache {
-    /// Binds the snapshot to `rows`, or `None` when it was not built from
-    /// them or any stored index is out of range.
-    #[must_use]
-    pub fn bind<'a>(&self, rows: &'a [Row]) -> BoundGraph<'a> {
-        let same_rows = self.schema == CACHE_SCHEMA
-            && self.identity.len() == rows.len()
-            && self
-                .identity
-                .iter()
-                .zip(rows)
-                .all(|(x, row)| x.matches(row));
-        if !(same_rows && self.in_bounds(rows.len())) {
-            return None;
-        }
-        let vertices = self.vertices_of(rows)?;
-        let state = Acyclic {
-            cyclic: self.cyclic.clone(),
-            order: self.order.clone(),
-            removed: self.removed.clone(),
-        };
-        let edges = Adjacency {
-            offsets: self.offsets.clone(),
-            targets: self.targets.clone(),
-        };
-        Some(LinkGraph {
-            edges,
-            links: self.links.clone(),
-            rows,
-            state,
-            vertices,
-        })
-    }
-
-    /// Reads a snapshot; a file that is absent, unreadable or not a snapshot
-    /// is `None`.
-    #[must_use]
-    pub fn read(path: &Path) -> Option<Self> {
-        let bytes = std::fs::read(path).ok()?;
-        serde_json::from_slice(&bytes).ok()
-    }
-
-    /// Writes the snapshot, creating missing parent directories.
-    ///
-    /// # Errors
-    /// `GateError::Json` when the snapshot cannot be encoded and
-    /// `GateError::Io` when it cannot be written.
-    pub fn write(&self, path: &Path) -> GateResult<()> {
-        let bytes = serde_json::to_vec(self)?;
-        write_file(path, &bytes)
-    }
-
-    /// Whether every stored index lies inside the `n` vertices and the
-    /// `row_count` rows, the offsets form a table of `n` vertices that never
-    /// decreases, `cyclic` has one flag per vertex and `order` is a
-    /// permutation of the vertices.
-    fn in_bounds(&self, row_count: usize) -> bool {
-        let n = self.vertices.len();
-        let vertex = |v: &usize| *v < n;
-        let offsets_ok = self.offsets.len() == n.saturating_add(1)
-            && self.offsets.windows(2).all(|w| w.first() <= w.get(1));
-        let links_ok = self.links.len() == n
-            && self.links.iter().flatten().flatten().all(|t| match *t {
-                LinkTarget::Resolved(w) => w < n,
-                LinkTarget::Unresolved => true,
-            });
-        offsets_ok
-            && links_ok
-            && self.targets.iter().all(vertex)
-            && self.removed.iter().all(|(v, w)| *v < n && *w < n)
-            && self.vertices.iter().all(|&(_, row)| row < row_count)
-            && self.cyclic.len() == n
-            && is_permutation(&self.order, n)
-    }
-
-    /// The vertices with their names recovered from `rows`: a qualified ID,
-    /// or the document prefix of the ID for a document.
-    fn vertices_of<'a>(&self, rows: &'a [Row]) -> Named<'a> {
-        self.vertices
-            .iter()
-            .map(|&(kind, row)| {
-                let id = rows.get(row)?.id.as_str();
-                let name = if kind == VertexKind::Document {
-                    id.split_once(QUALIFIER)?.0
-                } else {
-                    id
-                };
-                Some(LinkVertex { kind, name, row })
-            })
-            .collect()
-    }
-}
-
-impl RowIdentity {
-    /// Whether `row` has these fields.
-    fn matches(&self, row: &Row) -> bool {
-        self.id == row.id
-            && self.kind == row.kind
-            && self.parents == row.parents
-            && self.method == row.method
-            && self.targets == row.targets
-            && self.file == row.file
-            && self.line == row.line
-    }
-
-    /// The identity of `row`.
-    fn of(row: &Row) -> Self {
-        Self {
-            id: row.id.clone(),
-            kind: row.kind.clone(),
-            parents: row.parents.clone(),
-            method: row.method.clone(),
-            targets: row.targets.clone(),
-            file: row.file.clone(),
-            line: row.line,
-        }
-    }
-}
-
 /// The acyclic link graph of `rows` and its defects: [`LinkGraph::resolve`]
 /// then [`LinkGraph::cut_cycles`], resolution defects then cycle defects,
 /// each in row order.
@@ -1158,29 +925,6 @@ pub fn link_graph(rows: &[Row]) -> Built<'_, Acyclic> {
     let (graph, cycles) = graph.cut_cycles();
     defects.extend(cycles);
     (graph, defects)
-}
-
-/// The snapshot path for a rows file: `reqs.jsonl` gives
-/// `reqs.link-cache.json` in the same directory.
-#[must_use]
-pub fn cache_path(rows: &Path) -> PathBuf {
-    rows.with_extension("link-cache.json")
-}
-
-/// The acyclic link graph of `rows` and its defects, and where it came from:
-/// bound from `cache` when it matches, otherwise [`link_graph`].
-#[must_use]
-pub fn cached_link_graph<'a>(
-    rows: &'a [Row],
-    cache: Option<&LinkCache>,
-) -> Sourced<'a> {
-    cache.and_then(|c| c.bind(rows)).map_or_else(
-        || (link_graph(rows), GraphSource::Built),
-        |graph| {
-            let defects = graph.defects();
-            ((graph, defects), GraphSource::Snapshot)
-        },
-    )
 }
 
 /// `values[i]`, or 0 outside the slice; every index comes from a vertex of the
@@ -1225,57 +969,6 @@ fn evaluation_order(
         }
     }
     order
-}
-
-/// One defect per link condition on a cycle, in vertex order.
-fn cycle_defects(
-    cyclic: &[bool],
-    vertices: &[LinkVertex<'_>],
-    rows: &[Row],
-) -> Defects {
-    (0..vertices.len())
-        .filter(|&v| cyclic.get(v).copied().unwrap_or(false))
-        .filter_map(|v| vertices.get(v).and_then(|x| rows.get(x.row)))
-        .map(|row| {
-            let message = format!("condition {} lies on a link cycle", row.id);
-            Defect::at(row, message)
-        })
-        .collect()
-}
-
-/// The defect of a link target `name` that names a document without
-/// requirements.
-fn empty_document(row: &Row, name: &str) -> Defect {
-    let message = format!(
-        "condition {} target '{name}' defines no requirement",
-        row.id
-    );
-    Defect::at(row, message)
-}
-
-/// Whether `order` lists each of the `n` vertices exactly once.
-fn is_permutation(order: &[usize], n: usize) -> bool {
-    let mut seen = vec![false; n];
-    order.len() == n
-        && order.iter().all(|&v| {
-            seen.get_mut(v)
-                .is_some_and(|slot| !std::mem::replace(slot, true))
-        })
-}
-
-/// The defect of a link condition without a target.
-fn no_target(row: &Row) -> Defect {
-    Defect::at(row, format!("condition {} names no link target", row.id))
-}
-
-/// The defect of a link target `name` that names nothing defined.
-fn unresolved(row: &Row, name: &str) -> Defect {
-    let message = format!(
-        "condition {} target '{name}' names no selected document, \
-         requirement or condition",
-        row.id
-    );
-    Defect::at(row, message)
 }
 
 /// Whether a status fails the gate.
@@ -1330,9 +1023,6 @@ fn put_status(values: &mut [Status], i: usize, value: Status) {
 mod tests {
     use super::*;
     use crate::trace::SCHEMA;
-
-    /// A defect's file, line and message.
-    type Located = (String, usize, String);
 
     /// A target and whether it passed.
     type Outcome<'t> = (&'t str, bool);
@@ -1814,326 +1504,5 @@ mod tests {
                 assert_eq!(rendered(&rows, format), rendered(&rows, format));
             }
         }
-    }
-
-    /// A cycle between `a#VC-1.1` and `b#VC-1.1`, a link with no target, an
-    /// unresolved target and a target document `e` with no requirement.
-    fn mixed_rows() -> Vec<Row> {
-        vec![
-            def("a#FR-1", 1),
-            link("a#VC-1.1", "a#FR-1", &["b#VC-1.1"], 3),
-            link("a#VC-1.2", "a#FR-1", &[], 4),
-            link("a#VC-1.3", "a#FR-1", &["nowhere", "e"], 5),
-            def("b#FR-1", 7),
-            link("b#VC-1.1", "b#FR-1", &["a#VC-1.1"], 9),
-            cond(["e#VC-1.1", "e#FR-9"], "libtest", &["t"], 11),
-        ]
-    }
-
-    /// A chain of `docs` documents of fixed-width names, each linking to the
-    /// next.
-    fn chain_rows(docs: usize) -> Vec<Row> {
-        let mut rows = Vec::with_capacity(docs.saturating_mul(2));
-        for i in 0..docs {
-            let doc = format!("d{i:06}");
-            rows.push(def(&format!("{doc}#FR-1"), 1));
-            let next = format!("d{:06}", i.saturating_add(1));
-            let targets: &[&str] = if i.saturating_add(1) < docs {
-                &[&next]
-            } else {
-                &[]
-            };
-            rows.push(link(
-                &format!("{doc}#VC-1.1"),
-                &format!("{doc}#FR-1"),
-                targets,
-                2,
-            ));
-        }
-        rows
-    }
-
-    fn located(defects: &[Defect]) -> Vec<Located> {
-        defects
-            .iter()
-            .map(|d| (d.file.clone(), d.line, d.message.clone()))
-            .collect()
-    }
-
-    fn row_mut(rows: &mut [Row], i: usize) -> &mut Row {
-        rows.get_mut(i).unwrap()
-    }
-
-    /// Whether the snapshot of `mixed_rows` binds after `change` to the rows.
-    fn binds_after(change: impl FnOnce(&mut Vec<Row>)) -> bool {
-        let rows = mixed_rows();
-        let cache = acyclic(&rows).0.snapshot();
-        let mut changed = rows;
-        change(&mut changed);
-        cache.bind(&changed).is_some()
-    }
-
-    /// Whether the snapshot of `mixed_rows` binds after `change` to the
-    /// snapshot.
-    fn binds_corrupt(change: impl FnOnce(&mut LinkCache, usize)) -> bool {
-        let rows = mixed_rows();
-        let mut cache = acyclic(&rows).0.snapshot();
-        let n = cache.vertices.len();
-        change(&mut cache, n);
-        cache.bind(&rows).is_some()
-    }
-
-    fn temp_file(name: &str, bytes: &[u8]) -> PathBuf {
-        let dir = std::env::temp_dir()
-            .join(format!("control_rs_ci_link_{name}_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("reqs.link-cache.json");
-        std::fs::write(&path, bytes).unwrap();
-        path
-    }
-
-    fn snapshot_bytes(rows: &[Row]) -> Vec<u8> {
-        serde_json::to_vec(&acyclic(rows).0.snapshot()).unwrap()
-    }
-
-    #[test]
-    fn bound_graph_reports_the_defects_of_the_live_cut() {
-        let rows = mixed_rows();
-        let (graph, live) = acyclic(&rows);
-        assert_eq!(live.len(), 5, "{live:?}");
-        let bound = graph.snapshot().bind(&rows).unwrap();
-        assert_eq!(located(&bound.defects()), located(&live));
-    }
-
-    #[test]
-    fn snapshot_round_trips_to_an_equal_graph() {
-        let rows = mixed_rows();
-        let (graph, live) = acyclic(&rows);
-        let bound = graph.snapshot().bind(&rows).unwrap();
-        let built = graph.derive(|row| leaf_status(&[], row));
-        let rebound = bound.derive(|row| leaf_status(&[], row));
-        assert_eq!(rebound.conditions, built.conditions);
-        assert_eq!(rebound.requirements, built.requirements);
-        assert_eq!(located(&bound.defects()), located(&live));
-        assert_eq!(bound.state.removed, graph.state.removed);
-        assert_eq!(bound.state.removed.len(), 2);
-        for format in [GraphFormat::Mermaid, GraphFormat::Dot] {
-            assert_eq!(
-                bound.render(format, Some(&built.conditions)),
-                graph.render(format, Some(&built.conditions))
-            );
-        }
-    }
-
-    #[test]
-    fn snapshot_survives_a_json_round_trip() {
-        let rows = mixed_rows();
-        let cache = acyclic(&rows).0.snapshot();
-        let path = temp_file("round_trip", b"");
-        cache.write(&path).unwrap();
-        let read = LinkCache::read(&path).unwrap();
-        assert_eq!(read, cache);
-        assert!(read.bind(&rows).is_some());
-    }
-
-    #[test]
-    fn bind_rejects_a_changed_id() {
-        assert!(!binds_after(|r| row_mut(r, 1).id = "a#VC-1.9".into()));
-    }
-
-    #[test]
-    fn bind_rejects_a_changed_kind() {
-        assert!(!binds_after(|r| row_mut(r, 0).kind = CONDITION.into()));
-    }
-
-    #[test]
-    fn bind_rejects_a_changed_parents() {
-        assert!(!binds_after(
-            |r| row_mut(r, 1).parents = vec!["b#FR-1".into()]
-        ));
-    }
-
-    #[test]
-    fn bind_rejects_a_changed_method() {
-        assert!(!binds_after(
-            |r| row_mut(r, 6).method = Some("review".into())
-        ));
-    }
-
-    #[test]
-    fn bind_rejects_a_changed_targets() {
-        assert!(!binds_after(|r| row_mut(r, 1).targets = vec!["b".into()]));
-    }
-
-    #[test]
-    fn bind_rejects_a_changed_file() {
-        assert!(!binds_after(
-            |r| row_mut(r, 0).file = "docs/u-design.md".into()
-        ));
-    }
-
-    #[test]
-    fn bind_rejects_a_changed_line() {
-        assert!(!binds_after(|r| row_mut(r, 0).line = 2));
-    }
-
-    #[test]
-    fn bind_rejects_an_added_row() {
-        assert!(!binds_after(|r| r.push(def("c#FR-1", 20))));
-    }
-
-    #[test]
-    fn bind_rejects_a_removed_row() {
-        assert!(!binds_after(|r| {
-            r.pop();
-        }));
-    }
-
-    #[test]
-    fn bind_rejects_reordered_rows() {
-        assert!(!binds_after(|r| r.swap(0, 4)));
-    }
-
-    #[test]
-    fn bind_accepts_a_changed_text() {
-        assert!(binds_after(|r| row_mut(r, 0).text = "changed".into()));
-    }
-
-    #[test]
-    fn bind_rejects_another_cache_schema() {
-        assert!(!binds_corrupt(
-            |c, _| c.schema = CACHE_SCHEMA.saturating_add(1)
-        ));
-    }
-
-    #[test]
-    fn read_returns_none_for_an_empty_file() {
-        assert!(LinkCache::read(&temp_file("empty", b"")).is_none());
-    }
-
-    #[test]
-    fn read_returns_none_for_truncated_json() {
-        let bytes = snapshot_bytes(&mixed_rows());
-        let half = bytes.get(..bytes.len() / 2).unwrap();
-        assert!(LinkCache::read(&temp_file("truncated", half)).is_none());
-    }
-
-    #[test]
-    fn read_returns_none_for_json_of_another_shape() {
-        let path = temp_file("shape", br#"{"rows":[1,2,3]}"#);
-        assert!(LinkCache::read(&path).is_none());
-    }
-
-    #[test]
-    fn read_returns_none_for_an_unknown_field() {
-        let mut value: serde_json::Value =
-            serde_json::from_slice(&snapshot_bytes(&mixed_rows())).unwrap();
-        value
-            .as_object_mut()
-            .unwrap()
-            .insert("extra".into(), serde_json::Value::from(1));
-        let bytes = serde_json::to_vec(&value).unwrap();
-        assert!(LinkCache::read(&temp_file("unknown", &bytes)).is_none());
-    }
-
-    #[test]
-    fn bind_rejects_a_short_offset_table() {
-        assert!(!binds_corrupt(|c, _| {
-            c.offsets.pop();
-        }));
-    }
-
-    #[test]
-    fn bind_rejects_decreasing_offsets() {
-        assert!(!binds_corrupt(|c, _| {
-            *c.offsets.first_mut().unwrap() = usize::MAX;
-        }));
-    }
-
-    #[test]
-    fn bind_rejects_a_target_past_the_last_vertex() {
-        assert!(!binds_corrupt(|c, n| *c.targets.first_mut().unwrap() = n));
-    }
-
-    #[test]
-    fn bind_rejects_a_link_past_the_last_vertex() {
-        assert!(!binds_corrupt(|c, n| {
-            let target = c.links.iter_mut().flatten().flatten().next().unwrap();
-            *target = LinkTarget::Resolved(n);
-        }));
-    }
-
-    #[test]
-    fn bind_rejects_an_order_that_is_not_a_permutation() {
-        assert!(!binds_corrupt(|c, _| {
-            let second = *c.order.get(1).unwrap();
-            *c.order.first_mut().unwrap() = second;
-        }));
-    }
-
-    #[test]
-    fn bind_rejects_a_removed_edge_past_the_last_vertex() {
-        assert!(!binds_corrupt(
-            |c, n| *c.removed.first_mut().unwrap() = (n, 0)
-        ));
-        assert!(!binds_corrupt(
-            |c, n| *c.removed.first_mut().unwrap() = (0, n)
-        ));
-    }
-
-    #[test]
-    fn bind_rejects_a_cyclic_vector_of_the_wrong_length() {
-        assert!(!binds_corrupt(|c, _| {
-            c.cyclic.pop();
-        }));
-    }
-
-    #[test]
-    fn bind_rejects_a_vertex_row_past_the_last_row() {
-        let rows = mixed_rows();
-        let mut cache = acyclic(&rows).0.snapshot();
-        assert!(cache.in_bounds(rows.len()));
-        cache.vertices.first_mut().unwrap().1 = rows.len();
-        assert!(!cache.in_bounds(rows.len()));
-        assert!(cache.bind(&rows).is_none());
-    }
-
-    #[test]
-    fn snapshot_size_is_linear_in_the_chain_length() {
-        for n in [1_000, 10_000] {
-            let single = snapshot_bytes(&chain_rows(n)).len();
-            let double = snapshot_bytes(&chain_rows(n * 2)).len();
-            // At most 2.1 times: decimal indices widen as the chain grows.
-            assert!(double * 10 <= single * 21, "{n}: {single} -> {double}");
-        }
-    }
-
-    #[test]
-    fn snapshot_is_byte_identical_across_runs() {
-        assert_eq!(
-            snapshot_bytes(&mixed_rows()),
-            snapshot_bytes(&mixed_rows())
-        );
-    }
-
-    #[test]
-    fn snapshot_matches_the_recorded_golden_file() {
-        let golden = std::fs::read(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/data/link-cache.golden.json"
-        ))
-        .unwrap();
-        assert_eq!(
-            String::from_utf8(snapshot_bytes(&mixed_rows())).unwrap(),
-            String::from_utf8(golden).unwrap()
-        );
-    }
-
-    #[test]
-    fn cache_path_is_the_sibling_of_the_rows_file() {
-        assert_eq!(
-            cache_path(Path::new("target/ci-artifacts/reqs.jsonl")),
-            Path::new("target/ci-artifacts/reqs.link-cache.json")
-        );
     }
 }
