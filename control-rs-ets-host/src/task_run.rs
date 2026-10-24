@@ -440,7 +440,8 @@ impl<L: HostLink<Error = HostError>> Session<L> {
                         .is_some_and(|s| state.last_event.elapsed() > s)
                     {
                         state.record.status = RunStatus::UnreportedFault;
-                        self.recover()?;
+                        // Keep the recorded status even if rediscovery fails.
+                        let _ = self.recover();
                         return Ok(());
                     }
                 }
@@ -478,7 +479,8 @@ impl<L: HostLink<Error = HostError>> Session<L> {
             .is_some_and(|t| t.elapsed() > self.opts.stop_timeout)
         {
             state.record.status = RunStatus::Unresponsive;
-            self.recover()?;
+            // Keep Unresponsive even if rediscovery fails.
+            let _ = self.recover();
             return Ok(true);
         }
         if state.last_heartbeat.elapsed() >= HEARTBEAT {
@@ -486,6 +488,58 @@ impl<L: HostLink<Error = HostError>> Session<L> {
             state.last_heartbeat = Instant::now();
         }
         Ok(false)
+    }
+
+    /// Applies `RunStats` to the record and ends the run.
+    ///
+    /// # Summary
+    ///
+    /// Copies statistics into `state.record` and marks the device idle.
+    ///
+    /// # Detailed Description
+    ///
+    /// Wire settle is `Done(verdict)` then `RunStats`. Stats without a prior Done leave
+    /// `verdict` unset; that is silence ([`RunStatus::UnreportedFault`]), not a clean
+    /// [`RunStatus::Completed`] run.
+    ///
+    /// # Arguments
+    ///
+    /// * `event` — Telemetry frame that must be `RunStats` for the active task.
+    /// * `state` — In-flight run loop whose record receives the statistics.
+    ///
+    /// # Returns
+    ///
+    /// Always `true` (the run ended).
+    ///
+    /// # Errors
+    ///
+    /// None.
+    ///
+    /// # Panics
+    ///
+    /// None.
+    ///
+    /// # Examples
+    ///
+    /// Invoked from [`Session::on_event`] when matching `RunStats` arrives; not called
+    /// directly from outside the crate.
+    const fn finish_with_stats(
+        &mut self,
+        event: &OwnedTelemetry,
+        state: &mut Loop<'_>,
+    ) -> bool {
+        if let Some(stats) = stats_of(event) {
+            state.record.jitter_max_ns = stats.jitter_max_ns;
+            state.record.missed_releases = stats.missed_releases;
+            state.record.step_max_ns = stats.step_max_ns;
+            state.record.step_min_ns = stats.step_min_ns;
+            state.record.steps = stats.steps;
+        }
+        if state.record.verdict.is_none() {
+            state.record.status = RunStatus::UnreportedFault;
+        }
+        self.device = crate::session::DeviceState::Idle;
+        true
     }
 
     /// Handles one telemetry message of a run. Returns `true` when the run ended.
@@ -533,19 +587,12 @@ impl<L: HostLink<Error = HostError>> Session<L> {
             OwnedTelemetry::RunStats {
                 suite_id, test_id, ..
             } if (*suite_id, *test_id) == id => {
-                if let Some(stats) = stats_of(event) {
-                    state.record.jitter_max_ns = stats.jitter_max_ns;
-                    state.record.missed_releases = stats.missed_releases;
-                    state.record.step_max_ns = stats.step_max_ns;
-                    state.record.step_min_ns = stats.step_min_ns;
-                    state.record.steps = stats.steps;
-                }
-                self.device = crate::session::DeviceState::Idle;
-                return Ok(true);
+                return Ok(self.finish_with_stats(event, state));
             }
             OwnedTelemetry::TargetPanic { .. } => {
                 state.record.status = RunStatus::Faulted;
-                self.recover()?;
+                // Keep Faulted even if rediscovery fails.
+                let _ = self.recover();
                 return Ok(true);
             }
             other => {
@@ -898,5 +945,24 @@ mod tests {
         // The target's one-byte reply does not decode as `Empty`... which accepts anything.
         let rec = result.unwrap();
         assert_eq!(rec.warnings.len(), 2);
+    }
+
+    #[test]
+    fn orphan_run_stats_is_an_unreported_fault() {
+        let mut s = open(Fake {
+            orphan_stats: Some(2),
+            ..Fake::default()
+        });
+        let rec = go!(
+            s,
+            TASK,
+            &bounded(1),
+            Increment,
+            &mut MemoryObserver::default(),
+            &RunControl::default(),
+        )
+        .unwrap();
+        assert_eq!(rec.status, RunStatus::UnreportedFault);
+        assert!(rec.verdict.is_none());
     }
 }
