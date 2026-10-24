@@ -76,6 +76,10 @@ mod cli {
     /// A file to create: its path and contents.
     type Fixture<'a> = (&'a str, &'a str);
 
+    /// The exit code, stdout lines, report bytes and diagram bytes of
+    /// `trace-check --graph out/links.mmd`.
+    type Observed = (Option<i32>, Vec<String>, Vec<u8>, Vec<u8>);
+
     fn config() -> String {
         "id = '(?:FR|NFR|C)-[0-9]+[a-z]?'\n\
          condition = 'VC-[0-9]+(?:\\.[0-9]+[a-z]?)?'\n\
@@ -561,5 +565,222 @@ mod cli {
         assert_eq!(output.status.code(), Some(1));
         let mermaid = fs::read_to_string(dir.join("out/links.mmd")).unwrap();
         assert!(mermaid.contains("gadget#VC-1.1 (Fail)"), "{mermaid}");
+    }
+
+    /// The snapshot `trace-reqs` writes beside `out/reqs.jsonl`.
+    fn snapshot(dir: &Path) -> PathBuf {
+        dir.join("out/reqs.link-cache.json")
+    }
+
+    fn stderr(output: &Output) -> String {
+        String::from_utf8_lossy(&output.stderr).into_owned()
+    }
+
+    fn observe(dir: &Path) -> Observed {
+        let output = trace_check_graph(dir, "out/links.mmd");
+        (
+            output.status.code(),
+            stdout_lines(&output),
+            fs::read(dir.join("out/trace-report.json")).unwrap(),
+            fs::read(dir.join("out/links.mmd")).unwrap(),
+        )
+    }
+
+    fn circular_dir(name: &str) -> PathBuf {
+        workdir(
+            name,
+            &[
+                ("docs/widget-design.md", CLEAN),
+                ("docs/gadget-design.md", CIRCULAR),
+                ("out/test.log", "test widget::tests::size ... ok\n"),
+            ],
+        )
+    }
+
+    fn set_modified(path: &Path, time: std::time::SystemTime) {
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(time)
+            .unwrap();
+    }
+
+    #[test]
+    fn a_cache_hit_reports_the_live_link_defects() {
+        let dir = circular_dir("cache_hit_defects");
+        let reqs = trace_reqs(&dir);
+        let check = trace_check(&dir);
+        assert!(stderr(&check).contains("Reading"), "{}", stderr(&check));
+        let links = |output: &Output| -> Vec<String> {
+            stdout_lines(output)
+                .into_iter()
+                .filter(|l| l.contains("link") || l.contains("names no"))
+                .collect()
+        };
+        assert_eq!(links(&reqs).len(), 2);
+        assert_eq!(links(&reqs), links(&check));
+    }
+
+    #[test]
+    fn trace_reqs_writes_a_snapshot_that_binds_to_its_rows() {
+        let dir = workdir(
+            "snapshot_binds",
+            &linked_fixtures("test widget::tests::size ... ok\n"),
+        );
+        assert!(trace_reqs(&dir).status.success());
+        assert!(snapshot(&dir).is_file());
+        let check = trace_check(&dir);
+        assert!(check.status.success());
+        assert!(stderr(&check).contains("Reading"), "{}", stderr(&check));
+    }
+
+    #[test]
+    fn trace_reqs_writes_the_snapshot_when_it_reports_defects() {
+        let dir = circular_dir("snapshot_defects");
+        assert_eq!(trace_reqs(&dir).status.code(), Some(1));
+        assert!(snapshot(&dir).is_file());
+        assert!(stderr(&trace_check(&dir)).contains("Reading"));
+    }
+
+    #[test]
+    fn trace_reqs_removes_the_snapshot_of_an_earlier_run_on_a_config_error() {
+        let dir =
+            workdir("snapshot_config", &[("docs/widget-design.md", CLEAN)]);
+        assert!(trace_reqs(&dir).status.success());
+        assert!(snapshot(&dir).is_file());
+        fs::remove_dir_all(dir.join("docs")).unwrap();
+        assert_eq!(trace_reqs(&dir).status.code(), Some(2));
+        assert!(!snapshot(&dir).exists());
+    }
+
+    #[test]
+    fn a_snapshot_that_cannot_be_written_is_a_warning() {
+        for (name, doc, code) in [
+            ("snapshot_blocked_clean", CLEAN, 0),
+            ("snapshot_blocked_defects", DEFECTIVE, 1),
+        ] {
+            let dir = workdir(name, &[("docs/widget-design.md", doc)]);
+            fs::create_dir_all(snapshot(&dir)).unwrap();
+            let output = trace_reqs(&dir);
+            assert_eq!(output.status.code(), Some(code), "{name}");
+            assert!(stderr(&output).contains("Warning"), "{}", stderr(&output));
+        }
+    }
+
+    #[test]
+    fn a_snapshot_is_not_judged_by_modification_time() {
+        let dir = circular_dir("snapshot_mtime");
+        trace_reqs(&dir);
+        let reqs_time = fs::metadata(dir.join("out/reqs.jsonl"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        let hour = std::time::Duration::from_secs(3600);
+        let mut reports = Vec::new();
+        for time in [reqs_time - hour, reqs_time + hour] {
+            set_modified(&snapshot(&dir), time);
+            let output = trace_check(&dir);
+            assert!(stderr(&output).contains("Reading"), "{}", stderr(&output));
+            reports.push(fs::read(dir.join("out/trace-report.json")).unwrap());
+        }
+        assert_eq!(reports.first(), reports.last());
+        let old = fs::read(snapshot(&dir)).unwrap();
+        let doc = format!("\n{CIRCULAR}");
+        fs::write(dir.join("docs/gadget-design.md"), doc).unwrap();
+        trace_reqs(&dir);
+        fs::write(snapshot(&dir), old).unwrap();
+        assert!(stderr(&trace_check(&dir)).contains("Building"));
+    }
+
+    #[test]
+    fn a_corrupt_snapshot_is_rebuilt_without_a_diagnostic() {
+        let dir = circular_dir("snapshot_corrupt");
+        trace_reqs(&dir);
+        let expected = trace_check(&dir);
+        fs::write(snapshot(&dir), "{\"schema\":1,").unwrap();
+        let output = trace_check(&dir);
+        let err = stderr(&output);
+        assert!(err.contains("Building"), "{err}");
+        assert!(!err.contains("Warning") && !err.contains("error"), "{err}");
+        assert_eq!(stdout_lines(&output), stdout_lines(&expected));
+        assert_eq!(output.status.code(), expected.status.code());
+    }
+
+    #[test]
+    fn a_missing_snapshot_is_rebuilt_without_a_diagnostic() {
+        let dir = circular_dir("snapshot_missing");
+        trace_reqs(&dir);
+        let expected = trace_check(&dir);
+        fs::remove_file(snapshot(&dir)).unwrap();
+        let output = trace_check(&dir);
+        let err = stderr(&output);
+        assert!(err.contains("Building"), "{err}");
+        assert!(!err.contains("Warning") && !err.contains("error"), "{err}");
+        assert_eq!(stdout_lines(&output), stdout_lines(&expected));
+        assert_eq!(output.status.code(), expected.status.code());
+    }
+
+    #[test]
+    fn a_bound_snapshot_prints_reading() {
+        let dir = circular_dir("snapshot_reading");
+        trace_reqs(&dir);
+        let err = stderr(&trace_check(&dir));
+        assert!(err.contains("Reading out/reqs.link-cache.json"), "{err}");
+        assert!(!err.contains("Building"), "{err}");
+    }
+
+    #[test]
+    fn a_rebuilt_graph_prints_building() {
+        let dir = circular_dir("snapshot_building");
+        trace_reqs(&dir);
+        fs::remove_file(snapshot(&dir)).unwrap();
+        let err = stderr(&trace_check(&dir));
+        assert!(err.contains("Building link graph"), "{err}");
+        assert!(!err.contains("Reading out/reqs.link-cache.json"), "{err}");
+    }
+
+    #[test]
+    fn a_matching_missing_stale_and_corrupt_snapshot_give_identical_output() {
+        let dir = circular_dir("snapshot_transparency");
+        trace_reqs(&dir);
+        let stale = fs::read(snapshot(&dir)).unwrap();
+        fs::write(dir.join("docs/gadget-design.md"), format!("\n{CIRCULAR}"))
+            .unwrap();
+        trace_reqs(&dir);
+        let current = fs::read(snapshot(&dir)).unwrap();
+        let matching = observe(&dir);
+        assert_eq!(matching.0, Some(1));
+        fs::remove_file(snapshot(&dir)).unwrap();
+        assert_eq!(observe(&dir), matching, "missing");
+        fs::write(snapshot(&dir), &stale).unwrap();
+        assert_eq!(observe(&dir), matching, "stale");
+        fs::write(snapshot(&dir), current.get(..current.len() / 2).unwrap())
+            .unwrap();
+        assert_eq!(observe(&dir), matching, "corrupt");
+    }
+
+    #[test]
+    fn trace_binaries_take_no_new_required_flag() {
+        let dir = workdir("usage_flags", &[]);
+        for (bin, usage) in [
+            (
+                env!("CARGO_BIN_EXE_trace-reqs"),
+                "trace-reqs --config <trace.toml> --out <reqs.jsonl>",
+            ),
+            (
+                env!("CARGO_BIN_EXE_trace-check"),
+                "trace-check --config <trace.toml> --reqs <reqs.jsonl> \
+                 --out <trace-report.json> [--graph <links.mmd|links.dot>]",
+            ),
+        ] {
+            let output = run(bin, &dir, &["--help"]);
+            let text = format!(
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                stderr(&output)
+            );
+            assert!(text.contains(&format!("usage: {usage}")), "{text}");
+        }
     }
 }

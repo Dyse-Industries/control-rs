@@ -8,7 +8,9 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use control_rs_ci::GateResult;
-use control_rs_ci::trace::link::{GraphFormat, link_graph};
+use control_rs_ci::trace::link::{
+    GraphFormat, GraphSource, LinkCache, cache_path, cached_link_graph,
+};
 use control_rs_ci::trace::reqs::TraceConfig;
 use control_rs_ci::trace::status::{self, Derived, TraceReport};
 use control_rs_ci::trace::{
@@ -67,9 +69,16 @@ fn run(
     if out.exists() {
         let _ = std::fs::remove_file(out);
     }
+    let snapshot = cache_path(reqs);
     let reqs = read_rows(reqs)?;
     let trace_cfg = TraceConfig::load(config)?;
-    let (links, link_defects) = link_graph(&reqs);
+    let cache = LinkCache::read(&snapshot);
+    let ((links, link_defects), source) =
+        cached_link_graph(&reqs, cache.as_ref());
+    match source {
+        GraphSource::Snapshot => ui::status("Reading", snapshot.display()),
+        GraphSource::Built => ui::status("Building", "link graph"),
+    }
     let (report, defects) = status::derive_with_graph(
         &links,
         link_defects,
