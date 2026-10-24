@@ -14,10 +14,9 @@ use std::path::Path;
 use regex::Regex;
 use serde::Deserialize;
 
-use super::link::{Acyclic, LinkGraph, link_graph};
+use super::link::LinkGraph;
 use super::{
-    CONDITION, DEFINITION, Defect, Defects, QUALIFIER, Row, SCHEMA, normalize,
-    read_text,
+    CONDITION, DEFINITION, Defect, QUALIFIER, Row, SCHEMA, normalize, read_text,
 };
 use crate::error::{GateError, GateResult};
 
@@ -51,9 +50,6 @@ pub const METHODS: [&str; 9] = [
 
 /// A file and line.
 pub(super) type At<'a> = (&'a str, usize);
-
-/// The defects of rows and their acyclic link graph.
-type Checked<'a> = (Defects, LinkGraph<'a, Acyclic>);
 
 /// First row declaring a document ID by document name.
 type DocFirstFile<'a> = BTreeMap<&'a str, &'a Row>;
@@ -663,13 +659,6 @@ fn check_duplicate_document_ids(rows: &[Row], defects: &mut Vec<Defect>) {
 /// The defects in `rows`, sorted by file, then line.
 #[must_use]
 pub fn check(rows: &[Row], rules: &Rules) -> Vec<Defect> {
-    check_with_graph(rows, rules).0
-}
-
-/// The defects in `rows`, sorted by file, then line, and the acyclic link
-/// graph the link checks built.
-#[must_use]
-pub fn check_with_graph<'a>(rows: &'a [Row], rules: &Rules) -> Checked<'a> {
     let mut definitions = Definitions::new();
     let mut condition_defs = Definitions::new();
     for row in rows.iter().filter(|r| r.kind == DEFINITION) {
@@ -687,7 +676,7 @@ pub fn check_with_graph<'a>(rows: &'a [Row], rules: &Rules) -> Checked<'a> {
     check_condition_parents(&conditions, &definitions, &mut defects);
     check_condition_methods(&conditions, rules, &mut defects);
     check_duplicate_document_ids(rows, &mut defects);
-    let graph = check_links(rows, &mut defects);
+    check_links(rows, &mut defects);
 
     for row in rows {
         for id in std::iter::once(&row.id).chain(&row.parents) {
@@ -700,18 +689,16 @@ pub fn check_with_graph<'a>(rows: &'a [Row], rules: &Rules) -> Checked<'a> {
     defects.sort_by(|a, b| {
         (a.file.as_str(), a.line).cmp(&(b.file.as_str(), b.line))
     });
-    (defects, graph)
+    defects
 }
 
-/// Adds the defects of the link conditions in `rows`, targets that resolve to
-/// nothing and links on a cycle, and returns the acyclic link graph.
-fn check_links<'a>(
-    rows: &'a [Row],
-    defects: &mut Vec<Defect>,
-) -> LinkGraph<'a, Acyclic> {
-    let (graph, links) = link_graph(rows);
-    defects.extend(links);
-    graph
+/// Adds the defects of the link conditions in `rows`: targets that resolve to
+/// nothing, and links on a cycle.
+fn check_links(rows: &[Row], defects: &mut Vec<Defect>) {
+    let (graph, resolution) = LinkGraph::resolve(rows);
+    let (_, cycles) = graph.cut_cycles();
+    defects.extend(resolution);
+    defects.extend(cycles);
 }
 
 /// The decision defects of the decision `records` and of the requirement

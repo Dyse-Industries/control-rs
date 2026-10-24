@@ -7,10 +7,8 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use control_rs_ci::GateResult;
-use control_rs_ci::trace::link::cache_path;
 use control_rs_ci::trace::reqs::{
-    Rules, Source, TraceConfig, check_decisions, check_with_graph,
-    scan_markdown,
+    Rules, Source, TraceConfig, check, check_decisions, scan_markdown,
 };
 use control_rs_ci::trace::select::select;
 use control_rs_ci::trace::{
@@ -39,14 +37,11 @@ fn main() -> ExitCode {
     }
 }
 
-/// Scans the selected files, writes their rows to `out` and the snapshot of
-/// their link graph beside it, and returns the defects.
+/// Scans the selected files, writes their rows to `out` and returns the
+/// defects.
 fn run(config_path: &Path, out: &Path) -> GateResult<Defects> {
-    let snapshot = cache_path(out);
-    for stale in [out, snapshot.as_path()] {
-        if stale.exists() {
-            let _ = std::fs::remove_file(stale);
-        }
+    if out.exists() {
+        let _ = std::fs::remove_file(out);
     }
     let config = TraceConfig::load(config_path)?;
     let rules = config.rules(config_path)?;
@@ -77,11 +72,7 @@ fn run(config_path: &Path, out: &Path) -> GateResult<Defects> {
             files.len()
         ),
     );
-    let (found, graph) = check_with_graph(&rows, &rules);
-    defects.extend(found);
-    if let Err(e) = graph.snapshot().write(&snapshot) {
-        ui::warning("Warning", format!("link graph snapshot not written: {e}"));
-    }
+    defects.extend(check(&rows, &rules));
     defects.sort_by(|a, b| {
         (a.file.as_str(), a.line).cmp(&(b.file.as_str(), b.line))
     });
