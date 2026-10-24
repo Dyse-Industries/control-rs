@@ -1,11 +1,11 @@
 //! Discovery, run queue and session state machine for host-side ETS.
 
-use control_rs_ets::comms::{
-    Command as CommCommand, PROTOCOL_VERSION, TestState,
+use control_rs_ets::wire::Param;
+use control_rs_ets::wire::{
+    Command as CommCommand, ExecMode, PROTOCOL_VERSION,
 };
-use control_rs_ets::settings::SettingValue;
 
-use crate::bridge::{BridgeMessage, OwnedTelemetry};
+use crate::bridge::{BridgeMessage, OwnedTelemetry, TestState};
 use crate::runner::TestOutcome;
 
 /// Flag indicating that all `SettingInfo` items (`0..setting_count-1`) have been received.
@@ -43,7 +43,7 @@ pub struct SettingItem {
     /// Doc-comment description of the setting.
     pub description: String,
     /// Current value of the setting.
-    pub value: SettingValue,
+    pub value: Param,
 }
 
 /// Representation of a single test case under discovery.
@@ -139,7 +139,7 @@ pub enum SessionAction {
     /// Request target restart and bridge reconnection.
     PanicRestart,
     /// Send a command packet to the target.
-    Send(CommCommand),
+    Send(CommCommand<'static>),
 }
 
 impl SuiteItem {
@@ -355,10 +355,7 @@ impl SessionState {
         }
         if self.current_running.is_none() {
             self.current_running = Some((suite_id, test_id));
-            Some(SessionAction::Send(CommCommand::RunExecutable {
-                suite_id,
-                test_id,
-            }))
+            Some(SessionAction::Send(run_command(suite_id, test_id)))
         } else {
             self.run_queue.push((suite_id, test_id));
             None
@@ -380,10 +377,7 @@ impl SessionState {
         } else {
             let (next_s, next_t) = self.run_queue.remove(0);
             self.current_running = Some((next_s, next_t));
-            Some(SessionAction::Send(CommCommand::RunExecutable {
-                suite_id: next_s,
-                test_id: next_t,
-            }))
+            Some(SessionAction::Send(run_command(next_s, next_t)))
         }
     }
 
@@ -438,6 +432,7 @@ impl SessionState {
                 message,
                 file,
                 line,
+                ..
             } => self.on_target_panic(&message, &file, line),
             OwnedTelemetry::Log { .. } => Vec::new(),
             OwnedTelemetry::TargetInfo {
@@ -445,6 +440,7 @@ impl SessionState {
                 board_id,
                 core_clock_hz,
                 fpu_flags,
+                ..
             } => {
                 self.on_target_info(TargetInfo {
                     protocol_version,
@@ -458,12 +454,38 @@ impl SessionState {
         }
     }
 
-    /// Handles discovery frames. They are ignored once the run has started.
+    /// Applies a `SettingInfo` / `ParamValue` echo to the suite table (FR-11).
+    fn apply_setting_info(&mut self, telemetry: OwnedTelemetry) {
+        if let OwnedTelemetry::SettingInfo {
+            suite_id,
+            setting_id,
+            name,
+            value,
+            description,
+            ..
+        } = telemetry
+        {
+            self.on_setting_info(
+                suite_id,
+                SettingItem {
+                    setting_id,
+                    name,
+                    description,
+                    value,
+                },
+            );
+        }
+    }
+
+    /// Handles discovery frames. Suite and test catalog entries are ignored once the run has
+    /// started. [`OwnedTelemetry::SettingInfo`] (from `ParamValue`) still applies while
+    /// `Running` so a refused or accepted `Param` write refreshes the host value (FR-11).
     fn handle_catalog(
         &mut self,
         telemetry: OwnedTelemetry,
     ) -> Vec<SessionAction> {
         if self.phase == SessionPhase::Running {
+            self.apply_setting_info(telemetry);
             return Vec::new();
         }
         match telemetry {
@@ -486,21 +508,9 @@ impl SessionState {
                 name,
                 description,
             } => self.on_test_info((suite_id, test_id), name, description),
-            OwnedTelemetry::SettingInfo {
-                suite_id,
-                setting_id,
-                name,
-                value,
-                description,
-            } => self.on_setting_info(
-                suite_id,
-                SettingItem {
-                    setting_id,
-                    name,
-                    description,
-                    value,
-                },
-            ),
+            setting @ OwnedTelemetry::SettingInfo { .. } => {
+                self.apply_setting_info(setting);
+            }
             OwnedTelemetry::DiscoveryComplete => {
                 return self.on_discovery_complete();
             }
@@ -508,6 +518,8 @@ impl SessionState {
             | OwnedTelemetry::MetricReport { .. }
             | OwnedTelemetry::TargetPanic { .. }
             | OwnedTelemetry::TargetInfo { .. }
+            | OwnedTelemetry::TaskSample { .. }
+            | OwnedTelemetry::TeardownReport { .. }
             | OwnedTelemetry::Log { .. } => {}
         }
         Vec::new()
@@ -792,6 +804,18 @@ fn slots_complete(have: usize, count: u16, mask: u64) -> bool {
     mask & expected == expected
 }
 
+/// Builds the command that runs a case in atomic mode.
+#[must_use]
+pub const fn run_command(suite: u16, item: u16) -> CommCommand<'static> {
+    CommCommand::RunExecutable {
+        suite,
+        item,
+        mode: ExecMode::Atomic,
+        max_steps: 0,
+        period_ns: 0,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -800,7 +824,7 @@ mod tests {
     fn matched() -> SessionState {
         let mut s = SessionState::new();
         s.target_info = Some(crate::session::TargetInfo {
-            protocol_version: control_rs_ets::comms::PROTOCOL_VERSION,
+            protocol_version: control_rs_ets::wire::PROTOCOL_VERSION,
             board_id: 0,
             core_clock_hz: 0,
             fpu_flags: 0,
@@ -836,7 +860,10 @@ mod tests {
                 setting_id: s,
                 name: format!("setting_{s}"),
                 description: format!("Desc for setting {s}"),
-                value: SettingValue::U8(u8::try_from(s).unwrap()),
+                value: Param::U8(u8::try_from(s).unwrap()),
+                count: setting_count,
+                min: Param::U8(0),
+                max: Param::U8(u8::MAX),
             });
         }
         frames
@@ -870,8 +897,10 @@ mod tests {
         assert!(matches!(
             *actions.first().unwrap(),
             SessionAction::Send(CommCommand::RunExecutable {
-                suite_id: 0,
-                test_id: 0
+                suite: 0,
+                item: 0,
+                mode: ExecMode::Atomic,
+                ..
             })
         ));
 
@@ -957,8 +986,10 @@ mod tests {
         assert!(matches!(
             *actions.first().unwrap(),
             SessionAction::Send(CommCommand::RunExecutable {
-                suite_id: 0,
-                test_id: 1
+                suite: 0,
+                item: 1,
+                mode: ExecMode::Atomic,
+                ..
             })
         ));
         assert_eq!(state.current_running, Some((0, 1)));
@@ -1015,6 +1046,9 @@ mod tests {
                 message: "assertion failed".to_string(),
                 file: "src/test.rs".to_string(),
                 line: 42,
+                fault_status: 0,
+                suite_id: None,
+                test_id: None,
             },
         ));
         assert_eq!(panic_actions.len(), 2);
@@ -1082,11 +1116,25 @@ mod tests {
                 message: "early boot panic".to_string(),
                 file: "main.rs".to_string(),
                 line: 10,
+                fault_status: 0,
+                suite_id: None,
+                test_id: None,
             },
         ));
         assert!(!state.exit_loop);
         assert_eq!(state.phase, SessionPhase::Recovering);
         assert_eq!(actions.len(), 2);
+    }
+
+    fn target_panic(message: &str) -> OwnedTelemetry {
+        OwnedTelemetry::TargetPanic {
+            message: message.to_string(),
+            file: "t.rs".to_string(),
+            line: 1,
+            fault_status: 0,
+            suite_id: None,
+            test_id: None,
+        }
     }
 
     #[test]
@@ -1113,13 +1161,8 @@ mod tests {
         assert_eq!(state.current_running, Some((0, 1)));
 
         // Panic on case 1 (case 2 remains)
-        let _ = state.handle_message(BridgeMessage::Telemetry(
-            OwnedTelemetry::TargetPanic {
-                message: "boom".to_string(),
-                file: "t.rs".to_string(),
-                line: 1,
-            },
-        ));
+        let _ = state
+            .handle_message(BridgeMessage::Telemetry(target_panic("boom")));
         assert_eq!(state.phase, SessionPhase::Recovering);
         assert!(!state.exit_loop);
 
@@ -1137,8 +1180,10 @@ mod tests {
         assert!(matches!(
             *actions.first().unwrap(),
             SessionAction::Send(CommCommand::RunExecutable {
-                suite_id: 0,
-                test_id: 2
+                suite: 0,
+                item: 2,
+                mode: ExecMode::Atomic,
+                ..
             })
         ));
         assert_eq!(state.phase, SessionPhase::Running);
@@ -1196,36 +1241,39 @@ mod tests {
         assert!(matches!(
             action,
             Some(SessionAction::Send(CommCommand::RunExecutable {
-                suite_id: 0,
-                test_id: 1
+                suite: 0,
+                item: 1,
+                mode: ExecMode::Atomic,
+                ..
             }))
         ));
     }
 
     #[test]
-    fn foreign_protocol_version_ends_session_and_ignores_later_frames() {
+    fn version_mismatch_refused() {
         let mut state = SessionState::new();
         let _ = state.handle_message(BridgeMessage::telemetry(
-            &control_rs_ets::comms::Telemetry::TargetInfo {
-                protocol_version: control_rs_ets::comms::PROTOCOL_VERSION
+            &control_rs_ets::wire::Telemetry::TargetInfo {
+                protocol_version: control_rs_ets::wire::PROTOCOL_VERSION
                     .wrapping_add(1),
                 board_id: 7,
                 core_clock_hz: 600_000_000,
                 fpu_flags: 1,
+                release_source: false,
             },
         ));
         assert_eq!(
             state.protocol_mismatch,
-            Some(control_rs_ets::comms::PROTOCOL_VERSION.wrapping_add(1))
+            Some(control_rs_ets::wire::PROTOCOL_VERSION.wrapping_add(1))
         );
         assert!(state.exit_loop);
         let actions = state.handle_message(BridgeMessage::telemetry(
-            &control_rs_ets::comms::Telemetry::SuiteInfo {
-                suite_id: 0,
+            &control_rs_ets::wire::Telemetry::SuiteInfo {
+                suite: 0,
                 name: "s",
                 description: "",
-                test_count: 0,
-                setting_count: 0,
+                executable_count: 0,
+                param_count: 0,
             },
         ));
         assert!(actions.is_empty());
@@ -1236,7 +1284,7 @@ mod tests {
     fn discovery_without_target_info_is_a_mismatch() {
         let mut state = SessionState::new();
         let _ = state.handle_message(BridgeMessage::telemetry(
-            &control_rs_ets::comms::Telemetry::DiscoveryComplete,
+            &control_rs_ets::wire::Telemetry::DiscoveryComplete,
         ));
         assert_eq!(state.protocol_mismatch, Some(0));
     }
@@ -1245,11 +1293,12 @@ mod tests {
     fn matching_target_info_is_recorded() {
         let mut state = SessionState::new();
         let _ = state.handle_message(BridgeMessage::telemetry(
-            &control_rs_ets::comms::Telemetry::TargetInfo {
-                protocol_version: control_rs_ets::comms::PROTOCOL_VERSION,
+            &control_rs_ets::wire::Telemetry::TargetInfo {
+                protocol_version: control_rs_ets::wire::PROTOCOL_VERSION,
                 board_id: 7,
                 core_clock_hz: 600_000_000,
                 fpu_flags: 1,
+                release_source: false,
             },
         ));
         assert_eq!(state.protocol_mismatch, None);
@@ -1346,8 +1395,10 @@ mod tests {
         assert!(matches!(
             action,
             Some(SessionAction::Send(CommCommand::RunExecutable {
-                suite_id: 0,
-                test_id: 0
+                suite: 0,
+                item: 0,
+                mode: ExecMode::Atomic,
+                ..
             }))
         ));
         assert_eq!(state.run_queue, vec![(0, 1)]);
@@ -1375,7 +1426,10 @@ mod tests {
             setting_id: id,
             name: format!("s{id}"),
             description: String::new(),
-            value: SettingValue::U8(value),
+            value: Param::U8(value),
+            count: 4,
+            min: Param::U8(0),
+            max: Param::U8(u8::MAX),
         };
         feed(
             &mut state,
@@ -1395,8 +1449,43 @@ mod tests {
         let suite = state.suites.first().unwrap();
         assert_eq!(suite.settings.len(), 2);
         let first = suite.settings.iter().find(|s| s.setting_id == 0).unwrap();
-        assert!(matches!(first.value, SettingValue::U8(5)));
+        assert!(matches!(first.value, Param::U8(5)));
         assert!(suite.is_ready());
+    }
+
+    #[test]
+    fn a_param_echo_updates_settings_while_running() {
+        let mut state = matched();
+        feed(&mut state, make_test_suite_telemetry(0, "S", 0, 1));
+        feed(&mut state, vec![OwnedTelemetry::DiscoveryComplete]);
+        assert_eq!(state.phase, SessionPhase::Running);
+        let setting = state
+            .suites
+            .first_mut()
+            .and_then(|s| s.settings.first_mut())
+            .expect("discovered setting");
+        assert!(matches!(setting.value, Param::U8(0)));
+        // Optimistic host edit then target echo of the stored (refused) value.
+        setting.value = Param::U8(99);
+        feed(
+            &mut state,
+            vec![OwnedTelemetry::SettingInfo {
+                suite_id: 0,
+                setting_id: 0,
+                name: "setting_0".to_string(),
+                description: "Desc for setting 0".to_string(),
+                value: Param::U8(0),
+                count: 1,
+                min: Param::U8(0),
+                max: Param::U8(u8::MAX),
+            }],
+        );
+        let echoed = state
+            .suites
+            .first()
+            .and_then(|s| s.settings.first())
+            .expect("setting after echo");
+        assert!(matches!(echoed.value, Param::U8(0)));
     }
 
     #[test]

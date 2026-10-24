@@ -22,10 +22,9 @@ use std::time::Duration;
 use control_rs_ci::cli::{USAGE_EXIT, arg_spelling};
 use control_rs_ci::ets::{TargetResult, case_line};
 use control_rs_ci::ui;
-use control_rs_ets::comms::TestState;
 use control_rs_ets_host::target::parse_targets;
 use control_rs_ets_host::{
-    RunOptions, RunRecord, Target, build_target_elf,
+    RunOptions, RunRecord, Target, TestState, build_target_elf,
     run_headless_ets_with_options,
 };
 

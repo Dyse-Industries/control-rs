@@ -114,12 +114,12 @@ record and its status.
 
 [Overview](ets/ets-overview.md)
 
-| Design                                                     | Status | Implementation                   |
-|:-----------------------------------------------------------|:-------|:---------------------------------|
-| [Embedded Test Server](ets/embedded-test-server-design.md) | Stale  | `control-rs-ets/src/server.rs`   |
-| [`HostComms`](ets/host-comm-design.md)                     | Stale  | `control-rs-ets/src/comms.rs`    |
-| [`CPUProfiler`](ets/cpu-profiler-design.md)                | Stale  | `control-rs-ets/src/profiler.rs` |
-| [Exportable Test Suites](ets/test-suite-design.md)         | Stale  | `src/**/tests/` (`ets` feature)  |
+| Design | Status | Implementation |
+|:--|:--|:--|
+| [Embedded Test Server](ets/embedded-test-server-design.md) | Approved | `control-rs-ets/src/server.rs` |
+| [ETS Link](ets/ets-link-design.md) | Draft | `control-rs-ets/src/link/`, `control-rs-ets/src/wire.rs` |
+| [`CPUProfiler`](ets/cpu-profiler-design.md) | Approved | `control-rs-ets/src/profiler.rs` |
+| [Exportable Test Suites](ets/test-suite-design.md) | Approved | `src/**/tests/` (`ets` feature) |
 
 ## macros
 

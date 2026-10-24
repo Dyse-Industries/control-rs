@@ -27,13 +27,16 @@ work follows both tracks.
     - [x] **PR3-4**: CI Gate — Requirement Traceability (`trace`) (
       [requirement-traceability](vv/requirement-traceability-design.md))
     - [x] **PR3-5**: Technical Debt & Verification Hardening
-      ([#67](https://github.com/Dyse-Industries/control-rs/pull/67); [ci](ci/ci-design.md) rev 1.33)
+      ([#67](https://github.com/Dyse-Industries/control-rs/pull/67); [ci](ci/ci-design.md)
+      rev 1.33)
         - [x] Exclusive `pre`/`post` stages with the `fetch` gate; groups in
           declaration order; bounded concurrency (`max_jobs`)
         - [x] Configuration validation, versioned gate outcomes, budget-safe
           report, fail-closed `valgrind`, retired schema and dead code removed
-    - [x] **PR3-6**: Formal Verification & Dynamic Analysis Gates (`kani`, `miri`)
-      ([#69](https://github.com/Dyse-Industries/control-rs/pull/69); gates failing at merge; repaired in PR3-7)
+    - [x] **PR3-6**: Formal Verification & Dynamic Analysis Gates (`kani`,
+      `miri`)
+      ([#69](https://github.com/Dyse-Industries/control-rs/pull/69); gates
+      failing at merge; repaired in PR3-7)
     - [x] **PR3-7**: Main Repair — Patch Failing Gates
       ([#74](https://github.com/Dyse-Industries/control-rs/pull/74))
         - Reproduce each failing gate on `main` with `cargo ci` and patch it
@@ -43,7 +46,8 @@ work follows both tracks.
           `control-rs-trace-macros`, `trace-marks` and `trace/marks.rs`
     - [x] **PR3-9**: Workspace Audit & Cleanup
       ([#75](https://github.com/Dyse-Industries/control-rs/pull/75); mutant
-      resolution in [#68](https://github.com/Dyse-Industries/control-rs/pull/68))
+      resolution
+      in [#68](https://github.com/Dyse-Industries/control-rs/pull/68))
         - Review PR3 against its design docs, reconcile docs, gate config and
           tests, and remove stray additions
     - [x] **PR3-10**: ADRs & Requirement Tracer Updates
@@ -87,7 +91,7 @@ until its design is approved, implemented and `cargo ci` is green.
 
 - [ ] **PR5**: Modern Control Toolbox (`src/modern_control`)
     - Design drafted (`control-toolboxes/modern-control-design.md`); needs the
-      Gehrd, Orghr, Hseqr, Trsen and Trsyl kernels (see PR11)
+      `Gehrd`, `Orghr`, `Hseqr`, `Trsen` and `Trsyl` kernels (see PR11)
 - [ ] **PR6**: Robust Control Analysis (`src/robust_control`)
     - Design drafted (`control-toolboxes/robust-control-design.md`); needs
       `modern_control::schur` from PR5
@@ -95,7 +99,7 @@ until its design is approved, implemented and `cargo ci` is green.
     - Design drafted (`control-toolboxes/nonlinear-control-design.md`)
 - [ ] **PR8**: System Identification (SysID) & Frequency Estimation
   (`src/sysid`)
-    - Design drafted (`control-toolboxes/sysid-design.md`); needs Gesvd and the
+    - Design drafted (`control-toolboxes/sysid-design.md`); needs `Gesvd` and the
       PR5 Schur decomposition
 - [ ] **PR9**: Safety Validation & Run-Time Assurance (`src/validation`)
     - Design drafted (`vv/validation-tools-design.md`)
