@@ -25,6 +25,9 @@ directly via the root workspace.
 | [`subprograms/`](subprograms/)                         | Standalone crates | Architecture backends that implement `control_rs::math::subprograms` | Inside each crate                           |
 | [`qemu/`](qemu/)                                       | Firmware package  | Bare-metal ETS runners (Cortex-M7, RISC-V)                           | `examples/qemu/` or `cargo qemu`            |
 | [`teensy4/`](teensy4/)                                 | Firmware package  | Teensy 4.0 ETS over USB CDC                                          | `examples/teensy4/` or `cargo teensy`       |
+| [`esp32c6/`](esp32c6/)                                 | Firmware package  | ESP32-C6 (RISC-V) ETS over native USB Serial/JTAG                    | `examples/esp32c6/`                         |
+| [`uno_r4/`](uno_r4/)                                   | Firmware package  | Arduino Uno R4 Minima (RA4M1 Cortex-M4) ETS over the SCI2 UART       | `examples/uno_r4/`                          |
+| [`xiao_nrf52840/`](xiao_nrf52840/)                     | Firmware package  | Seeed XIAO nRF52840 (Cortex-M4F) ETS over USBD CDC-ACM               | `examples/xiao_nrf52840/`                   |
 
 ---
 

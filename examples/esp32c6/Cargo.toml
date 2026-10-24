@@ -1,0 +1,17 @@
+[package]
+name = "esp32c6"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+control-rs = { path = "../../", default-features = false }
+control-rs-ets = { path = "../../control-rs-ets", default-features = false }
+control-rs-macros = { path = "../../control-rs-macros" }
+postcard = { version = "1.0", default-features = false }
+serde = { version = "1.0", default-features = false, features = ["derive"] }
+esp-hal = { version = "1.1.2", default-features = false, features = ["esp32c6", "unstable", "rt"] }
+esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32c6"] }
+riscv-rt = "0.16.0"
+riscv = "0.10"
