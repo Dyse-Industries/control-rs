@@ -376,7 +376,7 @@ jobs:
   trace:
     name: Requirement Traceability
     runs-on: ubuntu-latest
-    needs: [ lint, build_test, kani ]
+    needs: [ lint, build_test, kani, audit ]
     if: always()
     steps:
       - uses: actions/checkout@v4
@@ -393,6 +393,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: ci-artifacts-build_test
+          path: target/ci-artifacts/
+
+      - name: Download audit artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ci-artifacts-audit
           path: target/ci-artifacts/
 
       - name: Download kani artifacts

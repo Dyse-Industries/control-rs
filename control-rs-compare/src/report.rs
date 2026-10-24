@@ -49,7 +49,6 @@ pub struct ValidationReport {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct SuiteReport {
     /// Canonical suite name.
-    #[serde(default)]
     pub name: String,
 
     /// Suite verdict ("Pass" or "Fail").
@@ -89,7 +88,6 @@ pub struct ComparisonFinding {
     pub policy: String,
 
     /// Verdict for this signal comparison ("pass" or "fail").
-    #[serde(default)]
     pub verdict: String,
 
     /// Individual method evaluation findings.

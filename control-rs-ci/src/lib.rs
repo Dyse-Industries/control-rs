@@ -441,7 +441,7 @@ pub fn run_pipeline(
         selected.iter().map(|g| g.name().to_string()).collect();
     // Every result is rewritten or absent after this run, so a result from
     // an earlier run can never stand in for a gate that did not run now.
-    remove_results(&out_dir);
+    remove_results(&out_dir, &executed_gate_names);
 
     // A disabled gate selected by name records `Skipped` and does not run.
     let (disabled, active_gates): (GateList, GateList) = selected
@@ -584,20 +584,11 @@ fn selected_with_passthrough(
         .collect())
 }
 
-/// Removes every `<gate>.result.json` in `out_dir`.
-fn remove_results(out_dir: &Path) {
-    let Ok(entries) = std::fs::read_dir(out_dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|name| name.ends_with(gate::RESULT_SUFFIX))
-        {
-            let _ = std::fs::remove_file(&path);
-        }
+/// Removes `<gate>.result.json` in `out_dir` for each gate about to execute.
+fn remove_results(out_dir: &Path, gates: &[String]) {
+    for gate in gates {
+        let path = out_dir.join(format!("{gate}{}", gate::RESULT_SUFFIX));
+        let _ = std::fs::remove_file(path);
     }
 }
 

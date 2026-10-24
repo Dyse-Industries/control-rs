@@ -1356,6 +1356,12 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
     }
 
     #[test]
+    fn non_doc_status_targeting_own_document_name_is_not_a_doc_status_defect() {
+        let source = "# Widget (widget)\n\n- **FR-1 — Size**: The widget shall report.\n\n| VC-1.1 | FR-1 | `gate` | `widget` | Other |\n";
+        assert_eq!(messages(source, &rules()), Vec::<String>::new());
+    }
+
+    #[test]
     fn a_method_table_names_an_automated_method() {
         let accepted = |tail: &str| {
             let text = format!("{KEYS}retired = []{tail}");

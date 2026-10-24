@@ -530,41 +530,33 @@ fn parse_cover_summary(line: &str) -> Option<CoverSummary> {
 
 fn record_compare_suite(log: &mut ResultLog, suite: &SuiteReport) {
     let suite_name = &suite.name;
-    if !suite_name.is_empty() {
-        if !suite.status.is_empty() {
-            let passed = suite.status.eq_ignore_ascii_case("pass")
-                || suite.status.eq_ignore_ascii_case("passed")
-                || suite.status.eq_ignore_ascii_case("ok");
-            log.record(suite_name.clone(), passed, false);
-        }
+    if !suite_name.is_empty() && !suite.status.is_empty() {
+        let passed = suite.status.eq_ignore_ascii_case("pass")
+            || suite.status.eq_ignore_ascii_case("passed")
+            || suite.status.eq_ignore_ascii_case("ok");
+        log.record(suite_name.clone(), passed, false);
+    }
 
-        for cmp in &suite.comparisons {
-            let passed = if cmp.verdict.eq_ignore_ascii_case("pass")
-                || cmp.verdict.eq_ignore_ascii_case("passed")
-                || cmp.verdict.eq_ignore_ascii_case("ok")
-            {
-                true
-            } else if cmp.verdict.eq_ignore_ascii_case("fail")
-                || cmp.verdict.eq_ignore_ascii_case("failed")
-                || cmp.verdict.eq_ignore_ascii_case("error")
-            {
-                false
-            } else {
-                continue;
-            };
+    for cmp in &suite.comparisons {
+        let passed = cmp.verdict.eq_ignore_ascii_case("pass")
+            || cmp.verdict.eq_ignore_ascii_case("passed")
+            || cmp.verdict.eq_ignore_ascii_case("ok");
 
-            if !cmp.signal.is_empty() {
+        if !cmp.signal.is_empty() {
+            if !suite_name.is_empty() {
                 log.record(
                     format!("{suite_name}::{}", cmp.signal),
                     passed,
                     false,
                 );
-                log.record(cmp.signal.clone(), passed, false);
             }
-            if !cmp.key.is_empty() {
+            log.record(cmp.signal.clone(), passed, false);
+        }
+        if !cmp.key.is_empty() {
+            if !suite_name.is_empty() {
                 log.record(format!("{suite_name}::{}", cmp.key), passed, false);
-                log.record(cmp.key.clone(), passed, false);
             }
+            log.record(cmp.key.clone(), passed, false);
         }
     }
 }
@@ -1703,8 +1695,18 @@ mod tests {
         assert_eq!(log.outcomes.get("matrix_dense"), Some(&true));
         assert_eq!(log.outcomes.get("matrix.inv"), Some(&true));
         assert_eq!(log.outcomes.get("matrix_dense::matrix.inv"), Some(&true));
+        assert_eq!(log.outcomes.get("matrix.inv/scipy.rust"), Some(&true));
+        assert_eq!(
+            log.outcomes.get("matrix_dense::matrix.inv/scipy.rust"),
+            Some(&true)
+        );
         assert_eq!(log.outcomes.get("matrix.det"), Some(&false));
         assert_eq!(log.outcomes.get("matrix_dense::matrix.det"), Some(&false));
+        assert_eq!(log.outcomes.get("matrix.det/scipy.rust"), Some(&false));
+        assert_eq!(
+            log.outcomes.get("matrix_dense::matrix.det/scipy.rust"),
+            Some(&false)
+        );
     }
 
     #[test]
@@ -1753,6 +1755,56 @@ mod tests {
     }
 
     #[test]
+    fn compare_missing_required_name_or_verdict_fails_deserialization() {
+        // Missing "name" on a suite fails deserialization, resulting in an empty log.
+        let missing_name = r#"{"suites":[
+            {"name":"suite_a","status":"Pass","comparisons":[{"signal":"torque","verdict":"pass"}]},
+            {"comparisons":[{"signal":"torque","verdict":"fail"}]}
+        ]}"#;
+        let log = parse_compare_results(missing_name);
+        assert_eq!(lookup(&log, "torque", false), Lookup::Absent);
+
+        // Missing "verdict" on a comparison fails deserialization, resulting in an empty log.
+        let missing_verdict = r#"{"suites":[
+            {"name":"suite_a","status":"Pass","comparisons":[
+                {"signal":"torque","verdict":"pass"},
+                {"signal":"torque"}
+            ]}
+        ]}"#;
+        let log = parse_compare_results(missing_verdict);
+        assert_eq!(lookup(&log, "torque", false), Lookup::Absent);
+    }
+
+    #[test]
+    fn compare_unknown_verdict_or_empty_suite_name_fails_closed() {
+        let text = r#"{"suites":[
+            {"name":"suite_a","status":"Pass","comparisons":[{"signal":"torque","verdict":"pass"}]},
+            {"name":"","status":"Pass","comparisons":[{"signal":"torque","verdict":"fail"}]}
+        ]}"#;
+        let log = parse_compare_results(text);
+        assert!(log.ambiguous.contains("torque"));
+
+        let unknown_verdict = r#"{"suites":[
+            {"name":"suite_a","status":"Pass","comparisons":[
+                {"signal":"torque","verdict":"pass"},
+                {"signal":"torque","verdict":"unknown"}
+            ]}
+        ]}"#;
+        let log = parse_compare_results(unknown_verdict);
+        assert!(log.ambiguous.contains("torque"));
+        assert!(log.ambiguous.contains("suite_a::torque"));
+
+        let single_unknown = r#"{"suites":[
+            {"name":"suite_a","status":"Pass","comparisons":[
+                {"signal":"speed","verdict":"pending"}
+            ]}
+        ]}"#;
+        let log_single = parse_compare_results(single_unknown);
+        assert_eq!(log_single.outcomes.get("speed"), Some(&false));
+        assert_eq!(log_single.outcomes.get("suite_a::speed"), Some(&false));
+    }
+
+    #[test]
     fn junit_results_are_parsed() {
         let text = r#"<?xml version="1.0" encoding="UTF-8"?>
         <testsuites>
@@ -1767,6 +1819,9 @@ mod tests {
                 </testcase>
                 <testcase name="test_skip" classname="pkg.ClassA">
                     <skipped message="ignored"/>
+                </testcase>
+                <testcase name="test_skip_start" classname="pkg.ClassA">
+                    <skipped>reason with start/end tag</skipped>
                 </testcase>
             </testsuite>
         </testsuites>"#;
@@ -1789,6 +1844,7 @@ mod tests {
 
         // Skipped test is omitted (remains `Unrun`)
         assert_eq!(log.outcomes.get("test_skip"), None);
+        assert_eq!(log.outcomes.get("test_skip_start"), None);
     }
 
     #[test]
