@@ -4,12 +4,11 @@
 //! - `Pass`: automated method, every target recorded as passed.
 //! - `Fail`: automated method, any target recorded as failed (fails gate).
 //! - `Unrun`: automated method, any target absent from its result log (fails gate).
-//! - `Uncovered`: automated method and no target named (fails gate).
-//! - `Review`: method outside the automated methods; awaits sign-off.
-//! - `Deferred`: method `deferred`; verification is planned for a later phase.
+//! - `Uncovered`: no target named (fails gate).
 //!
-//! A requirement takes the worst status among its conditions in order:
-//! `Fail` > `Unrun` > `Uncovered` > `Deferred` > `Review` > `Pass`.
+//! `doc-status` and `link` conditions take the status of what they name. A
+//! requirement takes the worst status among its conditions in order:
+//! `Fail` > `Unrun` > `Uncovered` > `Pass`.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
@@ -20,13 +19,54 @@ use serde::{Deserialize, Serialize};
 use super::link::{
     Acyclic, GraphFormat, LinkGraph, LinkStatuses, RequirementMap, link_graph,
 };
-use super::reqs::{
-    AUTOMATED_METHODS, DEFERRED_METHOD as DEFERRED, LINK_METHOD, TraceConfig,
-};
+use super::reqs::{DecisionRules, RecordStatus, TraceConfig};
+use super::select::select;
 use super::{
-    CONDITION, DEFINITION, Defect, Defects, Row, SCHEMA, read_text, write_file,
+    CONDITION, DEFINITION, Defect, Defects, QUALIFIER, Row, SCHEMA, read_text,
+    write_file,
 };
 use crate::error::GateResult;
+use crate::gate::{GateOutcome, RESULT_SUFFIX, Verdict};
+use control_rs_compare::ValidationReport;
+use control_rs_compare::report::SuiteReport;
+
+/// The method whose conditions verify that quality gates succeeded.
+pub(crate) const GATE: TraceCheckMethod = TraceCheckMethod {
+    name: "gate",
+    check: check_gate,
+};
+
+/// The method whose conditions take the status of the link graph.
+pub(crate) const LINK: TraceCheckMethod = TraceCheckMethod {
+    name: "link",
+    check: check_link,
+};
+
+/// Every verification method; no other list of method names exists.
+pub(crate) const METHODS: [TraceCheckMethod; 7] = [
+    TraceCheckMethod {
+        name: "libtest",
+        check: check_libtest,
+    },
+    TraceCheckMethod {
+        name: "kani",
+        check: check_kani,
+    },
+    TraceCheckMethod {
+        name: "compare",
+        check: check_compare,
+    },
+    TraceCheckMethod {
+        name: "junit",
+        check: check_junit,
+    },
+    GATE,
+    LINK,
+    TraceCheckMethod {
+        name: "doc-status",
+        check: check_doc_status,
+    },
+];
 
 /// A report and its defects.
 pub type Derived = (TraceReport, Defects);
@@ -46,20 +86,68 @@ type CoverSummary = (usize, usize);
 /// Map of test/harness identifier to pass/fail.
 type TestResultMap = HashMap<String, bool>;
 
-/// Map from method name to its parsed result log.
-type MethodResultMap = HashMap<String, ResultLog>;
+/// Parsed result log of each method whose artifact was read; `None` when the
+/// artifact is missing.
+type ResultCache = HashMap<&'static str, Option<ResultLog>>;
+
+/// Result of attempting to load a quality gate outcome artifact.
+#[derive(Debug, Clone)]
+enum GateLoadOutcome {
+    Missing,
+    Invalid(String),
+    Loaded(GateOutcome),
+}
+
+/// Cached outcome of quality gates by target slug.
+type GateCache = HashMap<String, GateLoadOutcome>;
+
+/// File of each traced document, by document name.
+type DocFiles<'a> = BTreeMap<&'a str, &'a str>;
 
 /// Evaluated conditions by parent requirement ID.
 type ByParent<'a> = HashMap<&'a str, Vec<ConditionStatus>>;
 
-/// Evaluated conditions, pending reviews, deferred conditions and the
-/// requirement statuses of the link graph.
-type ConditionEvalResult<'a> = (
-    Vec<ConditionStatus>,
-    Vec<ReviewCondition>,
-    Vec<ReviewCondition>,
-    RequirementMap<'a>,
-);
+/// Evaluated conditions and the requirement statuses of the link graph.
+type ConditionEvalResult<'a> = (Vec<ConditionStatus>, RequirementMap<'a>);
+
+/// Outcome and status of one `gate` target.
+type GateTargetEval = (ItemOutcome, Status);
+
+/// Outcome and status of one `doc-status` target.
+type DocTargetEval = (ItemOutcome, Status);
+
+/// The status of a condition row of one method.
+type CheckFn = fn(&Row, &mut StatusCtx<'_>) -> ConditionStatus;
+
+/// Parses the text of a result artifact.
+type ParseFn = fn(&str) -> ResultLog;
+
+/// Outcomes and statuses of the targets of one `gate` condition.
+type GateTargets = (Vec<ItemOutcome>, Vec<Status>);
+
+/// Outcomes and statuses of the targets of one `doc-status` condition.
+type DocTargets = (Vec<ItemOutcome>, Vec<Status>);
+
+/// Stack of `JUnit` test suite names.
+type SuiteStack = Vec<Option<String>>;
+
+/// Target context when recording a `JUnit` test case.
+#[derive(Debug, Clone, Copy)]
+struct JunitCaseCtx<'a> {
+    name: &'a str,
+    class: Option<&'a str>,
+    suite: Option<&'a str>,
+}
+
+/// State of an active `<testcase>` element being processed.
+#[derive(Debug)]
+struct ActiveTestCase {
+    name: String,
+    classname: Option<String>,
+    suite: Option<String>,
+    has_failure: bool,
+    is_skipped: bool,
+}
 
 /// What a result log says about one target.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,11 +174,7 @@ enum Lookup {
 pub enum Status {
     /// All targets passed verification.
     Pass,
-    /// Method outside the automated methods; awaits sign-off.
-    Review,
-    /// Method `deferred`; verification is planned for a later phase.
-    Deferred,
-    /// Automated method and no target named; fails the gate.
+    /// No target named; fails the gate.
     Uncovered,
     /// Automated method and a target has no recorded result; fails the gate.
     Unrun,
@@ -138,25 +222,10 @@ pub struct RequirementStatus {
     pub conditions: Vec<ConditionStatus>,
 }
 
-/// A review condition awaiting sign-off, or a deferred condition.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ReviewCondition {
-    /// Qualified condition ID.
-    pub id: String,
-    /// Parent requirement IDs.
-    pub parents: Vec<String>,
-    /// Verification method.
-    pub method: String,
-    /// Path of the defining document.
-    pub file: String,
-    /// 1-based line number of the condition row.
-    pub line: usize,
-}
-
-/// Interpreter warning emitted during test analysis.
+/// Non-fatal warning emitted during status derivation.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InterpreterWarning {
-    /// Warning code (`W-2` or `W-3`).
+    /// Warning code (`W-2`, `W-3` or `W-4`).
     pub code: String,
     /// Path of the defining document.
     pub file: String,
@@ -180,13 +249,55 @@ pub struct ResultLog {
     binaries: BTreeSet<String>,
 }
 
+/// The parsed artifact of a method, `None` when it is missing.
+#[derive(Clone, Copy)]
+struct Artifact<'m> {
+    method: &'m ArtifactMethod,
+    results: Option<&'m ResultLog>,
+}
+
+/// A method whose targets are identifiers in its result artifact.
+struct ArtifactMethod {
+    /// The method name, which keys `[method.<name>]`.
+    name: &'static str,
+    /// Parses the artifact.
+    parse: ParseFn,
+    /// Whether a target may match without its first `::` segment.
+    strip: bool,
+}
+
+/// The fixed pattern that reads a design document's status badge.
+struct DocumentMetaPatterns {
+    status: Option<regex::Regex>,
+}
+
+/// A verification method a condition row may name.
+pub(crate) struct TraceCheckMethod {
+    /// The method as a condition row writes it.
+    pub name: &'static str,
+    /// The status of a condition row of this method.
+    pub check: CheckFn,
+}
+
 /// Context for condition status derivation across a trace run.
-struct StatusCtx<'a> {
+pub(crate) struct StatusCtx<'a> {
     config: &'a TraceConfig,
-    result_cache: &'a MethodResultMap,
+    base: &'a Path,
+    results: ResultCache,
+    gates: GateCache,
     interpreter_results: Option<&'a ResultLog>,
+    documents: DocFiles<'a>,
+    decisions: Option<DecisionRules>,
+    patterns: DocumentMetaPatterns,
     defects: &'a mut Defects,
     warnings: &'a mut Vec<InterpreterWarning>,
+}
+
+/// Resolved target document or decision state for `doc-status`.
+struct TargetDocState {
+    status: Option<String>,
+    passed: bool,
+    draft: bool,
 }
 
 /// `trace-report.json`.
@@ -198,24 +309,9 @@ pub struct TraceReport {
     pub counts: StatusCounts,
     /// One entry per requirement, in the order of their first definition.
     pub requirements: Vec<RequirementStatus>,
-    /// Review conditions awaiting sign-off.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub review: Vec<ReviewCondition>,
-    /// Conditions whose verification is deferred.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub deferred: Vec<ReviewCondition>,
     /// Non-fatal interpreter warnings.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<InterpreterWarning>,
-}
-
-impl From<TestResultMap> for ResultLog {
-    fn from(outcomes: TestResultMap) -> Self {
-        Self {
-            outcomes,
-            ..Self::default()
-        }
-    }
 }
 
 impl ResultLog {
@@ -360,10 +456,25 @@ pub fn parse_libtest_results(text: &str) -> ResultLog {
     log
 }
 
-/// Parses Kani bounded model checking output.
+/// Parses Kani bounded model checking output into a [`ResultLog`].
+///
+/// Each `Checking harness <path>...` block maps to one identifier. The harness
+/// passes only when Kani reports `VERIFICATION:- SUCCESSFUL` and every evaluated
+/// cover property is satisfied. A harness name recorded more than once with
+/// different outcomes is ambiguous and becomes a `Fail` defect at lookup.
+///
+/// # Arguments
+/// * `text` - Kani stdout or a saved `kani.log` artifact.
+///
+/// # Returns
+/// A [`ResultLog`] keyed by harness path. Identical repeats keep the first
+/// outcome; conflicting repeats mark the key ambiguous.
+///
+/// # Panics
+/// This function does not panic.
 #[must_use]
-pub fn parse_kani_results(text: &str) -> TestResultMap {
-    let mut results = HashMap::new();
+pub fn parse_kani_results(text: &str) -> ResultLog {
+    let mut log = ResultLog::default();
     let mut current_harness: Option<String> = None;
     let mut harness_lines: Vec<&str> = Vec::new();
 
@@ -391,7 +502,7 @@ pub fn parse_kani_results(text: &str) -> TestResultMap {
         if let Some(rest) = trimmed.strip_prefix("Checking harness ") {
             if let Some(prev) = current_harness.take() {
                 let passed = evaluate_harness(&harness_lines);
-                results.insert(prev, passed);
+                log.record(prev, passed, false);
                 harness_lines.clear();
             }
             let harness_name = rest.trim_end_matches('.').trim().to_string();
@@ -402,9 +513,9 @@ pub fn parse_kani_results(text: &str) -> TestResultMap {
     }
     if let Some(prev) = current_harness {
         let passed = evaluate_harness(&harness_lines);
-        results.insert(prev, passed);
+        log.record(prev, passed, false);
     }
-    results
+    log
 }
 
 fn parse_cover_summary(line: &str) -> Option<CoverSummary> {
@@ -417,61 +528,268 @@ fn parse_cover_summary(line: &str) -> Option<CoverSummary> {
     Some((m, n))
 }
 
-/// Parses verbose `pytest` output (`<file>::<test> PASSED|FAILED|ERROR`).
-#[must_use]
-pub fn parse_pytest_results(text: &str) -> TestResultMap {
-    let mut results = HashMap::new();
-    for line in text.lines() {
-        let mut words = line.split_whitespace();
-        let (Some(name), Some(outcome)) = (words.next(), words.next()) else {
-            continue;
-        };
-        if !name.contains("::") {
-            continue;
-        }
-        match outcome {
-            "PASSED" => results.insert(name.to_string(), true),
-            "FAILED" | "ERROR" => results.insert(name.to_string(), false),
-            _ => None,
-        };
+fn record_compare_suite(log: &mut ResultLog, suite: &SuiteReport) {
+    let suite_name = &suite.name;
+    if !suite_name.is_empty() && !suite.status.is_empty() {
+        let passed = suite.status.eq_ignore_ascii_case("pass")
+            || suite.status.eq_ignore_ascii_case("passed")
+            || suite.status.eq_ignore_ascii_case("ok");
+        log.record(suite_name.clone(), passed, false);
     }
-    results
+
+    for cmp in &suite.comparisons {
+        let passed = cmp.verdict.eq_ignore_ascii_case("pass")
+            || cmp.verdict.eq_ignore_ascii_case("passed")
+            || cmp.verdict.eq_ignore_ascii_case("ok");
+
+        if !cmp.signal.is_empty() {
+            if !suite_name.is_empty() {
+                log.record(
+                    format!("{suite_name}::{}", cmp.signal),
+                    passed,
+                    false,
+                );
+            }
+            log.record(cmp.signal.clone(), passed, false);
+        }
+        if !cmp.key.is_empty() {
+            if !suite_name.is_empty() {
+                log.record(format!("{suite_name}::{}", cmp.key), passed, false);
+            }
+            log.record(cmp.key.clone(), passed, false);
+        }
+    }
 }
 
-/// Parses Google Test output (`[       OK ] Suite.Case`, `[  FAILED  ] Suite.Case`).
+/// Parses cross-validation comparison results (`cross-val-report.json`) into a [`ResultLog`].
+///
+/// Records suite names, `<suite>::<signal>`, `<suite>::<key>`, signal names, and comparison keys.
+/// A suite passes when its status is `"Pass"`. A comparison passes when its verdict is `"pass"`.
+/// Conflicting records for the same key are marked ambiguous.
+///
+/// # Arguments
+/// * `json_str` - JSON string of cross-validation results or a saved `cross-val-report.json` artifact.
+///
+/// # Returns
+/// A [`ResultLog`] keyed by suite and comparison identifiers.
+///
+/// # Panics
+/// This function does not panic.
 #[must_use]
-pub fn parse_gtest_results(text: &str) -> TestResultMap {
-    let mut results = HashMap::new();
-    for line in text.lines() {
-        let Some((tag, rest)) =
-            line.strip_prefix('[').and_then(|rest| rest.split_once(']'))
-        else {
-            continue;
-        };
-        let Some(name) = rest.split_whitespace().next() else {
-            continue;
-        };
-        if !name.contains('.') {
-            continue;
+pub fn parse_compare_results(json_str: &str) -> ResultLog {
+    let mut log = ResultLog::default();
+    if let Ok(report) = serde_json::from_str::<ValidationReport>(json_str) {
+        for suite in &report.suites {
+            record_compare_suite(&mut log, suite);
         }
-        match tag.trim() {
-            "OK" => results.insert(name.to_string(), true),
-            "FAILED" => results.insert(name.to_string(), false),
-            _ => None,
-        };
+    } else if let Ok(suites) =
+        serde_json::from_str::<Vec<SuiteReport>>(json_str)
+    {
+        for suite in &suites {
+            record_compare_suite(&mut log, suite);
+        }
     }
-    results
+    log
 }
 
-/// What `log` records for `target`: an exact identifier, or the identifier
-/// without its leading crate segment, which only a log without binary
-/// headers records.
-fn lookup(log: &ResultLog, target: &str) -> Lookup {
+fn get_xml_attr(
+    e: &quick_xml::events::BytesStart<'_>,
+    key: &str,
+) -> Option<String> {
+    for attr in e.attributes().flatten() {
+        if attr.key.local_name().as_ref() == key
+            && let Ok(val) =
+                attr.normalized_value(quick_xml::XmlVersion::Implicit1_0)
+        {
+            return Some(val.into_owned());
+        }
+    }
+    None
+}
+
+fn record_junit_case(log: &mut ResultLog, ctx: JunitCaseCtx<'_>, passed: bool) {
+    log.record(ctx.name.to_string(), passed, false);
+    if let Some(cls) = ctx.class {
+        log.record(format!("{cls}::{}", ctx.name), passed, false);
+        log.record(format!("{cls}.{}", ctx.name), passed, false);
+    }
+    if let Some(suite) = ctx.suite {
+        log.record(format!("{suite}::{}", ctx.name), passed, false);
+        if let Some(cls) = ctx.class {
+            log.record(format!("{suite}::{cls}::{}", ctx.name), passed, false);
+        }
+    }
+}
+
+fn handle_junit_start(
+    e: &quick_xml::events::BytesStart<'_>,
+    suite_stack: &mut SuiteStack,
+    active_case: &mut Option<ActiveTestCase>,
+) {
+    match e.local_name().as_ref() {
+        "testsuite" => suite_stack.push(get_xml_attr(e, "name")),
+        "testcase" => {
+            let name = get_xml_attr(e, "name");
+            let classname = get_xml_attr(e, "classname");
+            let suite = suite_stack
+                .iter()
+                .rev()
+                .find_map(|s| s.as_deref())
+                .map(str::to_string);
+            if let Some(name) = name {
+                *active_case = Some(ActiveTestCase {
+                    name,
+                    classname,
+                    suite,
+                    has_failure: false,
+                    is_skipped: false,
+                });
+            }
+        }
+        "failure" | "error" => {
+            if let Some(case) = active_case {
+                case.has_failure = true;
+            }
+        }
+        "skipped" => {
+            if let Some(case) = active_case {
+                case.is_skipped = true;
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_junit_empty(
+    e: &quick_xml::events::BytesStart<'_>,
+    suite_stack: &SuiteStack,
+    active_case: &mut Option<ActiveTestCase>,
+    log: &mut ResultLog,
+) {
+    match e.local_name().as_ref() {
+        "testcase" => {
+            if let Some(name) = get_xml_attr(e, "name") {
+                let classname = get_xml_attr(e, "classname");
+                let suite = suite_stack.iter().rev().find_map(|s| s.as_deref());
+                record_junit_case(
+                    log,
+                    JunitCaseCtx {
+                        name: &name,
+                        class: classname.as_deref(),
+                        suite,
+                    },
+                    true,
+                );
+            }
+        }
+        "failure" | "error" => {
+            if let Some(case) = active_case {
+                case.has_failure = true;
+            }
+        }
+        "skipped" => {
+            if let Some(case) = active_case {
+                case.is_skipped = true;
+            }
+        }
+        _ => {}
+    }
+}
+
+fn handle_junit_end(
+    tag: &str,
+    suite_stack: &mut SuiteStack,
+    active_case: &mut Option<ActiveTestCase>,
+    log: &mut ResultLog,
+) {
+    match tag {
+        "testsuite" => {
+            suite_stack.pop();
+        }
+        "testcase" => {
+            if let Some(case) = active_case.take()
+                && !case.is_skipped
+            {
+                let passed = !case.has_failure;
+                record_junit_case(
+                    log,
+                    JunitCaseCtx {
+                        name: &case.name,
+                        class: case.classname.as_deref(),
+                        suite: case.suite.as_deref(),
+                    },
+                    passed,
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Parses `JUnit` XML test results into a [`ResultLog`].
+///
+/// Scans `<testcase>` elements for `name` and `classname` attributes, judging each
+/// case by the presence of `<failure>` or `<error>` child elements. Skipped test cases
+/// are ignored (remaining `Unrun`). Conflicting outcomes for the same target are marked
+/// ambiguous. XML comments, CDATA sections, and processing instructions are safely
+/// skipped by the underlying XML reader.
+///
+/// # Arguments
+/// * `text` - `JUnit` XML string or a saved `junit.xml` artifact.
+///
+/// # Returns
+/// A [`ResultLog`] keyed by case name, `<classname>::<name>`, and `<classname>.<name>`.
+///
+/// # Panics
+/// This function does not panic.
+#[must_use]
+pub fn parse_junit_results(text: &str) -> ResultLog {
+    let mut log = ResultLog::default();
+    let mut reader = quick_xml::Reader::from_str(text);
+    let mut suite_stack: SuiteStack = Vec::new();
+    let mut active_case: Option<ActiveTestCase> = None;
+    let mut buf = Vec::new();
+
+    loop {
+        buf.clear();
+        match reader.read_event_into(&mut buf) {
+            Ok(quick_xml::events::Event::Start(ref e)) => {
+                handle_junit_start(e, &mut suite_stack, &mut active_case);
+            }
+            Ok(quick_xml::events::Event::Empty(ref e)) => {
+                handle_junit_empty(e, &suite_stack, &mut active_case, &mut log);
+            }
+            Ok(quick_xml::events::Event::End(ref e)) => {
+                handle_junit_end(
+                    e.local_name().as_ref(),
+                    &mut suite_stack,
+                    &mut active_case,
+                    &mut log,
+                );
+            }
+            Ok(quick_xml::events::Event::Eof) | Err(_) => break,
+            _ => {}
+        }
+    }
+
+    log
+}
+
+/// What `log` records for `target`: an exact identifier, or, when `strip`
+/// and the log has no binary headers, the identifier without its leading
+/// crate segment.
+fn lookup(log: &ResultLog, target: &str, strip: bool) -> Lookup {
     let key = if log.outcomes.contains_key(target) {
         target
     } else {
         match target.split_once("::") {
-            Some((_, rest)) if log.outcomes.contains_key(rest) => rest,
+            Some((_, rest))
+                if strip
+                    && log.binaries.is_empty()
+                    && log.outcomes.contains_key(rest) =>
+            {
+                rest
+            }
             _ => return Lookup::Absent,
         }
     };
@@ -496,7 +814,7 @@ fn artifact_name(config: &TraceConfig, method: &str) -> String {
     config
         .method
         .get(method)
-        .and_then(|m| m.result_artifact.as_deref())
+        .and_then(|m| m.result_artifact.as_deref().or(m.result_dir.as_deref()))
         .map_or_else(|| method.to_string(), file_name)
 }
 
@@ -532,7 +850,7 @@ fn check_interpreter_coverage(
     let covered = target
         .split_once("::")
         .is_some_and(|(krate, _)| log.binaries.contains(krate));
-    if covered && lookup(log, target) == Lookup::Absent {
+    if covered && lookup(log, target, true) == Lookup::Absent {
         let artifact = ctx
             .config
             .method
@@ -553,17 +871,18 @@ fn check_interpreter_coverage(
 
 fn evaluate_target(
     row: &Row,
-    method: &str,
+    Artifact { method, results }: Artifact<'_>,
     target: &str,
     ctx: &mut StatusCtx<'_>,
 ) -> ItemOutcome {
+    let (strip, method) = (method.strip, method.name);
     let artifact = artifact_name(ctx.config, method);
     let outcome = |passed: bool, message: Option<String>| ItemOutcome {
         target: target.to_string(),
         passed,
         message,
     };
-    let Some(results) = ctx.result_cache.get(method) else {
+    let Some(results) = results else {
         ctx.defects.push(Defect::at(
             row,
             format!(
@@ -573,7 +892,7 @@ fn evaluate_target(
         ));
         return outcome(false, Some("result log missing".to_string()));
     };
-    match lookup(results, target) {
+    match lookup(results, target, strip) {
         Lookup::Passed => {
             check_interpreter_coverage(row, method, target, ctx);
             outcome(true, None)
@@ -614,32 +933,32 @@ fn evaluate_target(
     }
 }
 
-fn condition_status(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
-    let method = row.method.clone().unwrap_or_default();
-    let status = |status: Status, items: Vec<ItemOutcome>| ConditionStatus {
-        id: row.id.clone(),
-        parents: row.parents.clone(),
-        method: method.clone(),
-        status,
-        items,
-    };
-    if method == DEFERRED {
-        return status(Status::Deferred, Vec::new());
-    }
-    if !AUTOMATED_METHODS.contains(&method.as_str()) {
-        return status(Status::Review, Vec::new());
-    }
-    if row.targets.is_empty() {
-        ctx.defects
-            .push(Defect::at(row, format!("{} names no target", row.id)));
-        return status(Status::Uncovered, Vec::new());
-    }
-
+/// The status of a condition `row` of the artifact method `method`.
+fn check_artifact(
+    row: &Row,
+    ctx: &mut StatusCtx<'_>,
+    method: &ArtifactMethod,
+) -> ConditionStatus {
+    let results = ctx.results.remove(method.name).unwrap_or_else(|| {
+        ctx.config
+            .method
+            .get(method.name)
+            .and_then(|m| m.result_artifact.as_ref())
+            .and_then(|path| read_text(&ctx.base.join(path)).ok())
+            .map(|text| (method.parse)(&text))
+    });
     let items: Vec<ItemOutcome> = row
         .targets
         .iter()
-        .map(|target| evaluate_target(row, &method, target, ctx))
+        .map(|target| {
+            let artifact = Artifact {
+                method,
+                results: results.as_ref(),
+            };
+            evaluate_target(row, artifact, target, ctx)
+        })
         .collect();
+    ctx.results.insert(method.name, results);
     let derived = if items.iter().any(|i| {
         i.message
             .as_deref()
@@ -651,7 +970,359 @@ fn condition_status(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
     } else {
         Status::Pass
     };
-    status(derived, items)
+    condition(row, derived, items)
+}
+
+fn check_libtest(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
+    let method = ArtifactMethod {
+        name: "libtest",
+        parse: parse_libtest_results,
+        strip: true,
+    };
+    check_artifact(row, ctx, &method)
+}
+
+fn check_kani(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
+    let method = ArtifactMethod {
+        name: "kani",
+        parse: parse_kani_results,
+        strip: true,
+    };
+    check_artifact(row, ctx, &method)
+}
+
+fn check_compare(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
+    let method = ArtifactMethod {
+        name: "compare",
+        parse: parse_compare_results,
+        strip: false,
+    };
+    check_artifact(row, ctx, &method)
+}
+
+fn check_junit(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
+    let method = ArtifactMethod {
+        name: "junit",
+        parse: parse_junit_results,
+        strip: false,
+    };
+    check_artifact(row, ctx, &method)
+}
+
+fn check_gate(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
+    let (items, statuses): GateTargets = row
+        .targets
+        .iter()
+        .map(|target| gate_target(row, target, ctx))
+        .unzip();
+    let derived = statuses.into_iter().max().unwrap_or(Status::Uncovered);
+    condition(row, derived, items)
+}
+
+fn load_gate_outcome(target: &str, ctx: &mut StatusCtx<'_>) -> GateLoadOutcome {
+    let artifact = format!("{target}{RESULT_SUFFIX}");
+    ctx.gates
+        .entry(target.to_string())
+        .or_insert_with(|| {
+            let result_dir = ctx
+                .config
+                .method
+                .get("gate")
+                .and_then(|m| m.result_dir.as_deref())
+                .unwrap_or("target/ci-artifacts");
+            let path = ctx.base.join(result_dir).join(&artifact);
+            match GateOutcome::load_from_file(&path) {
+                Ok(gate_outcome) => {
+                    if gate_outcome.schema == crate::gate::OUTCOME_SCHEMA {
+                        GateLoadOutcome::Loaded(gate_outcome)
+                    } else {
+                        GateLoadOutcome::Invalid(format!(
+                            "unsupported outcome schema version: {}",
+                            gate_outcome.schema
+                        ))
+                    }
+                }
+                Err(crate::error::GateError::Io(err))
+                    if err.kind() == std::io::ErrorKind::NotFound =>
+                {
+                    GateLoadOutcome::Missing
+                }
+                Err(err) => GateLoadOutcome::Invalid(err.to_string()),
+            }
+        })
+        .clone()
+}
+
+fn evaluate_gate_verdict(
+    row: &Row,
+    target: &str,
+    ctx: &mut StatusCtx<'_>,
+    verdict: Verdict,
+) -> GateTargetEval {
+    let outcome = |passed: bool, message: Option<String>| ItemOutcome {
+        target: target.to_string(),
+        passed,
+        message,
+    };
+    match verdict {
+        Verdict::Pass => (outcome(true, None), Status::Pass),
+        Verdict::Fail => {
+            ctx.defects.push(Defect::at(
+                row,
+                format!(
+                    "condition {} target '{target}' failed in quality gate",
+                    row.id
+                ),
+            ));
+            (
+                outcome(false, Some("gate outcome failed".to_string())),
+                Status::Fail,
+            )
+        }
+        Verdict::Skipped => {
+            ctx.defects.push(Defect::at(
+                row,
+                format!(
+                    "condition {} target '{target}' gate outcome was skipped",
+                    row.id
+                ),
+            ));
+            (
+                outcome(false, Some("gate outcome was skipped".to_string())),
+                Status::Fail,
+            )
+        }
+        Verdict::Warn => {
+            ctx.defects.push(Defect::at(
+                row,
+                format!(
+                    "condition {} target '{target}' gate outcome has warnings",
+                    row.id
+                ),
+            ));
+            (
+                outcome(false, Some("gate outcome has warnings".to_string())),
+                Status::Fail,
+            )
+        }
+    }
+}
+
+fn gate_target(
+    row: &Row,
+    target: &str,
+    ctx: &mut StatusCtx<'_>,
+) -> GateTargetEval {
+    let outcome = |passed: bool, message: Option<String>| ItemOutcome {
+        target: target.to_string(),
+        passed,
+        message,
+    };
+    let artifact = format!("{target}{RESULT_SUFFIX}");
+    match load_gate_outcome(target, ctx) {
+        GateLoadOutcome::Missing => {
+            ctx.defects.push(Defect::at(
+                row,
+                format!(
+                    "condition {} target '{target}' not found: {artifact} is missing",
+                    row.id
+                ),
+            ));
+            (
+                outcome(
+                    false,
+                    Some("gate outcome artifact missing".to_string()),
+                ),
+                Status::Unrun,
+            )
+        }
+        GateLoadOutcome::Invalid(err) => {
+            ctx.defects.push(Defect::at(
+                row,
+                format!(
+                    "condition {} target '{target}' in {artifact} is invalid: {err}",
+                    row.id
+                ),
+            ));
+            (
+                outcome(
+                    false,
+                    Some("gate outcome artifact invalid".to_string()),
+                ),
+                Status::Fail,
+            )
+        }
+        GateLoadOutcome::Loaded(gate_outcome) => {
+            evaluate_gate_verdict(row, target, ctx, gate_outcome.verdict)
+        }
+    }
+}
+
+/// The derived graph gives every link condition it interned its status, so a
+/// link condition reaches this check only when the graph did not intern it.
+fn check_link(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
+    ctx.defects.push(Defect::at(
+        row,
+        format!("condition {} is not in the link graph", row.id),
+    ));
+    condition(row, Status::Fail, Vec::new())
+}
+
+/// The status of a `doc-status` condition: the worst status of its targets.
+fn check_doc_status(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
+    let (items, statuses): DocTargets = row
+        .targets
+        .iter()
+        .map(|target| doc_target(row, target, ctx))
+        .unzip();
+    let derived = statuses.into_iter().max().unwrap_or(Status::Uncovered);
+    condition(row, derived, items)
+}
+
+fn find_doc_or_decision_status(
+    target: &str,
+    ctx: &StatusCtx<'_>,
+) -> Option<TargetDocState> {
+    if ctx
+        .decisions
+        .as_ref()
+        .is_some_and(|rules| rules.names_decision(target))
+    {
+        decision_status(target, ctx).map(|status| {
+            let accepted = status.as_deref().is_some_and(|s| {
+                ctx.decisions.as_ref().is_some_and(|r| r.accepts(s))
+            });
+            TargetDocState {
+                status,
+                passed: accepted,
+                draft: false,
+            }
+        })
+    } else {
+        document_status(target, ctx).map(|status| {
+            let accepted =
+                matches!(status.as_deref(), Some("Ready" | "Shipped"));
+            let draft = status.as_deref() == Some("Draft");
+            TargetDocState {
+                status,
+                passed: accepted || draft,
+                draft,
+            }
+        })
+    }
+}
+
+/// The outcome of one `doc-status` target: a decision ID or a traced
+/// document name.
+fn doc_target(
+    row: &Row,
+    target: &str,
+    ctx: &mut StatusCtx<'_>,
+) -> DocTargetEval {
+    let outcome = |passed: bool, message: Option<String>| ItemOutcome {
+        target: target.to_string(),
+        passed,
+        message,
+    };
+    let row_doc = row.id.split(QUALIFIER).next().unwrap_or_default();
+    if !row_doc.is_empty() && target == row_doc {
+        let message = "cannot target its own document".to_string();
+        ctx.defects.push(Defect::at(
+            row,
+            format!("condition {} target '{target}' {message}", row.id),
+        ));
+        return (outcome(false, Some(message)), Status::Fail);
+    }
+    let Some(doc_state) = find_doc_or_decision_status(target, ctx) else {
+        let message = "names no traced document or decision".to_string();
+        ctx.defects.push(Defect::at(
+            row,
+            format!("condition {} target '{target}' {message}", row.id),
+        ));
+        return (outcome(false, Some(message)), Status::Unrun);
+    };
+    if doc_state.draft {
+        ctx.warnings.push(InterpreterWarning {
+            code: "W-4".to_string(),
+            file: row.file.clone(),
+            line: row.line,
+            item: target.to_string(),
+            message: "document status is Draft".to_string(),
+        });
+    }
+    if doc_state.passed {
+        return (outcome(true, None), Status::Pass);
+    }
+    let message = doc_state.status.map_or_else(
+        || "has no status".to_string(),
+        |s| format!("has status {s}"),
+    );
+    ctx.defects.push(Defect::at(
+        row,
+        format!("condition {} target '{target}' {message}", row.id),
+    ));
+    (outcome(false, Some(message)), Status::Fail)
+}
+
+/// The status of decision `id`: `None` when no selected decision record
+/// defines it.
+fn decision_status(id: &str, ctx: &StatusCtx<'_>) -> RecordStatus {
+    let rules = ctx.decisions.as_ref()?;
+    let config = ctx.config.decisions.as_ref()?;
+    let files =
+        select(ctx.base, &config.files, &ctx.config.doc_suffixes()).ok()?;
+    files.iter().find_map(|file| {
+        let source = read_text(&ctx.base.join(file)).ok()?;
+        rules.record_status(file, &source, id)
+    })
+}
+
+/// The status badge of traced document `doc`: `None` when no row names the
+/// document or its file cannot be read.
+fn document_status(doc: &str, ctx: &StatusCtx<'_>) -> RecordStatus {
+    let file = ctx.documents.get(doc)?;
+    let source = read_text(&ctx.base.join(file)).ok()?;
+    Some(ctx.patterns.status.as_ref().and_then(|re| {
+        re.captures(&source)
+            .and_then(|c| c.name("status"))
+            .map(|m| m.as_str().to_string())
+    }))
+}
+
+/// Condition `row` with `status` and `items`.
+fn condition(
+    row: &Row,
+    status: Status,
+    items: Vec<ItemOutcome>,
+) -> ConditionStatus {
+    ConditionStatus {
+        id: row.id.clone(),
+        parents: row.parents.clone(),
+        method: row.method.clone().unwrap_or_default(),
+        status,
+        items,
+    }
+}
+
+/// The status of condition `row` by its method; `Uncovered` with no target
+/// and `Fail` for an unknown method.
+fn condition_status(row: &Row, ctx: &mut StatusCtx<'_>) -> ConditionStatus {
+    let method = row.method.as_deref().unwrap_or_default();
+    let Some(entry) = METHODS.iter().find(|m| m.name == method) else {
+        ctx.defects.push(Defect::at(
+            row,
+            format!("condition {} names unknown method `{method}`", row.id),
+        ));
+        return condition(row, Status::Fail, Vec::new());
+    };
+    if row.targets.is_empty() {
+        ctx.defects.push(Defect::at(
+            row,
+            format!("condition {} names no target", row.id),
+        ));
+        return condition(row, Status::Uncovered, Vec::new());
+    }
+    (entry.check)(row, ctx)
 }
 
 /// The worst status of `conditions`; `Uncovered` when there are none.
@@ -664,8 +1335,9 @@ fn worst(conditions: &[ConditionStatus]) -> Status {
 }
 
 /// One entry per requirement in `order`, each with its conditions sorted by
-/// ID and its status from `rolled`, the link graph's rollup. A requirement the
-/// graph has no vertex for takes the worst status of its conditions.
+/// ID and the worse of the link-graph rollup and those conditions. A condition
+/// the graph omitted (for example an unqualified id) still contributes through
+/// the children, so the requirement cannot stay green while a child fails.
 fn requirement_statuses(
     order: &[&str],
     evaluated: &[ConditionStatus],
@@ -685,46 +1357,14 @@ fn requirement_statuses(
         .map(|&id| {
             let mut children = by_parent.remove(id).unwrap_or_default();
             children.sort_by(|a, b| a.id.cmp(&b.id));
+            let leaf = worst(&children);
             RequirementStatus {
                 id: id.to_string(),
-                status: rolled
-                    .get(id)
-                    .copied()
-                    .unwrap_or_else(|| worst(&children)),
+                status: rolled.get(id).copied().map_or(leaf, |g| g.max(leaf)),
                 conditions: children,
             }
         })
         .collect()
-}
-
-fn parse_artifact(method: &str, text: &str) -> Option<ResultLog> {
-    match method {
-        "libtest" => Some(parse_libtest_results(text)),
-        "kani" => Some(parse_kani_results(text).into()),
-        "pytest" => Some(parse_pytest_results(text).into()),
-        "gtest" => Some(parse_gtest_results(text).into()),
-        _ => None,
-    }
-}
-
-fn load_method_artifacts(config: &TraceConfig, base: &Path) -> MethodResultMap {
-    let mut result_cache = HashMap::new();
-    for method in AUTOMATED_METHODS {
-        let Some(artifact_rel) = config
-            .method
-            .get(method)
-            .and_then(|m| m.result_artifact.as_ref())
-        else {
-            continue;
-        };
-        let Ok(text) = read_text(&base.join(artifact_rel)) else {
-            continue;
-        };
-        if let Some(results) = parse_artifact(method, &text) {
-            result_cache.insert(method.to_string(), results);
-        }
-    }
-    result_cache
 }
 
 /// Warns (W-3) for each result log of an automated method that is older than
@@ -749,12 +1389,8 @@ fn check_staleness(
     let Some((doc_time, doc)) = newest else {
         return;
     };
-    for method in AUTOMATED_METHODS {
-        let Some(artifact) = config
-            .method
-            .get(method)
-            .and_then(|m| m.result_artifact.as_deref())
-        else {
+    for (method, entry) in &config.method {
+        let Some(artifact) = entry.result_artifact.as_deref() else {
             continue;
         };
         if modified(artifact).is_some_and(|log_time| log_time < doc_time) {
@@ -786,17 +1422,10 @@ fn load_interpreter_log(
 }
 
 fn initial_status_counts() -> StatusCounts {
-    [
-        Status::Pass,
-        Status::Review,
-        Status::Deferred,
-        Status::Uncovered,
-        Status::Unrun,
-        Status::Fail,
-    ]
-    .into_iter()
-    .map(|status| (status, 0))
-    .collect()
+    [Status::Pass, Status::Uncovered, Status::Unrun, Status::Fail]
+        .into_iter()
+        .map(|status| (status, 0))
+        .collect()
 }
 
 fn evaluate_all_conditions<'a>(
@@ -807,8 +1436,6 @@ fn evaluate_all_conditions<'a>(
 ) -> ConditionEvalResult<'a> {
     let (conditions, condition_order) = cond_idx;
     let mut evaluated = Vec::new();
-    let mut review = Vec::new();
-    let mut deferred = Vec::new();
 
     let LinkStatuses {
         conditions: mut derived,
@@ -816,32 +1443,20 @@ fn evaluate_all_conditions<'a>(
     } = graph.derive(|row| condition_status(row, ctx));
 
     for row in condition_order.iter().filter_map(|id| conditions.get(id)) {
-        let Some(status) = derived.remove(row.id.as_str()) else {
-            continue;
-        };
-        let is_link = status.method == LINK_METHOD;
+        // `LinkGraph::resolve` only interns `<doc>#…` ids. A row the graph
+        // omitted must still take its leaf status so the gate cannot pass by
+        // skipping it.
+        let status = derived
+            .remove(row.id.as_str())
+            .unwrap_or_else(|| condition_status(row, ctx));
 
         if let Some(count) = counts.get_mut(&status.status) {
             *count = count.saturating_add(1);
         }
-        let pending = match status.status {
-            Status::Review if !is_link => Some(&mut review),
-            Status::Deferred if !is_link => Some(&mut deferred),
-            _ => None,
-        };
-        if let Some(pending) = pending {
-            pending.push(ReviewCondition {
-                id: row.id.clone(),
-                parents: row.parents.clone(),
-                method: status.method.clone(),
-                file: row.file.clone(),
-                line: row.line,
-            });
-        }
         evaluated.push(status);
     }
 
-    (evaluated, review, deferred, requirements)
+    (evaluated, requirements)
 }
 
 /// The link view of `graph` as text in `format`, with the condition statuses
@@ -894,19 +1509,37 @@ pub fn derive_with_graph(
 
     let mut defects = link_defects;
     let mut warnings = Vec::new();
-    let result_cache = load_method_artifacts(config, base);
     let interpreter_results = load_interpreter_log(config, base);
     let mut counts = initial_status_counts();
 
+    let mut documents = DocFiles::new();
+    for row in reqs {
+        if let Some((doc, _)) = row.id.split_once(QUALIFIER) {
+            documents.entry(doc).or_insert(row.file.as_str());
+        }
+    }
     let mut ctx = StatusCtx {
         config,
-        result_cache: &result_cache,
+        base,
+        results: ResultCache::new(),
+        gates: GateCache::new(),
         interpreter_results: interpreter_results.as_ref(),
+        documents,
+        decisions: config
+            .decisions
+            .as_ref()
+            .and_then(|d| d.rules(Path::new("trace.toml")).ok()),
+        patterns: DocumentMetaPatterns {
+            status: regex::Regex::new(
+                r"(?:Design|Doc)%20Status-(?P<status>[A-Za-z_]+)-",
+            )
+            .ok(),
+        },
         defects: &mut defects,
         warnings: &mut warnings,
     };
 
-    let (evaluated, review, deferred, rolled) =
+    let (evaluated, rolled) =
         evaluate_all_conditions(graph, &cond_idx, &mut ctx, &mut counts);
 
     let requirements = requirement_statuses(&order, &evaluated, &rolled);
@@ -923,8 +1556,6 @@ pub fn derive_with_graph(
         schema: SCHEMA,
         counts,
         requirements,
-        review,
-        deferred,
         warnings,
     };
 
@@ -937,7 +1568,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use crate::trace::reqs::MethodConfig;
+    use crate::trace::reqs::{DecisionConfig, MethodConfig};
 
     /// A condition status and how many conditions have it.
     type Count = (Status, usize);
@@ -958,7 +1589,7 @@ mod tests {
 
     fn report(counts: &[Count], requirements: &[Status]) -> TraceReport {
         TraceReport {
-            schema: 4,
+            schema: SCHEMA,
             counts: counts.iter().copied().collect(),
             requirements: requirements
                 .iter()
@@ -969,8 +1600,6 @@ mod tests {
                     conditions: Vec::new(),
                 })
                 .collect(),
-            review: Vec::new(),
-            deferred: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -979,8 +1608,8 @@ mod tests {
     fn a_report_passes_only_without_fail_unrun_or_uncovered() {
         assert!(
             report(
-                &[(Status::Pass, 3), (Status::Review, 1)],
-                &[Status::Pass, Status::Review]
+                &[(Status::Pass, 3), (Status::Fail, 0)],
+                &[Status::Pass, Status::Pass]
             )
             .passes()
         );
@@ -1002,23 +1631,322 @@ mod tests {
                 "Checking harness h::bad...\n{marker}\nVERIFICATION:- SUCCESSFUL\n"
             );
             assert_eq!(
-                parse_kani_results(&log).get("h::bad"),
+                parse_kani_results(&log).outcomes.get("h::bad"),
                 Some(&false),
                 "{marker}"
             );
         }
         let ok = "Checking harness h::ok...\n** 2 of 2 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n";
-        assert_eq!(parse_kani_results(ok).get("h::ok"), Some(&true));
+        assert_eq!(parse_kani_results(ok).outcomes.get("h::ok"), Some(&true));
     }
 
     #[test]
     fn each_result_format_has_a_parser() {
-        let py = parse_artifact("pytest", "tests/a.py::t PASSED\n").unwrap();
-        assert_eq!(py.outcomes.get("tests/a.py::t"), Some(&true));
-        let gt = parse_artifact("gtest", "[       OK ] Suite.Case (1 ms)\n")
-            .unwrap();
-        assert_eq!(gt.outcomes.get("Suite.Case"), Some(&true));
-        assert!(parse_artifact("unknown", "").is_none());
+        let lt = parse_libtest_results("test a::t ... ok\n");
+        assert_eq!(lt.outcomes.get("a::t"), Some(&true));
+        let kn = parse_kani_results(
+            "Checking harness h::ok...\nVERIFICATION:- SUCCESSFUL\n",
+        );
+        assert_eq!(kn.outcomes.get("h::ok"), Some(&true));
+        let cp = parse_compare_results(
+            r#"{"suites":[{"name":"mat","status":"Pass","comparisons":[]}]}"#,
+        );
+        assert_eq!(cp.outcomes.get("mat"), Some(&true));
+        let ju = parse_junit_results(
+            r#"<testsuite><testcase name="c1" classname="pkg.Cls"/></testsuite>"#,
+        );
+        assert_eq!(ju.outcomes.get("c1"), Some(&true));
+    }
+
+    #[test]
+    fn the_method_table_names_each_method_once() {
+        let names: BTreeSet<&str> = METHODS.iter().map(|m| m.name).collect();
+        assert_eq!(names.len(), METHODS.len());
+        for name in names {
+            assert!(super::super::reqs::is_method(name), "{name}");
+        }
+        assert!(!super::super::reqs::is_method("review"));
+        assert!(!super::super::reqs::is_method("deferred"));
+    }
+
+    #[test]
+    fn compare_results_are_parsed() {
+        let text = r#"{
+            "suites": [
+                {
+                    "name": "matrix_dense",
+                    "status": "Pass",
+                    "comparisons": [
+                        {
+                            "key": "matrix.inv/scipy.rust",
+                            "signal": "matrix.inv",
+                            "verdict": "pass"
+                        },
+                        {
+                            "key": "matrix.det/scipy.rust",
+                            "signal": "matrix.det",
+                            "verdict": "fail"
+                        }
+                    ]
+                }
+            ]
+        }"#;
+        let log = parse_compare_results(text);
+        assert_eq!(log.outcomes.get("matrix_dense"), Some(&true));
+        assert_eq!(log.outcomes.get("matrix.inv"), Some(&true));
+        assert_eq!(log.outcomes.get("matrix_dense::matrix.inv"), Some(&true));
+        assert_eq!(log.outcomes.get("matrix.inv/scipy.rust"), Some(&true));
+        assert_eq!(
+            log.outcomes.get("matrix_dense::matrix.inv/scipy.rust"),
+            Some(&true)
+        );
+        assert_eq!(log.outcomes.get("matrix.det"), Some(&false));
+        assert_eq!(log.outcomes.get("matrix_dense::matrix.det"), Some(&false));
+        assert_eq!(log.outcomes.get("matrix.det/scipy.rust"), Some(&false));
+        assert_eq!(
+            log.outcomes.get("matrix_dense::matrix.det/scipy.rust"),
+            Some(&false)
+        );
+    }
+
+    #[test]
+    fn compare_status_variants_are_parsed() {
+        let text = r#"{
+            "suites": [
+                {
+                    "name": "s_passed",
+                    "status": "passed",
+                    "comparisons": [
+                        {"key": "k1", "signal": "sig_ok", "verdict": "ok"},
+                        {"key": "k2", "signal": "sig_passed", "verdict": "passed"},
+                        {"key": "k3", "signal": "sig_err", "verdict": "error"},
+                        {"key": "k4", "signal": "sig_failed", "verdict": "failed"}
+                    ]
+                },
+                {"name": "s_ok", "status": "ok", "comparisons": []}
+            ]
+        }"#;
+        let log = parse_compare_results(text);
+        assert_eq!(log.outcomes.get("s_passed"), Some(&true));
+        assert_eq!(log.outcomes.get("s_ok"), Some(&true));
+        assert_eq!(log.outcomes.get("sig_ok"), Some(&true));
+        assert_eq!(log.outcomes.get("sig_passed"), Some(&true));
+        assert_eq!(log.outcomes.get("sig_err"), Some(&false));
+        assert_eq!(log.outcomes.get("sig_failed"), Some(&false));
+    }
+
+    #[test]
+    fn compare_conflicting_records_are_ambiguous() {
+        let text = r#"{
+            "suites": [
+                {
+                    "name": "s",
+                    "status": "Pass",
+                    "comparisons": [
+                        {"key": "k", "signal": "sig", "verdict": "pass"},
+                        {"key": "k", "signal": "sig", "verdict": "fail"}
+                    ]
+                }
+            ]
+        }"#;
+        let log = parse_compare_results(text);
+        assert!(log.ambiguous.contains("sig"));
+        assert!(log.ambiguous.contains("s::sig"));
+    }
+
+    #[test]
+    fn compare_missing_required_name_or_verdict_fails_deserialization() {
+        // Missing "name" on a suite fails deserialization, resulting in an empty log.
+        let missing_name = r#"{"suites":[
+            {"name":"suite_a","status":"Pass","comparisons":[{"signal":"torque","verdict":"pass"}]},
+            {"comparisons":[{"signal":"torque","verdict":"fail"}]}
+        ]}"#;
+        let log = parse_compare_results(missing_name);
+        assert_eq!(lookup(&log, "torque", false), Lookup::Absent);
+
+        // Missing "verdict" on a comparison fails deserialization, resulting in an empty log.
+        let missing_verdict = r#"{"suites":[
+            {"name":"suite_a","status":"Pass","comparisons":[
+                {"signal":"torque","verdict":"pass"},
+                {"signal":"torque"}
+            ]}
+        ]}"#;
+        let log = parse_compare_results(missing_verdict);
+        assert_eq!(lookup(&log, "torque", false), Lookup::Absent);
+    }
+
+    #[test]
+    fn compare_unknown_verdict_or_empty_suite_name_fails_closed() {
+        let text = r#"{"suites":[
+            {"name":"suite_a","status":"Pass","comparisons":[{"signal":"torque","verdict":"pass"}]},
+            {"name":"","status":"Pass","comparisons":[{"signal":"torque","verdict":"fail"}]}
+        ]}"#;
+        let log = parse_compare_results(text);
+        assert!(log.ambiguous.contains("torque"));
+        assert_eq!(log.outcomes.get(""), None);
+
+        let empty_status = r#"{"suites":[
+            {"name":"suite_empty_status","status":"","comparisons":[{"signal":"power","verdict":"pass"}]}
+        ]}"#;
+        let log_empty_status = parse_compare_results(empty_status);
+        assert_eq!(log_empty_status.outcomes.get("suite_empty_status"), None);
+        assert_eq!(log_empty_status.outcomes.get("power"), Some(&true));
+
+        let unknown_verdict = r#"{"suites":[
+            {"name":"suite_a","status":"Pass","comparisons":[
+                {"signal":"torque","verdict":"pass"},
+                {"signal":"torque","verdict":"unknown"}
+            ]}
+        ]}"#;
+        let log = parse_compare_results(unknown_verdict);
+        assert!(log.ambiguous.contains("torque"));
+        assert!(log.ambiguous.contains("suite_a::torque"));
+
+        let single_unknown = r#"{"suites":[
+            {"name":"suite_a","status":"Pass","comparisons":[
+                {"signal":"speed","verdict":"pending"}
+            ]}
+        ]}"#;
+        let log_single = parse_compare_results(single_unknown);
+        assert_eq!(log_single.outcomes.get("speed"), Some(&false));
+        assert_eq!(log_single.outcomes.get("suite_a::speed"), Some(&false));
+    }
+
+    #[test]
+    fn junit_results_are_parsed() {
+        let text = r#"<?xml version="1.0" encoding="UTF-8"?>
+        <testsuites>
+            <testsuite name="SuiteA">
+                <testcase name="test_ok" classname="pkg.ClassA"/>
+                <testcase name='test_single' classname='pkg.ClassSingle'/>
+                <testcase name="test_fail" classname="pkg.ClassA">
+                    <failure message="assertion failed">stack trace</failure>
+                </testcase>
+                <testcase name="test_error" classname="pkg.ClassA">
+                    <error message="runtime error"/>
+                </testcase>
+                <testcase name="test_skip" classname="pkg.ClassA">
+                    <skipped message="ignored"/>
+                </testcase>
+                <testcase name="test_skip_start" classname="pkg.ClassA">
+                    <skipped>reason with start/end tag</skipped>
+                </testcase>
+            </testsuite>
+        </testsuites>"#;
+        let log = parse_junit_results(text);
+        assert_eq!(log.outcomes.get("test_ok"), Some(&true));
+        assert_eq!(log.outcomes.get("test_single"), Some(&true));
+        assert_eq!(log.outcomes.get("pkg.ClassA::test_ok"), Some(&true));
+        assert_eq!(log.outcomes.get("pkg.ClassA.test_ok"), Some(&true));
+        assert_eq!(log.outcomes.get("SuiteA::test_ok"), Some(&true));
+        assert_eq!(
+            log.outcomes.get("SuiteA::pkg.ClassA::test_ok"),
+            Some(&true)
+        );
+
+        assert_eq!(log.outcomes.get("test_fail"), Some(&false));
+        assert_eq!(log.outcomes.get("pkg.ClassA::test_fail"), Some(&false));
+
+        assert_eq!(log.outcomes.get("test_error"), Some(&false));
+        assert_eq!(log.outcomes.get("pkg.ClassA::test_error"), Some(&false));
+
+        // Skipped test is omitted (remains `Unrun`)
+        assert_eq!(log.outcomes.get("test_skip"), None);
+        assert_eq!(log.outcomes.get("test_skip_start"), None);
+    }
+
+    #[test]
+    fn junit_conflicting_records_are_ambiguous() {
+        let text = r#"<testsuite>
+            <testcase name="dup_test" classname="pkg.Cls"/>
+            <testcase name="dup_test" classname="pkg.Cls"><failure/></testcase>
+        </testsuite>"#;
+        let log = parse_junit_results(text);
+        assert!(log.ambiguous.contains("dup_test"));
+        assert!(log.ambiguous.contains("pkg.Cls::dup_test"));
+    }
+
+    /// `classname` before `name` is the usual producer order. A bare search
+    /// for `name=` binds the trailing `name=` of `classname=` and can
+    /// record a passing `classname` while dropping a failed case of that name.
+    #[test]
+    fn junit_classname_before_name_does_not_false_pass() {
+        let text = r#"<testsuite>
+            <testcase classname="safety_check" name="setup"/>
+            <testcase classname="other" name="safety_check"><failure/></testcase>
+        </testsuite>"#;
+        let log = parse_junit_results(text);
+        assert_eq!(log.outcomes.get("setup"), Some(&true));
+        assert_eq!(log.outcomes.get("safety_check::setup"), Some(&true));
+        assert_eq!(log.outcomes.get("safety_check"), Some(&false));
+        assert_eq!(log.outcomes.get("other::safety_check"), Some(&false));
+        assert_ne!(log.outcomes.get("safety_check"), Some(&true));
+    }
+
+    /// `system-out` CDATA often embeds log markers. A bare `find("</testcase>")`
+    /// closes on the CDATA text, drops the real `<failure>`, and records Pass.
+    #[test]
+    fn junit_cdata_close_marker_does_not_false_pass() {
+        let text = r#"<testsuite>
+            <testcase classname="pkg" name="safety_check">
+                <system-out><![CDATA[log contains </testcase> marker]]></system-out>
+                <failure message="assertion failed"/>
+            </testcase>
+            <testcase classname="pkg" name="mentions_failure">
+                <system-out><![CDATA[look for <failure in logs]]></system-out>
+            </testcase>
+        </testsuite>"#;
+        let log = parse_junit_results(text);
+        assert_eq!(log.outcomes.get("safety_check"), Some(&false));
+        assert_eq!(log.outcomes.get("pkg::safety_check"), Some(&false));
+        assert_eq!(log.outcomes.get("mentions_failure"), Some(&true));
+        assert_ne!(log.outcomes.get("safety_check"), Some(&true));
+    }
+
+    /// Comments and suite-level CDATA can embed a literal `<testcase .../>`.
+    /// The XML reader must skip those as tokens and not record ghost outcomes.
+    #[test]
+    fn junit_comment_or_cdata_testcase_does_not_false_pass() {
+        let text = r#"<?xml version="1.0"?>
+        <testsuite name="SuiteA">
+            <!-- <testcase classname="pkg" name="ghost_pass"/> -->
+            <system-out><![CDATA[<testcase classname="pkg" name="cdata_ghost"/>]]></system-out>
+            <testcase classname="pkg" name="real_test"/>
+            <!-- </testcase> in comment before failure -->
+            <testcase classname="pkg" name="real_fail">
+                <!-- </testcase> -->
+                <failure message="boom"/>
+            </testcase>
+        </testsuite>"#;
+        let log = parse_junit_results(text);
+        assert_eq!(log.outcomes.get("ghost_pass"), None);
+        assert_eq!(log.outcomes.get("cdata_ghost"), None);
+        assert_eq!(log.outcomes.get("real_test"), Some(&true));
+        assert_eq!(log.outcomes.get("real_fail"), Some(&false));
+    }
+
+    /// Entity decoding and multi-line attributes are handled according to XML standards.
+    #[test]
+    fn junit_entities_and_multiline_attributes() {
+        let text = r#"<testsuite name="SuiteA">
+            <testcase
+                classname="pkg.ClassA"
+                name="test_with_&amp;_and_&quot;quotes&quot;"
+            />
+            <testcase
+                name="test_fail"
+                classname="pkg.ClassA"
+            >
+                <failure message="fail"/>
+            </testcase>
+        </testsuite>"#;
+        let log = parse_junit_results(text);
+        assert_eq!(log.outcomes.get("test_with_&_and_\"quotes\""), Some(&true));
+        assert_eq!(
+            log.outcomes.get("pkg.ClassA::test_with_&_and_\"quotes\""),
+            Some(&true)
+        );
+        assert_eq!(log.outcomes.get("test_fail"), Some(&false));
     }
 
     fn write_log(dir: &Path, name: &str, text: &str) {
@@ -1026,15 +1954,33 @@ mod tests {
     }
 
     fn default_config() -> TraceConfig {
-        let method = ["libtest", "kani", "pytest", "gtest"]
-            .into_iter()
+        let method = METHODS
+            .iter()
+            .map(|m| m.name)
+            .filter(|m| !matches!(*m, "link" | "doc-status"))
             .map(|m| {
+                if m == "gate" {
+                    return (
+                        m.to_string(),
+                        MethodConfig {
+                            result_artifact: None,
+                            result_dir: Some("target/ci-artifacts".to_string()),
+                            interpreter_artifact: None,
+                        },
+                    );
+                }
+                let file = match m {
+                    "compare" => "cross-val-report.json".to_string(),
+                    "junit" => "junit.xml".to_string(),
+                    other => format!("{other}.log"),
+                };
                 (
                     m.to_string(),
                     MethodConfig {
                         result_artifact: Some(format!(
-                            "target/ci-artifacts/{m}.log"
+                            "target/ci-artifacts/{file}"
                         )),
+                        result_dir: None,
                         interpreter_artifact: (m == "libtest").then(|| {
                             "target/ci-artifacts/miri.log".to_string()
                         }),
@@ -1177,17 +2123,21 @@ mod tests {
     }
 
     #[test]
-    fn pytest_and_gtest_logs_are_parsed() {
-        let py = "python3/m.py::test_step PASSED [ 50%]\npython3/m.py::test_bad FAILED [100%]\n";
-        let results = parse_pytest_results(py);
-        assert_eq!(results.get("python3/m.py::test_step"), Some(&true));
-        assert_eq!(results.get("python3/m.py::test_bad"), Some(&false));
-
-        let gt = "[ RUN      ] Suite.Case\n[       OK ] Suite.Case (0 ms)\n[  FAILED  ] Suite.Bad (1 ms)\n[==========] 2 tests\n";
-        let results = parse_gtest_results(gt);
-        assert_eq!(results.get("Suite.Case"), Some(&true));
-        assert_eq!(results.get("Suite.Bad"), Some(&false));
-        assert_eq!(results.len(), 2);
+    fn kani_conflicting_records_are_ambiguous() {
+        let kani = "Checking harness h::dup...\nVERIFICATION:- FAILED\n\
+                    Checking harness h::dup...\nVERIFICATION:- SUCCESSFUL\n\
+                    ** 1 of 1 cover properties satisfied\n";
+        let kani_run =
+            run("kani_ambiguous", kani, condition("kani", &["h::dup"]));
+        assert_eq!(status(&kani_run), Some(Status::Fail));
+        assert!(
+            kani_run
+                .1
+                .first()
+                .is_some_and(|d| d.message.contains("is ambiguous in")),
+            "{:?}",
+            kani_run.1
+        );
     }
 
     #[test]
@@ -1197,21 +2147,38 @@ mod tests {
         assert!(!derived.0.passes());
         assert_eq!(
             derived.1.first().map(|d| d.message.as_str()),
-            Some("w#VC-1.1 names no target")
+            Some("condition w#VC-1.1 names no target")
         );
         assert_eq!(derived.0.counts.get(&Status::Uncovered), Some(&1));
     }
 
     #[test]
-    fn review_condition_takes_review_status() {
-        let derived = derive(
-            &[definition(), condition("review", &[])],
-            &default_config(),
+    fn doc_status_condition_with_accepted_adr_passes() {
+        let dir = test_dir("doc_status_adr");
+        let adr_dir = dir.join("documentation/adr");
+        fs::create_dir_all(&adr_dir).unwrap();
+        fs::write(
+            adr_dir.join("0001.md"),
+            "# ADR-0001: Size\n\n![Status](https://img.shields.io/badge/ADR%20Status-Accepted-brightgreen)\n",
+        ).unwrap();
+        let config = TraceConfig {
+            decisions: Some(DecisionConfig {
+                files: vec!["documentation/adr".to_string()],
+                id: "ADR-[0-9]{4}".to_string(),
+                definition: r"^#\s+ADR-[0-9]{4}:".to_string(),
+                status: "ADR%20Status-(?P<status>[A-Za-z]+)-".to_string(),
+                accepted: vec!["Accepted".to_string()],
+            }),
+            ..default_config()
+        };
+        let derived = derive_with_base(
+            &[definition(), condition("doc-status", &["ADR-0001"])],
+            &config,
+            &dir,
         );
-        assert_eq!(status(&derived), Some(Status::Review));
+        assert_eq!(status(&derived), Some(Status::Pass));
         assert!(derived.0.passes());
         assert!(derived.1.is_empty(), "{:?}", derived.1);
-        assert_eq!(derived.0.review.len(), 1);
     }
 
     #[test]
@@ -1398,18 +2365,161 @@ mod tests {
     }
 
     #[test]
-    fn deferred_condition_is_listed_and_does_not_fail() {
-        let derived = derive(
-            &[definition(), condition("deferred", &[])],
-            &default_config(),
+    fn compare_and_junit_targets_match_exactly() {
+        let dir = test_dir("exact");
+        write_log(
+            &dir,
+            "cross-val-report.json",
+            r#"{"suites":[{"name":"suite_a","status":"Pass","comparisons":[{"signal":"torque","verdict":"pass"}]}]}"#,
         );
-        assert_eq!(status(&derived), Some(Status::Deferred));
+        write_log(
+            &dir,
+            "junit.xml",
+            r#"<testsuite name="s"><testcase name="test_ok" classname="A"/></testsuite>"#,
+        );
+        let derive = |method: &str, target: &str| {
+            status(&derive_with_base(
+                &[definition(), condition(method, &[target])],
+                &default_config(),
+                &dir,
+            ))
+        };
+        assert_eq!(derive("compare", "torque"), Some(Status::Pass));
+        assert_eq!(derive("compare", "suite_a::torque"), Some(Status::Pass));
+        assert_eq!(derive("compare", "suite_b::torque"), Some(Status::Unrun));
+        assert_eq!(derive("junit", "A::test_ok"), Some(Status::Pass));
+        assert_eq!(derive("junit", "B::test_ok"), Some(Status::Unrun));
+    }
+
+    /// Derives one `doc-status` condition naming `targets`, with document `w`
+    /// written to `docs/w-design.md` carrying `badge` when given.
+    fn doc_status_run(
+        name: &str,
+        badge: Option<&str>,
+        targets: &[&str],
+    ) -> Derived {
+        let dir = test_dir(name);
+        fs::create_dir_all(dir.join("docs")).unwrap();
+        let badge = badge.map_or_else(String::new, |b| {
+            format!("![Design Status Badge](https://img.shields.io/badge/Design%20Status-{b}-blue)\n")
+        });
+        fs::write(
+            dir.join("docs/w-design.md"),
+            "# W (w)\n\n![Design Status Badge](https://img.shields.io/badge/Design%20Status-Ready-blue)\n",
+        )
+        .unwrap();
+        fs::write(
+            dir.join("docs/other-design.md"),
+            format!("# Other (other)\n\n{badge}"),
+        )
+        .unwrap();
+        let other_cond = Row {
+            schema: SCHEMA,
+            id: "other#VC-1.1".to_string(),
+            kind: CONDITION.to_string(),
+            parents: vec!["w#FR-1".to_string()],
+            method: Some("doc-status".to_string()),
+            targets: vec!["w".to_string()],
+            file: "docs/other-design.md".to_string(),
+            line: 2,
+            text: String::new(),
+        };
+        derive_with_base(
+            &[definition(), other_cond, condition("doc-status", targets)],
+            &default_config(),
+            &dir,
+        )
+    }
+
+    #[test]
+    fn doc_status_passes_on_a_ready_or_shipped_document() {
+        for badge in ["Ready", "Shipped"] {
+            let derived = doc_status_run("doc_ready", Some(badge), &["other"]);
+            assert_eq!(status(&derived), Some(Status::Pass), "{badge}");
+            assert!(derived.1.is_empty(), "{:?}", derived.1);
+            assert!(derived.0.warnings.is_empty(), "{:?}", derived.0.warnings);
+        }
+    }
+
+    #[test]
+    fn doc_status_warns_on_a_draft_document() {
+        let derived = doc_status_run("doc_draft", Some("Draft"), &["other"]);
+        assert_eq!(status(&derived), Some(Status::Pass));
         assert!(derived.0.passes());
         assert!(derived.1.is_empty(), "{:?}", derived.1);
-        assert_eq!(derived.0.deferred.len(), 1);
-        assert!(derived.0.review.is_empty(), "{:?}", derived.0.review);
-        assert_eq!(derived.0.counts.get(&Status::Deferred), Some(&1));
-        assert_eq!(derived.0.counts.get(&Status::Review), Some(&0));
+        let codes: Vec<_> = derived
+            .0
+            .warnings
+            .iter()
+            .map(|w| (w.code.as_str(), w.item.as_str()))
+            .collect();
+        assert_eq!(codes, [("W-4", "other")]);
+    }
+
+    #[test]
+    fn doc_status_fails_on_any_other_status() {
+        for badge in [Some("Stale"), None] {
+            let derived = doc_status_run("doc_stale", badge, &["other"]);
+            assert_eq!(status(&derived), Some(Status::Fail), "{badge:?}");
+            assert!(!derived.0.passes());
+            assert_eq!(derived.1.len(), 1, "{:?}", derived.1);
+        }
+    }
+
+    #[test]
+    fn doc_status_target_naming_no_traced_document_is_unrun() {
+        let derived =
+            doc_status_run("doc_untraced", Some("Ready"), &["w-design"]);
+        assert_eq!(status(&derived), Some(Status::Unrun));
+        assert_eq!(
+            derived.1.first().map(|d| d.message.as_str()),
+            Some(
+                "condition w#VC-1.1 target 'w-design' names no traced \
+                 document or decision"
+            )
+        );
+    }
+
+    #[test]
+    fn doc_status_self_targeting_fails_as_defect() {
+        let derived = doc_status_run("doc_self", Some("Ready"), &["w"]);
+        assert_eq!(status(&derived), Some(Status::Fail));
+        assert_eq!(
+            derived.1.first().map(|d| d.message.as_str()),
+            Some(
+                "condition w#VC-1.1 target 'w' cannot target its own document"
+            )
+        );
+    }
+
+    #[test]
+    fn doc_status_reads_decisions_with_the_configured_patterns() {
+        let dir = test_dir("doc_decisions");
+        fs::create_dir_all(dir.join("decisions")).unwrap();
+        fs::write(dir.join("decisions/1.md"), "# DEC-1\nState: approved\n")
+            .unwrap();
+        fs::write(dir.join("decisions/2.md"), "# DEC-2\nState: rejected\n")
+            .unwrap();
+        let config = TraceConfig {
+            decisions: Some(DecisionConfig {
+                files: vec!["decisions".to_string()],
+                id: "DEC-[0-9]+".to_string(),
+                definition: "^# DEC-".to_string(),
+                status: "State: (?P<status>[a-z]+)".to_string(),
+                accepted: vec!["approved".to_string()],
+            }),
+            ..default_config()
+        };
+        let derive = |target: &str| {
+            derive_with_base(
+                &[definition(), condition("doc-status", &[target])],
+                &config,
+                &dir,
+            )
+        };
+        assert_eq!(status(&derive("DEC-1")), Some(Status::Pass));
+        assert_eq!(status(&derive("DEC-2")), Some(Status::Fail));
+        assert_eq!(status(&derive("DEC-3")), Some(Status::Unrun));
     }
 
     /// Sets the modification time of `path` to `secs` after the epoch.
@@ -1507,36 +2617,184 @@ mod tests {
     }
 
     #[test]
-    fn link_conditions_are_not_listed_for_review() {
-        let dir = test_dir("link_review");
+    fn link_takes_the_worst_status_of_the_named_requirements() {
+        let dir = test_dir("link_req");
+        write_log(&dir, "libtest.log", "test t::a ... FAILED\n");
         let rows = [
             definition_of("w#FR-1"),
-            condition_of("w#VC-1.1", "w#FR-1", "review", &[]),
+            condition_of("w#VC-1.1", "w#FR-1", "libtest", &["t::a"]),
             definition_of("l#FR-1"),
             condition_of("l#VC-1.1", "l#FR-1", "link", &["w#FR-1"]),
         ];
         let derived = derive_with_base(&rows, &default_config(), &dir);
         let linked = condition_status_of(&derived, "l#VC-1.1").unwrap();
-        assert_eq!(linked.status, Status::Review);
-        let listed: Vec<&str> =
-            derived.0.review.iter().map(|c| c.id.as_str()).collect();
-        assert_eq!(listed, ["w#VC-1.1"]);
+        assert_eq!(linked.status, Status::Fail);
+        assert_eq!(linked.items.len(), 1);
+        assert!(!derived.0.passes());
     }
 
     #[test]
-    fn link_conditions_are_not_listed_as_deferred() {
-        let dir = test_dir("link_deferred");
+    fn condition_without_doc_qualifier_still_fails_the_gate() {
+        let dir = test_dir("unqualified_condition");
+        write_log(&dir, "libtest.log", "test t::ok ... ok\n");
         let rows = [
             definition_of("w#FR-1"),
-            condition_of("w#VC-1.1", "w#FR-1", "deferred", &[]),
-            definition_of("l#FR-1"),
-            condition_of("l#VC-1.1", "l#FR-1", "link", &["w#FR-1"]),
+            condition_of("w#VC-1.1", "w#FR-1", "libtest", &["t::ok"]),
+            // Hand-authored / legacy `jsonl` may omit `<doc>#`; the graph skips
+            // that id, but the gate must still count the leaf `Unrun`.
+            condition_of("VC-9.9", "w#FR-1", "libtest", &["missing::t"]),
         ];
         let derived = derive_with_base(&rows, &default_config(), &dir);
-        let linked = condition_status_of(&derived, "l#VC-1.1").unwrap();
-        assert_eq!(linked.status, Status::Deferred);
-        let listed: Vec<&str> =
-            derived.0.deferred.iter().map(|c| c.id.as_str()).collect();
-        assert_eq!(listed, ["w#VC-1.1"]);
+        let omitted = condition_status_of(&derived, "VC-9.9").unwrap();
+        assert_eq!(omitted.status, Status::Unrun);
+        let parent = derived
+            .0
+            .requirements
+            .iter()
+            .find(|r| r.id == "w#FR-1")
+            .unwrap();
+        assert_eq!(parent.status, Status::Unrun);
+        assert!(!derived.0.passes());
+    }
+
+    #[test]
+    fn kani_target_passes_with_crate_qualified_or_bare_name() {
+        let log = "Checking harness proofs::h...\n - Status: SUCCESS\n** 1 of 1 cover properties satisfied\nVERIFICATION:- SUCCESSFUL\n";
+        for target in ["proofs::h", "my_crate::proofs::h"] {
+            let derived = run("kani_strip", log, condition("kani", &[target]));
+            assert_eq!(status(&derived), Some(Status::Pass), "{target}");
+            assert!(derived.0.passes());
+            assert!(derived.1.is_empty(), "{:?}", derived.1);
+        }
+    }
+
+    fn gate_run(
+        name: &str,
+        outcomes: &[GateOutcome],
+        targets: &[&str],
+    ) -> Derived {
+        let dir = test_dir(name);
+        let out_dir = dir.join("target/ci-artifacts");
+        fs::create_dir_all(&out_dir).unwrap();
+        for o in outcomes {
+            o.save_to_dir(&out_dir).unwrap();
+        }
+        derive_with_base(
+            &[definition(), condition("gate", targets)],
+            &default_config(),
+            &dir,
+        )
+    }
+
+    #[test]
+    fn gate_target_passes_on_verdict_pass() {
+        let outcome = GateOutcome {
+            schema: crate::gate::OUTCOME_SCHEMA,
+            gate: "fmt".to_string(),
+            verdict: Verdict::Pass,
+            exit_code: Some(0),
+            duration_secs: 0.1,
+            summary: Some("Formatted cleanly".to_string()),
+            log_file: "fmt.log".to_string(),
+        };
+        let derived = gate_run("gate_pass", &[outcome], &["fmt"]);
+        assert_eq!(status(&derived), Some(Status::Pass));
+        assert!(derived.0.passes());
+        assert!(derived.1.is_empty(), "{:?}", derived.1);
+    }
+
+    #[test]
+    fn gate_target_fails_on_fail_skipped_or_warn() {
+        for (name, verdict) in [
+            ("gate_fail", Verdict::Fail),
+            ("gate_skip", Verdict::Skipped),
+            ("gate_warn", Verdict::Warn),
+        ] {
+            let outcome = GateOutcome {
+                schema: crate::gate::OUTCOME_SCHEMA,
+                gate: "clippy".to_string(),
+                verdict,
+                exit_code: Some(1),
+                duration_secs: 0.5,
+                summary: None,
+                log_file: "clippy.log".to_string(),
+            };
+            let derived = gate_run(name, &[outcome], &["clippy"]);
+            assert_eq!(status(&derived), Some(Status::Fail), "{verdict:?}");
+            assert!(!derived.0.passes());
+            assert_eq!(derived.1.len(), 1, "{:?}", derived.1);
+        }
+    }
+
+    #[test]
+    fn gate_target_missing_artifact_is_unrun() {
+        let derived = gate_run("gate_missing", &[], &["clippy"]);
+        assert_eq!(status(&derived), Some(Status::Unrun));
+        assert!(!derived.0.passes());
+        assert_eq!(derived.1.len(), 1);
+        assert!(
+            derived
+                .1
+                .first()
+                .unwrap()
+                .message
+                .contains("clippy.result.json is missing")
+        );
+    }
+
+    #[test]
+    fn gate_target_invalid_schema_or_corrupt_fails() {
+        let dir = test_dir("gate_invalid");
+        let out_dir = dir.join("target/ci-artifacts");
+        fs::create_dir_all(&out_dir).unwrap();
+        fs::write(out_dir.join("corrupt.result.json"), "not json").unwrap();
+        let wrong_schema = GateOutcome {
+            schema: 999,
+            gate: "bad_schema".to_string(),
+            verdict: Verdict::Pass,
+            exit_code: Some(0),
+            duration_secs: 0.1,
+            summary: None,
+            log_file: "bad.log".to_string(),
+        };
+        wrong_schema.save_to_dir(&out_dir).unwrap();
+
+        let derived = derive_with_base(
+            &[definition(), condition("gate", &["corrupt", "bad_schema"])],
+            &default_config(),
+            &dir,
+        );
+        assert_eq!(status(&derived), Some(Status::Fail));
+        assert!(!derived.0.passes());
+        assert_eq!(derived.1.len(), 2);
+    }
+
+    #[test]
+    fn derive_with_graph_and_render_graph_share_link_graph() {
+        let rows = [
+            definition(),
+            Row {
+                schema: SCHEMA,
+                id: "w#VC-1.1".to_string(),
+                kind: CONDITION.to_string(),
+                file: "w.md".to_string(),
+                line: 2,
+                text: "link".to_string(),
+                parents: vec!["w#FR-1".to_string()],
+                method: Some("link".to_string()),
+                targets: vec!["w#FR-1".to_string()],
+            },
+        ];
+        let (graph, defects) = link_graph(&rows);
+        assert_eq!(graph.rows().len(), 2);
+        let derived = derive_with_graph(
+            &graph,
+            defects,
+            &default_config(),
+            Path::new("."),
+        );
+        assert_eq!(derived.0.requirements.len(), 1);
+        let rendered = render_graph(&graph, &derived.0, GraphFormat::Mermaid);
+        assert!(rendered.starts_with("flowchart TD\n"));
     }
 }

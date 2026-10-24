@@ -74,7 +74,7 @@ fn setup_scenario_decisions(
     fs::create_dir_all(&docs_dir)?;
     fs::write(
         docs_dir.join("widget-design.md"),
-        "# Widget (widget)\n\n![Status](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)\n\n- **FR-1**: Size, per ADR-0001 and ADR-0002\n\nSee also ADR-0003.\n\n| VC-1 | FR-1 | `review` | — | OK |\n",
+        "# Widget (widget)\n\n![Status](https://img.shields.io/badge/Doc%20Status-Approved-brightgreen)\n\n- **FR-1**: Size, per ADR-0001 and ADR-0002\n\nSee also ADR-0003.\n\n| VC-1 | FR-1 | `doc-status` | `ADR-0001` | OK |\n",
     )?;
     let adr_dir = fixture_workspace.join("adr");
     fs::create_dir_all(&adr_dir)?;

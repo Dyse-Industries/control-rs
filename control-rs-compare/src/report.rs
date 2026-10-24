@@ -10,93 +10,112 @@ use serde::{Deserialize, Serialize};
 use crate::error::HarnessError;
 
 /// High-level summary of the overall cross-validation run.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ValidationSummary {
     /// Total number of suites evaluated.
+    #[serde(default)]
     pub total_suites: usize,
 
     /// Number of suites that passed all checks.
+    #[serde(default)]
     pub passed_suites: usize,
 
     /// Number of suites with discrepancies or failures.
+    #[serde(default)]
     pub failed_suites: usize,
 
     /// Total wall-clock duration across all suites.
+    #[serde(default)]
     pub total_duration_secs: f64,
 
     /// High-level verdict string ("Pass" or "Fail").
+    #[serde(default)]
     pub verdict: String,
 }
 
 /// Comprehensive cross-validation outcome report document.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ValidationReport {
     /// Summary metrics.
+    #[serde(default)]
     pub summary: ValidationSummary,
 
     /// Detailed per-suite results.
+    #[serde(default)]
     pub suites: Vec<SuiteReport>,
 }
 
 /// Per-suite validation findings.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct SuiteReport {
     /// Canonical suite name.
     pub name: String,
 
     /// Suite verdict ("Pass" or "Fail").
+    #[serde(default)]
     pub status: String,
 
     /// Execution and comparison duration in seconds.
+    #[serde(default)]
     pub duration_secs: f64,
 
     /// Comparison results for all evaluated signals.
+    #[serde(default)]
     pub comparisons: Vec<ComparisonFinding>,
 
     /// Optional failure explanation.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure_reason: Option<String>,
 }
 
 /// Evaluation record for a single dataset / signal comparison pair.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ComparisonFinding {
     /// Unique comparison key (for example, "`buck_converter.transient/v_out.rust`").
+    #[serde(default)]
     pub key: String,
 
     /// Variant pair evaluated (for example, `("scipy", "rust")`).
+    #[serde(default)]
     pub pair: (String, String),
 
     /// Canonical signal path.
+    #[serde(default)]
     pub signal: String,
 
     /// Satisfaction policy applied ("`all_of`" or "`any_of`").
+    #[serde(default)]
     pub policy: String,
 
     /// Verdict for this signal comparison ("pass" or "fail").
     pub verdict: String,
 
     /// Individual method evaluation findings.
+    #[serde(default)]
     pub methods: Vec<MethodFinding>,
 }
 
 /// Method-level evaluation details.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct MethodFinding {
     /// Method type name (for example, "`abs`", "`rms`", "`regex_match`").
+    #[serde(default)]
     pub r#type: String,
 
     /// Configured threshold or tolerance bound.
+    #[serde(default)]
     pub bound: f64,
 
     /// Computed numerical score or error residual.
+    #[serde(default)]
     pub observed: f64,
 
     /// Verdict for this method ("pass" or "fail").
+    #[serde(default)]
     pub verdict: String,
 
     /// Optional failure details.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<String>,
 }
 
