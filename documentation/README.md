@@ -138,7 +138,7 @@ record and its status.
 
 | Design                                       | Status | Implementation    |
 |:---------------------------------------------|:-------|:------------------|
-| [Terminal User Interface](tui/tui-design.md) | Stale  | `control-rs-tui/` |
+| [Terminal User Interface](tui/tui-design.md) | Draft  | `control-rs-tui/` |
 
 ## ci
 
