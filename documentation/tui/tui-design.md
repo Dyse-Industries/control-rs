@@ -165,7 +165,7 @@ supported:
 
 Frame construction, CRC verification, telemetry deserialization, panic
 detection and the reset/reconnect sequence are owned by `control-rs-ets-host`
-and specified in `documentation/ets-host/ets-host-design.md`.
+and specified in `../ets/ets-host-design.md`.
 The TUI consumes their results only:
 
 * `BridgeMessage::Telemetry` updates the metrics tree.

@@ -16,6 +16,7 @@ files = [
     "documentation/ets/host-comm-design.md",
     "documentation/ets/ets-executive-design.md",
     "documentation/ets/embedded-test-server-design.md",
+    "documentation/ets/ets-host-design.md",
 ]
 doc_id = '^#\s+.*\((?P<doc>[a-z0-9-]+)\)'
 definition = '^\s*- \*\*(?:FR|NFR|C)-'
