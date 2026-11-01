@@ -1,6 +1,6 @@
 # HostComms Trait and Wire Protocol (host-comm)
 
-![Date Badge](https://img.shields.io/badge/Date-November_8,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 ![Design Status Badge](https://img.shields.io/badge/Design%20Status-Draft-orange)
 
@@ -8,14 +8,16 @@
 
 ### 1. Introduction
 
-The `HostComms` trait is designed to provide a unified, hardware-agnostic
-communication abstraction for target firmware operating in resource-constrained
-environments. This allows the Embedded Test Server (ETS) running on-target to
-separate physical transport mechanics (such as UART, Ethernet MAC/PHY, or debug
-probes) from test execution and telemetry dispatch. Host-side demultiplexing,
-session management, and decoding are owned by `control-rs-ets-host::ETSBridge`
-(`../ets-host/ets-host-design.md`), while user presentation is handled by
-`control-rs-tui` (`../tui/tui-design.md`).
+The `HostComms` trait provides a unified, hardware-agnostic communication
+abstraction
+for target firmware operating in resource-constrained environments. This allows
+the
+Embedded Test Server (ETS) running on-target to separate physical transport
+mechanics (such as UART, USB CDC, TCP, or debug probes) from test execution and
+telemetry dispatch.
+Host-side demultiplexing, session management, and decoding are owned by
+`control-rs-ets-host::Session` (`ets-host-design.md`), while user presentation
+is handled by `control-rs-tui` (`tui/tui-design.md`).
 
 ---
 
@@ -79,21 +81,22 @@ The `HostComms` architecture focuses on the **target-side (microcontroller)**
 execution environment:
 
 1. **Target-side Trait & Drivers**: A zero-cost abstraction trait (`HostComms`)
-   and associated concrete peripheral drivers (UART DMA, SEGGER RTT, Ethernet MAC/PHY)
-   that pack telemetry data, frame packets, and poll for inbound commands without dynamic
+   and associated concrete peripheral drivers (UART DMA, USB CDC, TCP)
+   that pack telemetry data, frame packets, and poll for inbound commands
+   without dynamic
    allocation.
-2. **Wire Framing & Postcard Payloads**: Compact binary framing (Sync Header, length,
-   payload, CRC-16) wrapping `postcard`-serialized Rust enum schemas.
-3. **Host Counterpart**: The target-side stream is consumed on the PC host by
-   `control-rs-ets-host::ETSBridge` (`../ets-host/ets-host-design.md`), which
-   demultiplexes packets and feeds decoded events to `control-rs-tui`
-   (`../tui/tui-design.md`).
-
-Target implementation relies on:
-
-* Bare-metal embedded Rust (`#![no_std]`, `core::fmt`), asynchronous peripherals, or DMA drivers.
-* High-efficiency binary serialization format design and bitwise framing algorithms (`postcard`, sync-byte framing, CRC-16).
-* Fast panic hook telemetry for fatal trap capture.
+2. **Wire Framing & Postcard Payloads**: Compact binary framing (`0xAA 0x55`
+   sync header, length,
+   payload, CRC-16) wrapping `postcard`-serialized Rust enum
+   schemas [1], [3], [4].
+3. **Serial Monitor Text Compatibility**: Built-in ASCII parsing (`FromStr`) and
+   formatting (`Display`)
+   for commands and telemetry directly on the enum schemas, allowing standard
+   serial terminal interaction.
+4. **Host Counterpart**: The target-side stream is consumed on the PC host by
+   `control-rs-ets-host::Session` (`ets-host-design.md`), which
+   feeds decoded events to `control-rs-tui` (`tui/tui-design.md`) or automated
+   CI runners.
 
 ```mermaid
 graph TD
@@ -105,26 +108,26 @@ graph TD
         end
 
         subgraph Concrete Implementations
-            RTT[RttDriver]
-            UART[UartDriver]
-            ETH[EthDriver]
+            UART[UartDriver / USB CDC]
+            ETH[TcpDriver]
+            CUST[CustomDriver]
         end
 
         SRV <-->|" poll_command() \n send_telemetry() \n flush() "| HC_TRAIT
-        HC_TRAIT <-.-> RTT
         HC_TRAIT <-.-> UART
         HC_TRAIT <-.-> ETH
+        HC_TRAIT <-.-> CUST
     end
 
-    RTT <-->|"SWD / RTT Buffer"| BRG
-    UART <-->|"Serial Port / USB CDC"| BRG
-    ETH <-->|"TCP/IP Socket"| BRG
+    UART <-->|" Serial Port / USB CDC "| SESS
+    ETH <-->|" TCP Socket "| SESS
+    CUST <-->|" Custom Stream "| SESS
 
     subgraph "Host Environment"
-        BRG["control-rs-ets-host (ETSBridge)"]
+        SESS["control-rs-ets-host (Session)"]
         UI["control-rs-tui (TUI)"]
-        BRG -->|Parsed Events & Logs| UI
-        UI -->|Commands| BRG
+        SESS -->|Events & Logs| UI
+        UI -->|Commands| SESS
     end
 ```
 
@@ -137,17 +140,17 @@ graph TD
 Serves: FR-1
 
 The core of the abstraction is the `HostComms` trait. Implementations of this
-trait encapsulate the hardware-specific details of reading and writing bytes.
+trait encapsulate the hardware-specific details of reading and writing bytes:
 
 ```rust
 pub trait HostComms {
     /// The error type associated with transport failures.
     type Error;
 
-    /// Closes the communication interface (e.g. signaling semihosting exit).
+    /// Closes the communication interface (for example, signaling semihosting exit).
     fn close(&mut self) {}
 
-    /// Closes the communication interface with a failure/error status.
+    /// Closes the communication interface with a failure or error status.
     fn close_on_failure(&mut self) {}
 
     /// Flush any pending buffered data out to the physical interface.
@@ -167,7 +170,8 @@ pub trait HostComms {
 ```
 
 The associated type `Error` allows concrete drivers to bubble up
-hardware-specific failures (for example, framing errors, overflow flags, socket
+hardware-specific failures (for example, framing errors, overflow flags, or
+socket
 disconnects) to the calling Server loop.
 
 #### 4.2. Command Schema & Binary Serialization
@@ -178,31 +182,31 @@ Commands originating from the host are defined by a strict, shared Rust schema
 to ensure structural alignment:
 
 ```rust
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Command {
-    /// Request the target to stream the list of all suites, tests and settings.
     ListSuites,
-    /// Request execution of a specific test.
     RunExecutable {
-        /// The ID of the test suite to execute.
         suite_id: u16,
-        /// The ID of the test within the suite.
         test_id: u16,
     },
-    /// Update a setting's value.
     SetSetting {
-        /// The ID of the setting to update.
         setting_id: u16,
-        /// The ID of the suite containing the setting.
         suite_id: u16,
-        /// The new value of the setting.
         value: SettingValue,
     },
-    /// Request the target to reset.
     TryReset,
+    StartTask {
+        suite_id: u16,
+        task_id: u16,
+        ticks: Option<u32>,
+    },
+    TaskInput {
+        payload: heapless::Vec<u8, 64>,
+    },
+    StopTask,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Telemetry<'a> {
     DiscoveryComplete,
     Log(LogMessage<'a>),
@@ -212,46 +216,50 @@ pub enum Telemetry<'a> {
     TargetPanic(PanicReport<'a>),
     TestInfo(TestInfo<'a>),
     TestStateChange(TestStateChange),
-    /// Appended variant carrying protocol revision and target hardware metadata.
     TargetInfo {
         protocol_version: u8,
         board_id: u16,
         core_clock_hz: u32,
         fpu_flags: u8,
     },
+    TaskSample {
+        timestamp_us: u64,
+        sample_count: u32,
+        dropped_count: u32,
+        payload: &'a [u8],
+    },
+    TaskStopped {
+        reason: StopReason,
+    },
 }
 ```
 
 To minimize parsing overhead and memory usage in a `#![no_std]` environment, the
-architecture uses the **`postcard`** crate.
+architecture uses the `postcard` crate [1].
 
 Postcard achieves a minimal wire footprint through:
 
 * **Varints**: Variable-length integer encoding that compresses smaller
-  numbers (like enum variants and array bounds) into fewer bytes.
-* **Endianness**: Explicit Little-Endian byte ordering, which matches the native
-  architecture of common microcontrollers (ARM Cortex-M, RISC-V), avoiding
-  CPU-intensive byte-swapping.
-* **Zero Allocation**: Serialization is done directly into pre-allocated static
-  buffers (such as `heapless::Vec`) or streaming writers to mitigate stack
-  overflow risks on low-resource targets.
-
+  numbers into fewer bytes [1].
+* **Endianness**: Explicit Little-Endian byte ordering matching native
+  microcontroller architectures (ARM Cortex-M, RISC-V).
+* **Zero Allocation**: Serialization directly into pre-allocated static
+  buffers [1].
 
 ##### 4.2.1. Discriminant Stability and `PROTOCOL_VERSION`
 
-`postcard` encodes a tagged union as "a `varint(u32)` containing the
-discriminant, followed by the encoded value matching that discriminant"
-[1], and encodes a struct "as the elements that comprise it, in
-their order of definition (top to bottom)" [1]. Variant order and
-field order are therefore part of the wire contract, not an implementation
-detail: inserting a variant ahead of an existing one renumbers every later
-discriminant, and the resulting frame still passes its CRC.
+`postcard` encodes a tagged union as a `varint(u32)` discriminant followed by
+the variant value [1], [2]. Variant order and field order are therefore part of
+the wire contract: inserting a variant ahead of an existing one renumbers every
+later discriminant.
 
-Serde's externally tagged representation, which postcard uses, is
-"characterized by being able to know which variant we are dealing with before
-beginning to parse the content of the variant" [2], and is "the only
-one that works in no-alloc projects" [2], so the target cannot adopt
-a self-describing alternative under C-1 and NFR-2.
+FR-4 and FR-5 are discharged by `PROTOCOL_VERSION = 2` and
+`Telemetry::TargetInfo`.
+The target transmits `Telemetry::TargetInfo` carrying `protocol_version`,
+`board_id`,
+`core_clock_hz`, and `fpu_flags` as the first frame of discovery. A host that
+receives
+a mismatching protocol version terminates the session immediately.
 
 FR-4 and FR-5 are discharged by `PROTOCOL_VERSION` and
 `Telemetry::TargetInfo` (§9 Step 4), both in `control-rs-ets::comms`.
@@ -267,15 +275,12 @@ check (`../ets-host/ets-host-design.md` §4.3), while `control-rs-tui`
 (`../tui/tui-design.md` FR-1) consumes the board and clock metadata to populate
 the header.
 
-Two rules keep the constant honest:
+- Variants are appended, never inserted or reordered.
+- Existing variant payload fields and their order are immutable.
 
-- Variants are appended, never inserted or reordered. Appending leaves existing
-  discriminants unchanged.
-- Existing variant payload fields and their order are immutable; modifying,
-  removing, or reordering fields requires defining a new variant or incrementing
-  `PROTOCOL_VERSION`.
+#### 4.3. Direct Text Line Compatibility
 
-#### 4.3 Log Payload Representation
+Serves: FR-3
 
 Serves: FR-2, NFR-2
 
@@ -286,20 +291,18 @@ or string slices within `postcard`-serialized enums with no on-target string for
 (see `embedded-test-server-design.md` §7). Deferred formatting via external compression
 crates is deferred to future work (see §6.3):
 
-```rust
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
-pub struct LogMessage<'a> {
-    /// The log text payload.
-    pub payload: &'a str,
-    /// The ID of the test suite.
-    pub suite_id: u16,
-    /// The ID of the test executable.
-    pub test_id: u16,
-    /// Microseconds elapsed since boot / epoch.
-    pub timestamp_us: u64,
-}
-```
+- `Command::from_str` parses plain human commands:
+    - `list` -> `Command::ListSuites`
+    - `run <suite> <test>` -> `Command::RunExecutable`
+    - `set <suite> <param> <val>` -> `Command::SetSetting`
+    - `start <suite> <task> [ticks]` -> `Command::StartTask`
+    - `stop` -> `Command::StopTask`
+    - `reset` -> `Command::TryReset`
+- `Telemetry::fmt` writes human-readable ASCII lines:
+    - `INFO: <suite_name> test_count=<N>`
+    - `PASS: <suite_id>.<test_id> (cycles=<C>, time_us=<T>, stack=<S>)`
+    - `PANIC: <file>:<line>: <message>`
+    - `SAMPLE: count=<N> dropped=<D> data=<bytes>`
 
 #### 4.4. Packet Framing & Consistency
 
@@ -322,22 +325,18 @@ integrity validation:
   statefully byte-by-byte, checking for the sync header, validating lengths and
   confirming the CRC-16 checksum before deserializing.
 
-#### 4.5. Target-Side Driver Implementations
+Serial channels operate as continuous byte streams without packet
+boundaries [4].
+The binary protocol segments packets using sync headers and CRC-16 checksums:
 
 Serves: FR-1, C-3
 
 Users are responsible for implementing the `HostComms` trait for their target
 board.
 
-```rust
-// Example skeleton for a target UART implementation
-struct UartComms {
-    uart: hardware::Uart,
-    buffer: heapless::Vec<u8, 256>,
-}
+#### 4.5. Outbound Send Policy and CommsLock
 
-impl HostComms for UartComms {
-    type Error = hardware::Error;
+Serves: FR-7, FR-8
 
     fn poll_command(&mut self) -> Result<Option<Command>, Self::Error> {
         // Non-blocking read and framing parsing logic
@@ -374,22 +373,18 @@ remains agnostic to which host mechanism reads its framed stream.
 ### 5. Alternatives
 
 * **Text-Based Serialization (JSON, XML)**: Considered for ease of debugging but
-  rejected. Verbose text formats consume excessive bandwidth and require
-  significant CPU cycles and allocation on the target to parse and format.
+  rejected as primary wire format due to bandwidth and allocation overhead.
+  Text compatibility is instead provided through zero-allocation `FromStr` and
+  `Display`
+  methods on the native enum types.
 * **Protobuf & FlatBuffers**: Protobuf requires a memory-allocation-heavy
   deserialization step, which is unacceptable under strict `#![no_std]`.
-  FlatBuffers avoids parsing overhead (zero-copy) but consumes a larger memory
-  footprint due to strict alignment padding and has a less ergonomic API for
-  bare-metal targets. Postcard was selected for its native Rust type mapping,
-  zero-allocation design and variable-length integer compression. Although COBS
-  framing was considered for packet delimiting, the final implementation uses a
-  sync-byte and length-based frame header with CRC-16 checksums to minimize
-  target-side processing and framing overhead.
-* **Standard Printing (`printf`, `core::fmt`)**: Rejected for primary logging
-  because it stores massive static format string templates in target flash
-  memory and formats them at runtime, causing significant execution delays.
-  Deferred formatting (`defmt`) is the identified replacement; it is
-  deferred and is not a dependency (§6.3).
+  Postcard was selected for its native Rust type mapping, zero-allocation design
+  and variable-length integer compression [1].
+* **Standard Printing (`printf`)**: Rejected for primary telemetry because it
+  stores
+  large static format string templates in Flash and consumes excessive CPU
+  cycles.
 
 ---
 
@@ -424,71 +419,39 @@ Target: 90% line coverage of the `comms` module, measured with
 
 #### 6.2 Acceptance
 
-| Claim | Oracle | Measure | Bound |
-|:------|:-------|:--------|:------|
-| Round-trip fidelity | The serializer's own output re-read by the deserializer | Field equality across every variant | Exact |
-| Golden vector stability | Checked-in bytes per variant | Byte equality | Exact |
-| Corrupted frame rejection | Frame with one flipped payload byte | Frames delivered upward | 0 |
-| Version mismatch refused | Discovery response with a foreign `PROTOCOL_VERSION` | Session outcome | Refused before any command is issued |
-| Target metadata accuracy | Hardware registers and sys_clock | Frequency and board ID equality | Exact match with target board config |
-| Serialization stack cost | Stack painting across the encode path | Peak bytes | Within the per-target budget of `cpu-profiler-design.md` |
-| Telemetry jitter | Control-loop period with and without telemetry enabled | Added jitter | $\le 10\ \mu\text{s}$ (NFR-1) |
-| Allocation freedom | Disassembly and source inspection | Allocator symbols on the transport path | 0 |
-
-The `CRC_16_IBM_SDLC` parameterization is taken from the `crc` crate's
-well-known algorithm set, whose documented check value for the standard input
-`123456789` is `0x906e` [3]; the implementation is expected to
-reproduce that value.
+| Claim                     | Oracle                                             | Measure                             | Bound         |
+|:--------------------------|:---------------------------------------------------|:------------------------------------|:--------------|
+| Round-trip fidelity       | Serializer output re-read by deserializer          | Field equality across every variant | Exact         |
+| Golden vector stability   | Checked-in bytes per variant                       | Byte equality                       | Exact         |
+| Corrupted frame rejection | Frame with flipped payload byte                    | Frames delivered upward             | 0             |
+| Version mismatch refused  | Discovery response with foreign `PROTOCOL_VERSION` | Session outcome                     | Refused       |
+| Serialization stack cost  | Stack measurement across encode path               | Peak bytes                          | Within budget |
+| Allocation freedom        | Source inspection                                  | Allocator symbols on transport path | 0             |
 
 #### 6.3 Limits
 
-- Compatibility across protocol revisions. FR-4 detects a mismatch; nothing
-  here establishes that any two revisions can interoperate, and postcard places
-  cross-revision compatibility outside the format's scope [1].
-- Ethernet and WebSocket transports. C-3 admits Ethernet, but driver implementation
-  and network performance are not currently verified.
-- Behaviour under sustained line corruption. Rejection is tested for a single
-  corrupted frame, not for a continuously noisy link.
-- Absolute latency of the link. NFR-1 bounds added jitter, not end-to-end
-  latency, and no latency figure is measured.
-- `defmt` compression ratios and deferred formatting. Deferred as future work;
-  active baseline is postcard binary schemas without on-target formatting.
-- Hardware watchdog integration and lockup recovery. Deferred to future work;
-  target reset operates cooperatively via `Command::TryReset`.
+- Compatibility across protocol revisions. Cross-revision compatibility is not
+  supported; differing `PROTOCOL_VERSION` values result in session termination.
+- Hardware watchdog integration. Target reset operates cooperatively via
+  `Command::TryReset`.
 
 ### 7. Performance & Resource Considerations
 
-* **Solver Timing Budget**: ETS solvers operate on strict millisecond steps. The
-  entire target execution block—including controls, sensor reads and telemetry
-  serialization—must complete before the solver step expires. Late responses are
-  flagged as timing failures.
-* **Static Allocation Bounds**: All target buffer structures are statically
-  allocated using `heapless` types. Storing large data blocks requires chunking
-  to prevent stack overflows, as no heap is available.
-* **Transport Comparison**:
-
-| Transport Protocol  | Physical Interface  | CPU Overhead                                | Implementation Complexity                               | Primary Use Case in HIL Architectures                         |
-|:--------------------|:--------------------|:--------------------------------------------|:--------------------------------------------------------|:--------------------------------------------------------------|
-| **UART (with DMA)** | TX, RX, GND         | Low (DMA handles data movement)             | Medium (Requires async executor and DMA configuration)  | Standard serial telemetry, electrically isolated test setups. |
-| **Ethernet**        | RJ45 / Twisted Pair | High (Requires full TCP/IP stack execution) | High (Requires network routing and MAC/PHY integration) | High-bandwidth, remote networked test rigs.                   |
-| **SEGGER RTT**      | SWD / JTAG pins     | Minimal (In-memory copy only)               | Low (Utilizes existing debug hardware)                  | High-speed, low-overhead tracing and debug polling.           |
+* **Buffer Bounds**: Message buffers are sized to `MAX_FRAME_SIZE = 518` bytes,
+  fitting comfortably in small embedded RAM targets without dynamic heap.
+* **Non-Blocking Telemetry**: In high-rate `FreeRunning` mode, samples that
+  cannot
+  be queued immediately are counted and dropped to prevent real-time deadline
+  misses.
 
 ---
 
 ### 8. Risks & Open Questions
 
-* **ELF Synchronization Risk (if `defmt` is adopted)**: Since `defmt` strips
-  string templates from the binary, the host must use the exact matching ELF file to decode log indices.
-  If the target firmware is updated and the host references an outdated ELF
-  file, the telemetry log will decode as gibberish.
-* **Non-Blocking RTT Overflow**: In non-blocking RTT mode, if telemetry is
-  generated faster than the SWD probe polls target RAM, older packets will be
-  overwritten. This data loss risk must be monitored via buffer occupancy
-  metrics.
-* **probe-rs Board Support Limits**: Some legacy or highly custom
-  microcontrollers are not supported by the `probe-rs` CMSIS-Pack library.
-  Developers on these platforms must fall back to standard serial/TCP inputs,
-  losing SWD background RAM access but maintaining basic HostComms telemetry.
+* **Line Noise**: Asynchronous serial links may experience noise bursts. The
+  combination
+  of sync headers and CRC-16 ensures corrupted packets are dropped rather than
+  executed.
 
 ---
 
@@ -512,13 +475,17 @@ reproduce that value.
 
 ## References
 
-[1] J. Munns, "Wire format," *The postcard wire specification*. [Online].
+[1] J. Munns, "Wire format," *The postcard wire specification*, 2026. [Online].
 Available: https://postcard.jamesmunns.com/wire-format. Accessed: Sep. 9, 2026.
 
-[2] Serde contributors, "Enum representations," *Serde documentation*.
+[2] Serde contributors, "Enum representations," *Serde documentation*, 2026.
 [Online]. Available: https://serde.rs/enum-representations.html. Accessed:
 Sep. 9, 2026.
 
 [3] crc-rs contributors, "*crc*: Rust implementation of CRC with support of
-various standards." [Online]. Available: https://docs.rs/crc. Accessed:
+various standards," 2026. [Online]. Available: https://docs.rs/crc. Accessed:
 Sep. 9, 2026.
+
+[4] L. L. Peterson and B. S. Davie, *Computer Networks: A Systems Approach*, 6th
+ed., 2024. [Online].
+Available: https://book.systemsapproach.org/. Accessed: Jun. 27, 2026.
