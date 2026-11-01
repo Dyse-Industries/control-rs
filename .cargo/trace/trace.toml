@@ -13,6 +13,9 @@ files = [
     "documentation/ets/cpu-profiler-design.md",
     "documentation/ets/test-suite-design.md",
     "documentation/ets/macros-design.md",
+    "documentation/ets/host-comm-design.md",
+    "documentation/ets/ets-executive-design.md",
+    "documentation/ets/embedded-test-server-design.md",
 ]
 doc_id = '^#\s+.*\((?P<doc>[a-z0-9-]+)\)'
 definition = '^\s*- \*\*(?:FR|NFR|C)-'
