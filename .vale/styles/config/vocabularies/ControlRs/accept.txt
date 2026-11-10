@@ -52,6 +52,8 @@ Claessen
 Clippy
 Cmp
 Cobertura
+Codec
+Codecs
 Codegen
 Cognitect
 Codomain
@@ -162,6 +164,7 @@ Hwang
 ICs
 IDEs
 idsp
+IRQs
 ISRs
 Igual
 Implementability
@@ -673,6 +676,7 @@ multicore
 multilinear
 mut
 mutants
+mutex
 mutexes
 mwdg
 my_flag
@@ -938,3 +942,12 @@ Feder
 Motwani
 classDef
 px
+invocable
+lockless
+maskable
+Maskable
+preallocated
+unconfigured
+Unconfigured
+uncontended
+Uncontended

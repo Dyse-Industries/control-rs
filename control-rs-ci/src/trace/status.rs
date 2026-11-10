@@ -1989,12 +1989,12 @@ mod tests {
             })
             .collect();
         TraceConfig {
-            id: r"(?:FR|NFR|C)-[0-9]+[a-z]?".to_string(),
-            condition: r"VC-[0-9]+(?:\.[0-9]+[a-z]?)?".to_string(),
+            id: r"(?:FR|NFR|C)-[0-9]+(?:\.[0-9]+)*[a-z]?".to_string(),
+            condition: r"VC-[0-9]+(?:\.[0-9]+)*[a-z]?".to_string(),
             doc: "[a-z0-9-]+".to_string(),
             files: vec!["docs".to_string()],
             doc_id: r"^#\s+.*\((?P<doc>[a-z0-9-]+)\)".to_string(),
-            definition: r"^- \*\*(?:FR|NFR|C)-".to_string(),
+            definition: r"^\s*- \*\*(?:FR|NFR|C)-".to_string(),
             verification: r"^\| *(?:[a-z0-9-]+#)?VC-".to_string(),
             method,
             retired: vec![],

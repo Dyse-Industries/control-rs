@@ -28,7 +28,6 @@
     clippy::similar_names
 )]
 
-#[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod storage_test_suite {
     use crate::assert_almost_eq;
     use crate::math::ConversionError;
@@ -1662,9 +1661,8 @@ pub mod storage_test_suite {
 }
 
 // Property-based coverage of `ArrayStorage`/`StaticStorageView` index-mapping
-// invariants (FR-1 of `storage-trait-design.md`, §6.1 item 2). Kept outside
-// the `#[ets_suite]`-wrapped module above: `proptest` is a host-only
-// dev-dependency, unavailable to the `no_std`/on-target `ets` feature build.
+// invariants (FR-1 of `storage-trait-design.md`, §6.1 item 2). Kept separate
+// from unit tests: `proptest` is a host-only dev-dependency.
 #[cfg(test)]
 mod storage_property_tests {
     use crate::math::num_types::Const;

@@ -80,12 +80,9 @@ workspace = true
 
 [dependencies]
 libm = { version = "0.2.16", default-features = false }
-control-rs-macros = { path = "control-rs-macros", version = "0.1.0", optional = true }
-control-rs-ets = { path = "control-rs-ets", version = "0.1.0", optional = true }
 
 [features]
 std = []
-ets = ["dep:control-rs-macros", "dep:control-rs-ets"]
 
 [dev-dependencies]
 proptest = "1"

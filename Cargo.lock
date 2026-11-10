@@ -355,8 +355,6 @@ dependencies = [
 name = "control-rs"
 version = "0.0.0"
 dependencies = [
- "control-rs-ets",
- "control-rs-macros",
  "criterion",
  "libm",
  "proptest",
@@ -399,6 +397,7 @@ dependencies = [
 name = "control-rs-ets"
 version = "0.1.0"
 dependencies = [
+ "control-rs-macros",
  "cortex-m",
  "crc",
  "postcard",

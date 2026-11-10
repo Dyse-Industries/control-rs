@@ -26,7 +26,6 @@
     clippy::float_cmp
 )]
 
-#[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod matrix_test_suite {
     use crate::assert_almost_eq;
     use crate::math::LinAlgError;
@@ -913,9 +912,8 @@ pub mod matrix_test_suite {
 }
 
 // Property-based coverage of algebraic matrix identities (§6.1.2 of
-// `matrix-design.md`). Kept outside the `#[ets_suite]`-wrapped module above:
-// `proptest` is a host-only dev-dependency, unavailable to the `no_std`/
-// on-target `ets` feature build (matches `storage_tests.rs`'s convention).
+// `matrix-design.md`). Kept separate from unit tests: `proptest` is a host-only
+// dev-dependency.
 #[cfg(test)]
 mod matrix_property_tests {
     use crate::math::num_types::{Const, Dim};

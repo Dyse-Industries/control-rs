@@ -486,7 +486,12 @@ pub fn scan_markdown(file: &str, source: &str, rules: &Rules) -> MarkdownScan {
         if rules.definition.is_match(line)
             && let Some(id) = rules.ids(line, doc).next()
         {
-            rows.push(row(id, DEFINITION, at, &definition_text(&lines, idx)));
+            rows.push(row(
+                id,
+                DEFINITION,
+                at,
+                &definition_text(&lines, idx, &rules.definition),
+            ));
         } else if rules.verification.is_match(line) {
             let cell = first_cell(line);
             match scan_condition_line(line, cell, at, &ctx) {
@@ -870,12 +875,19 @@ fn closes(line: &str, open: Fence) -> bool {
 }
 
 /// The text of the definition at `lines[idx]`: its line and the indented,
-/// non-blank lines that follow it.
-fn definition_text(lines: &[Line<'_>], idx: usize) -> String {
+/// non-blank lines that follow it, stopping before any subsequent definition.
+fn definition_text(
+    lines: &[Line<'_>],
+    idx: usize,
+    definition: &Regex,
+) -> String {
     let mut parts = Vec::new();
     for (pos, &(_, line)) in
         lines.get(idx..).unwrap_or_default().iter().enumerate()
     {
+        if pos > 0 && definition.is_match(line) {
+            break;
+        }
         let continues =
             line.starts_with([' ', '\t']) && !line.trim().is_empty();
         if pos > 0 && !continues {
@@ -928,12 +940,12 @@ accepted = ["Accepted"]
 
     const FILE: &str = "docs/widget-design.md";
 
-    const KEYS: &str = r#"id = '(?:FR|NFR|C)-[0-9]+[a-z]?'
-condition = 'VC-[0-9]+(?:\.[0-9]+[a-z]?)?'
+    const KEYS: &str = r#"id = '(?:FR|NFR|C)-[0-9]+(?:\.[0-9]+)*[a-z]?'
+condition = 'VC-[0-9]+(?:\.[0-9]+)*[a-z]?'
 doc = '[a-z0-9-]+'
 files = ["docs/*-design.md"]
 doc_id = '^#\s+.*\((?P<doc>[a-z0-9-]+)\)'
-definition = '^- \*\*(?:FR|NFR|C)-'
+definition = '^\s*- \*\*(?:FR|NFR|C)-'
 verification = '^\| *(?:[a-z0-9-]+#)?VC-'
 "#;
 
@@ -1180,6 +1192,46 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
     }
 
     #[test]
+    fn nested_requirements_scan_and_link() {
+        let source = "\
+# Widget (widget)
+
+- **FR-1 — Transport**: The widget shall maintain transport.
+  - **FR-1.1 — Polling**: The widget shall poll commands.
+  - **FR-1.2 — Errors**: The widget shall propagate errors.
+
+| Condition | Requirement | Method    | Target        | Criterion |
+|:----------|:------------|:----------|:--------------|:----------|
+| VC-1.0    | FR-1        | `link`    | `widget#FR-1.1` | Link      |
+| VC-1.1    | FR-1.1      | `libtest` | `w::poll`     | Polling   |
+| VC-1.2    | FR-1.2      | `libtest` | `w::err`      | Errors    |
+";
+        let (rows, defects) = scan_markdown(FILE, source, &rules());
+        assert!(defects.is_empty(), "unexpected defects: {defects:?}");
+        assert_eq!(rows.len(), 6);
+
+        let def1 = rows.iter().find(|r| r.id == "widget#FR-1").unwrap();
+        assert_eq!(
+            def1.text,
+            "- **FR-1 — Transport**: The widget shall maintain transport."
+        );
+
+        let def1_1 = rows.iter().find(|r| r.id == "widget#FR-1.1").unwrap();
+        assert_eq!(
+            def1_1.text,
+            "- **FR-1.1 — Polling**: The widget shall poll commands."
+        );
+
+        let vc1_0 = rows.iter().find(|r| r.id == "widget#VC-1.0").unwrap();
+        assert_eq!(vc1_0.parents, vec!["widget#FR-1".to_string()]);
+        assert_eq!(vc1_0.method.as_deref(), Some("link"));
+
+        let vc1_1 = rows.iter().find(|r| r.id == "widget#VC-1.1").unwrap();
+        assert_eq!(vc1_1.parents, vec!["widget#FR-1.1".to_string()]);
+        assert_eq!(vc1_1.method.as_deref(), Some("libtest"));
+    }
+
+    #[test]
     fn duplicate_definition_is_reported_once_at_the_second() {
         let source = format!("{CLEAN}\n- **FR-1 — Again**: It shall repeat.\n");
         let (rows, _) = scan_markdown(FILE, &source, &rules());
@@ -1248,7 +1300,7 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
     #[test]
     fn invalid_patterns_are_rejected() {
         let bad = format!("{KEYS}retired = []")
-            .replace("definition = '^- \\*\\*", "definition = '(");
+            .replace("definition = '^\\s*- \\*\\*", "definition = '(");
         let config: TraceConfig = toml::from_str(&bad).unwrap();
         assert!(matches!(
             config.rules(Path::new("trace.toml")),
@@ -1417,7 +1469,7 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
     #[test]
     fn condition_pattern_is_required() {
         let missing =
-            KEYS.replace("condition = 'VC-[0-9]+(?:\\.[0-9]+[a-z]?)?'\n", "");
+            KEYS.replace("condition = 'VC-[0-9]+(?:\\.[0-9]+)*[a-z]?'\n", "");
         let toml_str = format!("{missing}retired = []");
         assert!(toml::from_str::<TraceConfig>(&toml_str).is_err());
     }
@@ -1487,6 +1539,7 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
 
     #[test]
     fn definition_text_indentation_boundaries() {
+        let def_re = Regex::new(r"^\s*- \*\*(?:FR|NFR|C)-").unwrap();
         let lines: Vec<Line<'_>> = vec![
             (1, "- **FR-1**: first line"),
             (2, "  continuation with spaces"),
@@ -1494,7 +1547,7 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
             (4, ""),
             (5, "  after blank line"),
         ];
-        let text = definition_text(&lines, 0);
+        let text = definition_text(&lines, 0, &def_re);
         assert_eq!(
             text,
             "- **FR-1**: first line\n  continuation with spaces\n\tcontinuation with tab"
@@ -1502,7 +1555,21 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
 
         let single: Vec<Line<'_>> =
             vec![(1, "- **FR-2**: solo line"), (2, "next paragraph")];
-        assert_eq!(definition_text(&single, 0), "- **FR-2**: solo line");
+        assert_eq!(
+            definition_text(&single, 0, &def_re),
+            "- **FR-2**: solo line"
+        );
+
+        let nested: Vec<Line<'_>> = vec![
+            (1, "- **FR-1**: parent"),
+            (2, "  - **FR-1.1**: child"),
+            (3, "    child continuation"),
+        ];
+        assert_eq!(definition_text(&nested, 0, &def_re), "- **FR-1**: parent");
+        assert_eq!(
+            definition_text(&nested, 1, &def_re),
+            "  - **FR-1.1**: child\n    child continuation"
+        );
     }
 
     fn decision(id: &str, status: Option<&str>) -> String {

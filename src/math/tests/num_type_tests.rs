@@ -12,7 +12,7 @@
 //!
 //! Subtraction underflow is a `compile_fail` doctest on `num_types` itself
 //! (`U2 - U5`). This suite lives behind
-//! `#[cfg(any(test, feature = "ets"))]`, which `rustdoc`'s doctest extraction
+//! `#[cfg(test)]`, which `rustdoc`'s doctest extraction
 //! does not set, so `compile_fail` examples placed here never run.
 //!
 //! ## Functional Requirement Coverage (`num-types-design.md`)
@@ -26,7 +26,6 @@
 //!   type arguments every other test in this suite uses.
 //!
 
-#[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod num_type_test_suite {
     use crate::math::num_types::{
         B0, B1, Const, Dim, DimAdd, DimBitAnd, DimBitOr, DimBitXor, DimMax,

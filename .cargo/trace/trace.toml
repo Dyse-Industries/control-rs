@@ -1,5 +1,5 @@
-id = '(?:FR|NFR|C)-[0-9]+[a-z]?'
-condition = 'VC-[0-9]+(?:\.[0-9]+[a-z]?)?'
+id = '(?:FR|NFR|C)-[0-9]+(?:\.[0-9]+)*[a-z]?'
+condition = 'VC-[0-9]+(?:\.[0-9]+)*[a-z]?'
 doc = '[a-z0-9-]+'
 files = [
     "documentation/vv/requirement-traceability-design.md",
@@ -7,9 +7,15 @@ files = [
     "documentation/math/fixed-num-design.md",
     "documentation/math/num-traits-design.md",
     "documentation/control-toolboxes/classical-control-design.md",
+    "documentation/ets/embedded-test-server-design.md",
+    "documentation/ets/server-runtime-design.md",
+    "documentation/ets/host-comm-design.md",
+    "documentation/ets/cpu-profiler-design.md",
+    "documentation/ets/test-suite-design.md",
+    "documentation/ets/macros-design.md",
 ]
 doc_id = '^#\s+.*\((?P<doc>[a-z0-9-]+)\)'
-definition = '^- \*\*(?:FR|NFR|C)-'
+definition = '^\s*- \*\*(?:FR|NFR|C)-'
 verification = '^\| *(?:[a-z0-9-]+#)?VC-'
 retired = [
     "requirement-traceability#FR-5",
