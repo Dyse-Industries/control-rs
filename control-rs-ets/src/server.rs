@@ -10,8 +10,7 @@
 //!
 //! - **ETS**: The central coordinator (`Server`) executing suites, managing settings updates,
 //!   and reporting telemetry outcomes back to the host machine.
-//! - **Execution Context**: `Context` wraps host communication mechanisms and CPU profiling metrics
-//!   using thread-safe mutex-free locking (`CommsLock`).
+//! - **Execution Context**: `Context` wraps host communication mechanisms and CPU profiling metrics.
 //! - **Test Index Indicator**: Thread-safe atomic indicator (`TestIndexIndicator`) tracking the active suite
 //!   and test indexes to let exception/panic handlers report where a crash happened.
 
@@ -19,7 +18,7 @@ use core::sync::atomic::{AtomicIsize, Ordering};
 
 use crate::SuiteDescriptor;
 use crate::comms::{
-    Command, CommsLock, HostComms, PROTOCOL_VERSION, Telemetry, TestState,
+    Command, HostComms, PROTOCOL_VERSION, Telemetry, TestState,
 };
 use crate::settings::SettingValue;
 
@@ -41,16 +40,12 @@ pub static CURRENT_TEST: TestIndexIndicator = TestIndexIndicator::new();
 
 // --- Type definitions ---
 
-/// Context object that encapsulates communication, CPU profiling utilities and the communication lock.
+/// Context object that encapsulates communication and CPU profiling utilities.
 ///
-/// This type coordinates accesses to low-level target hardware. To ensure thread safety and avoid race
-/// conditions (for example, between the main event loop and interrupt/exception/panic handlers that
-/// also need to send telemetry), the `Context` holds a `CommsLock`. All public telemetry and poll methods
-/// are run via `_locked` helper methods, ensuring mutual exclusion without requiring blocking mutexes
-/// that could cause deadlocks in interrupt-disabled contexts.
+/// This type coordinates access to low-level target hardware, pairing a bidirectional
+/// host communications channel with CPU execution and profiling utilities.
 ///
 /// # Safety
-/// Access to the underlying communication interface is protected by the internal `CommsLock`.
 /// This struct does not use `unsafe` code directly.
 ///
 /// # Panics
@@ -78,13 +73,11 @@ pub static CURRENT_TEST: TestIndexIndicator = TestIndexIndicator::new();
 /// # }
 ///
 /// let mut ctx = Context::new(MockComms, MockProfiler);
-/// assert!(ctx.flush_locked().is_ok());
+/// assert!(ctx.comms.flush().is_ok());
 /// ```
 pub struct Context<C, P> {
     /// Host communication channel.
     pub comms: C,
-    /// Thread-safe communications lock to protect comms.
-    pub comms_lock: CommsLock,
     /// CPU profiling and execution utilities.
     pub cpu_utils: P,
 }
@@ -175,27 +168,7 @@ pub struct TestIndexIndicator {
 }
 
 #[allow(clippy::type_complexity)]
-impl<C: HostComms, P> Context<C, P> {
-    /// Flushes comms safely by acquiring the comms lock first.
-    ///
-    /// If the lock is already held (for example, by a panic handler or an interrupt), this method returns `Ok(false)`
-    /// immediately to avoid reentrancy deadlock or state corruption.
-    ///
-    /// # Returns
-    /// * `Result<bool, C::Error>` - Success flag (true if locked and flushed, false if lock was busy) or transport error status.
-    ///
-    /// # Errors
-    /// Returns a transport error if flushing fails.
-    pub fn flush_locked(&mut self) -> Result<bool, C::Error> {
-        if self.comms_lock.try_lock() {
-            let res = self.comms.flush();
-            self.comms_lock.unlock();
-            res.map(|()| true)
-        } else {
-            Ok(false)
-        }
-    }
-
+impl<C, P> Context<C, P> {
     /// Creates a new `Context`.
     ///
     /// # Arguments
@@ -205,84 +178,7 @@ impl<C: HostComms, P> Context<C, P> {
     /// # Returns
     /// * `Self` - Context instance.
     pub const fn new(comms: C, cpu_utils: P) -> Self {
-        Self {
-            comms,
-            comms_lock: CommsLock::new(),
-            cpu_utils,
-        }
-    }
-
-    /// Polls a command safely by acquiring the comms lock first.
-    ///
-    /// If the lock is already held, this returns `Ok(None)` immediately to prevent nested/concurrent polls.
-    ///
-    /// # Returns
-    /// * `PollResult<C::Error>` - Success (optionally wrapped command) or transport error status.
-    ///
-    /// # Errors
-    /// Returns a transport error if polling fails.
-    pub fn poll_command_locked(&mut self) -> Result<Option<Command>, C::Error> {
-        if self.comms_lock.try_lock() {
-            let res = self.comms.poll_command();
-            self.comms_lock.unlock();
-            res
-        } else {
-            Ok(None)
-        }
-    }
-
-    /// Sends telemetry and flushes safely by acquiring the comms lock first.
-    ///
-    /// If the lock is already held, this returns `Ok(false)` immediately. This is the primary safe interface
-    /// for regular telemetry logs.
-    ///
-    /// # Arguments
-    /// * `telemetry` - Reference to the telemetry data structure.
-    ///
-    /// # Returns
-    /// * `Result<bool, C::Error>` - Success flag (true if locked and sent, false if lock was busy) or transport error status.
-    ///
-    /// # Errors
-    /// Returns a transport error if writing or flushing fails.
-    pub fn send_telemetry_and_flush_locked(
-        &mut self,
-        telemetry: &Telemetry<'_>,
-    ) -> Result<bool, C::Error> {
-        if self.comms_lock.try_lock() {
-            let res = self
-                .comms
-                .send_telemetry(telemetry)
-                .and_then(|()| self.comms.flush());
-            self.comms_lock.unlock();
-            res.map(|()| true)
-        } else {
-            Ok(false)
-        }
-    }
-
-    /// Sends telemetry safely by acquiring the comms lock first.
-    ///
-    /// If the lock is already held, this returns `Ok(false)` immediately.
-    ///
-    /// # Arguments
-    /// * `telemetry` - Reference to the telemetry data structure.
-    ///
-    /// # Returns
-    /// * `Result<bool, C::Error>` - Success flag (true if locked and sent, false if lock was busy) or transport error status.
-    ///
-    /// # Errors
-    /// Returns a transport error if writing fails.
-    pub fn send_telemetry_locked(
-        &mut self,
-        telemetry: &Telemetry<'_>,
-    ) -> Result<bool, C::Error> {
-        if self.comms_lock.try_lock() {
-            let res = self.comms.send_telemetry(telemetry);
-            self.comms_lock.unlock();
-            res.map(|()| true)
-        } else {
-            Ok(false)
-        }
+        Self { comms, cpu_utils }
     }
 }
 
@@ -339,7 +235,7 @@ impl<C: HostComms, P: crate::profiler::CPUProfiler> Context<C, P> {
         msg: &'static str,
     ) -> ServerResult<C::Error> {
         let timestamp_us = self.cpu_utils.get_nanos() / 1000;
-        let _ = self.send_telemetry_and_flush_locked(&Telemetry::Log(
+        self.comms.send_telemetry(&Telemetry::Log(
             crate::comms::LogMessage {
                 payload: msg,
                 suite_id,
@@ -347,6 +243,7 @@ impl<C: HostComms, P: crate::profiler::CPUProfiler> Context<C, P> {
                 timestamp_us,
             },
         ))?;
+        self.comms.flush()?;
         Ok(())
     }
 
@@ -374,7 +271,7 @@ impl<C: HostComms, P: crate::profiler::CPUProfiler> Context<C, P> {
             writer.pos
         };
         if let Some(Ok(msg)) = err_buf.get(..pos).map(core::str::from_utf8) {
-            let _ = self.send_telemetry_locked(&Telemetry::Log(
+            self.comms.send_telemetry(&Telemetry::Log(
                 crate::comms::LogMessage {
                     payload: msg,
                     suite_id,
@@ -400,12 +297,7 @@ where
     /// # Returns
     /// * `!` - This function never returns.
     pub fn exit(&mut self) -> ! {
-        if self.context.comms_lock.try_lock() {
-            self.context.comms.close();
-            self.context.comms_lock.unlock();
-        } else {
-            self.context.comms.close();
-        }
+        self.context.comms.close();
         self.context.cpu_utils.exit()
     }
 
@@ -437,7 +329,7 @@ where
     /// transmitting telemetry or flushing fails.
     pub fn run(&mut self) -> ServerResult<C::Error> {
         loop {
-            let cmd = self.context.poll_command_locked()?;
+            let cmd = self.context.comms.poll_command()?;
 
             if let Some(cmd) = cmd {
                 match cmd {
@@ -458,7 +350,7 @@ where
                 }
             }
 
-            let _ = self.context.flush_locked()?;
+            self.context.comms.flush()?;
         }
     }
 
@@ -488,13 +380,14 @@ where
         };
 
         // Update state to Running
-        let _ = self.context.send_telemetry_and_flush_locked(
-            &Telemetry::TestStateChange {
+        self.context
+            .comms
+            .send_telemetry(&Telemetry::TestStateChange {
                 suite_id,
                 test_id,
                 state: TestState::Running,
-            },
-        )?;
+            })?;
+        self.context.comms.flush()?;
 
         // Track globally in case of panic during test execution
         CURRENT_SUITE.set_active(suite_id as usize);
@@ -508,23 +401,24 @@ where
         CURRENT_TEST.set_idle();
 
         // Update state to Passed & Send metric report
-        let _ = self.context.send_telemetry_locked(
-            &Telemetry::TestStateChange {
+        self.context
+            .comms
+            .send_telemetry(&Telemetry::TestStateChange {
                 suite_id,
                 test_id,
                 state: TestState::Passed,
-            },
-        )?;
+            })?;
 
-        let _ = self.context.send_telemetry_and_flush_locked(
-            &Telemetry::MetricReport {
+        self.context
+            .comms
+            .send_telemetry(&Telemetry::MetricReport {
                 suite_id,
                 test_id,
                 cycles: metrics.cycles,
                 time_us: metrics.time_us,
                 stack_peak: metrics.stack_peak,
-            },
-        )?;
+            })?;
+        self.context.comms.flush()?;
 
         Ok(())
     }
@@ -561,15 +455,14 @@ where
         }
 
         // Stream back the updated value to confirm
-        let _ = self.context.send_telemetry_and_flush_locked(
-            &Telemetry::SettingInfo {
-                suite_id,
-                setting_id,
-                name: setting.name(),
-                description: setting.description(),
-                value: setting.get(),
-            },
-        )?;
+        self.context.comms.send_telemetry(&Telemetry::SettingInfo {
+            suite_id,
+            setting_id,
+            name: setting.name(),
+            description: setting.description(),
+            value: setting.get(),
+        })?;
+        self.context.comms.flush()?;
 
         Ok(())
     }
@@ -582,52 +475,48 @@ where
             core_clock_hz: cpu.core_clock_hz(),
             fpu_flags: cpu.fpu_flags(),
         };
-        let _ = self.context.send_telemetry_locked(&info)?;
+        self.context.comms.send_telemetry(&info)?;
         for (suite_id, &suite) in (0_u16..).zip(self.suites.iter()) {
-            let _ =
-                self.context.send_telemetry_locked(&Telemetry::SuiteInfo {
-                    suite_id,
-                    name: suite.name,
-                    description: suite.description,
-                    test_count: suite
-                        .executables
-                        .len()
-                        .try_into()
-                        .unwrap_or(u16::MAX),
-                    setting_count: suite
-                        .settings
-                        .len()
-                        .try_into()
-                        .unwrap_or(u16::MAX),
-                })?;
+            self.context.comms.send_telemetry(&Telemetry::SuiteInfo {
+                suite_id,
+                name: suite.name,
+                description: suite.description,
+                test_count: suite
+                    .executables
+                    .len()
+                    .try_into()
+                    .unwrap_or(u16::MAX),
+                setting_count: suite
+                    .settings
+                    .len()
+                    .try_into()
+                    .unwrap_or(u16::MAX),
+            })?;
 
             for (test_id, exec) in (0_u16..).zip(suite.executables.iter()) {
-                let _ = self.context.send_telemetry_locked(
-                    &Telemetry::TestInfo {
-                        suite_id,
-                        test_id,
-                        name: exec.name,
-                        description: exec.description,
-                    },
-                )?;
+                self.context.comms.send_telemetry(&Telemetry::TestInfo {
+                    suite_id,
+                    test_id,
+                    name: exec.name,
+                    description: exec.description,
+                })?;
             }
 
             for (setting_id, setting) in (0_u16..).zip(suite.settings.iter()) {
-                let _ = self.context.send_telemetry_locked(
-                    &Telemetry::SettingInfo {
-                        suite_id,
-                        setting_id,
-                        name: setting.name(),
-                        description: setting.description(),
-                        value: setting.get(),
-                    },
-                )?;
+                self.context.comms.send_telemetry(&Telemetry::SettingInfo {
+                    suite_id,
+                    setting_id,
+                    name: setting.name(),
+                    description: setting.description(),
+                    value: setting.get(),
+                })?;
             }
         }
 
-        let _ = self
-            .context
-            .send_telemetry_and_flush_locked(&Telemetry::DiscoveryComplete)?;
+        self.context
+            .comms
+            .send_telemetry(&Telemetry::DiscoveryComplete)?;
+        self.context.comms.flush()?;
 
         Ok(())
     }
@@ -1002,40 +891,42 @@ mod tests {
     }
 
     #[test]
-    fn test_context_locked_noop() {
-        let comms = MockComms {
-            commands: Vec::new(),
-            payloads: Vec::new(),
-            flush_count: 0,
-            fail_on_poll: false,
+    fn test_server_metric_report_flush_error() {
+        struct FailingFlushComms {
+            commands: Vec<Command>,
+            fail_flush: bool,
+        }
+        impl HostComms for FailingFlushComms {
+            type Error = &'static str;
+            fn flush(&mut self) -> Result<(), Self::Error> {
+                if self.fail_flush {
+                    Err("Flush failed")
+                } else {
+                    Ok(())
+                }
+            }
+            fn poll_command(&mut self) -> Result<Option<Command>, Self::Error> {
+                Ok(self.commands.pop())
+            }
+            fn send_telemetry(
+                &mut self,
+                _telemetry: &Telemetry<'_>,
+            ) -> Result<(), Self::Error> {
+                Ok(())
+            }
+        }
+
+        let comms = FailingFlushComms {
+            commands: std::vec![Command::RunExecutable {
+                suite_id: 0,
+                test_id: 0,
+            }],
+            fail_flush: true,
         };
-        let mut context = Context::new(comms, HostCPUProfiler);
-        assert!(context.comms_lock.try_lock());
-
-        assert!(!context.flush_locked().unwrap());
-        assert!(context.poll_command_locked().unwrap().is_none());
-        assert!(
-            !context
-                .send_telemetry_and_flush_locked(&Telemetry::DiscoveryComplete)
-                .unwrap()
-        );
-        assert!(
-            !context
-                .send_telemetry_locked(&Telemetry::DiscoveryComplete)
-                .unwrap()
-        );
-
-        assert_eq!(context.comms.payloads, Vec::<Vec<u8>>::new());
-        assert_eq!(context.comms.flush_count, 0);
-
-        context.comms_lock.unlock();
-        assert!(
-            context
-                .send_telemetry_and_flush_locked(&Telemetry::DiscoveryComplete)
-                .unwrap()
-        );
-        assert_eq!(context.comms.payloads.len(), 1);
-        assert_eq!(context.comms.flush_count, 1);
+        let mut server =
+            Server::new(Context::new(comms, HostCPUProfiler), SUITES);
+        let res = server.run_test(0, 0);
+        assert_eq!(res, Err("Flush failed"));
     }
 
     #[test]
@@ -1057,25 +948,6 @@ mod tests {
                 s.exit();
             }));
         assert!(res.is_err());
-
-        let res2 =
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                let mut s = Server::new(
-                    Context::new(
-                        MockComms {
-                            commands: Vec::new(),
-                            payloads: Vec::new(),
-                            flush_count: 0,
-                            fail_on_poll: false,
-                        },
-                        HostCPUProfiler,
-                    ),
-                    SUITES,
-                );
-                assert!(s.context.comms_lock.try_lock());
-                s.exit();
-            }));
-        assert!(res2.is_err());
     }
 
     #[test]
@@ -1370,14 +1242,6 @@ mod tests {
             flush_count: 0,
             fail_on_poll: false,
         }
-    }
-
-    #[test]
-    fn an_unlocked_flush_reaches_the_link() {
-        let mut context = Context::new(quiet_comms(), HostCPUProfiler);
-        assert_eq!(context.flush_locked(), Ok(true));
-        assert_eq!(context.comms.flush_count, 1);
-        assert!(context.comms_lock.try_lock(), "the lock was released");
     }
 
     #[test]
