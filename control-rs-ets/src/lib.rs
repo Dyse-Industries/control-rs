@@ -62,11 +62,11 @@
 #![no_std]
 #![allow(clippy::multiple_crate_versions)]
 
-pub use profiler::CPUProfiler;
 #[cfg(target_arch = "arm")]
 pub use profiler::CortexMProfiler;
 #[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]
 pub use profiler::RiscvProfiler;
+pub use profiler::{CPUProfiler, HostCPUProfiler};
 pub use server::{Context, Server};
 pub use settings::Setting;
 
@@ -152,4 +152,51 @@ pub struct SuiteDescriptor {
     pub name: &'static str,
     /// A slice of configurable settings for this suite.
     pub settings: SettingsSlice,
+}
+
+#[cfg(test)]
+mod tests {
+    use core::sync::atomic::{AtomicBool, Ordering};
+
+    use super::{ExecDescriptor, SuiteDescriptor};
+
+    static CASE_INVOKED: AtomicBool = AtomicBool::new(false);
+
+    fn sample_case_fn() {
+        CASE_INVOKED.store(true, Ordering::Relaxed);
+    }
+
+    #[test]
+    fn test_exec_descriptor_metadata() {
+        CASE_INVOKED.store(false, Ordering::Relaxed);
+        let desc = ExecDescriptor {
+            description: "Verifies step response settling time.",
+            name: "step_settling",
+            test_fn: sample_case_fn,
+        };
+        assert_eq!(desc.name, "step_settling");
+        assert_eq!(desc.description, "Verifies step response settling time.");
+        (desc.test_fn)();
+        assert!(CASE_INVOKED.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn test_flash_descriptor_sizes() {
+        static CASES: [ExecDescriptor; 1] = [ExecDescriptor {
+            description: "Const Flash case",
+            name: "flash_case",
+            test_fn: sample_case_fn,
+        }];
+        static SUITE: SuiteDescriptor = SuiteDescriptor {
+            description: "Const Flash suite",
+            executables: &CASES,
+            name: "flash_suite",
+            settings: &[],
+        };
+        assert!(!core::mem::needs_drop::<ExecDescriptor>());
+        assert!(!core::mem::needs_drop::<SuiteDescriptor>());
+        assert_eq!(SUITE.name, "flash_suite");
+        assert_eq!(SUITE.executables.len(), 1);
+        assert!(SUITE.settings.is_empty());
+    }
 }

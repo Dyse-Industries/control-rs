@@ -11,7 +11,6 @@
 //! - **`HostComms` Trait**: Target-agnostic interface that serial-comms or USB-comms handlers implement.
 //! - **Framed Reader**: `FrameReader` parses incoming stream bytes statefully into verified frame slices.
 //! - **Command/Telemetry Enums**: Defines the protocol message schemas for control instructions and test reporting.
-//! - **`CommsLock`**: An atomic flag lock preventing multiple execution paths from concurrently writing telemetry frames.
 //!
 //! # Usage
 //!
@@ -44,8 +43,6 @@
 //!
 //! > L. L. Peterson and B. S. Davie, "2.3 Framing," in Computer Networks: A Systems Approach, 2024.
 //! >   \[Online\]. Available: <https://book.systemsapproach.org/>. [Accessed: June 27, 2026].
-
-use core::sync::atomic::{AtomicBool, Ordering};
 
 use crate::settings::SettingValue;
 
@@ -302,31 +299,6 @@ pub enum TestState {
     Running,
 }
 
-/// A thread-safe lock using an atomic boolean flag to protect communication resources.
-///
-/// Prevents concurrent execution threads (such as main event loops and exception handlers)
-/// from writing overlapping byte telemetry frames to the shared physical peripheral.
-///
-/// # Safety
-/// This struct does not use `unsafe` code.
-///
-/// # Panics
-/// Locking operations do not panic.
-///
-/// # Example
-/// ```
-/// use control_rs_ets::comms::CommsLock;
-///
-/// let lock = CommsLock::new();
-/// assert!(lock.try_lock());
-/// assert!(!lock.try_lock());
-/// lock.unlock();
-/// assert!(lock.try_lock());
-/// ```
-pub struct CommsLock {
-    locked: AtomicBool,
-}
-
 /// State machine to de-frame a stream of incoming bytes into packets.
 ///
 /// Statefully processes serial stream input byte-by-byte and performs
@@ -377,41 +349,6 @@ pub struct LogMessage<'a> {
 /// | Payload        | variable | `postcard` serialized payload         |
 /// | Checksum       | 2 B      | big-endian CRC-16 (`CRC_16_IBM_SDLC`) |
 pub struct FrameEncoder;
-
-impl Default for CommsLock {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl CommsLock {
-    /// Creates a new, unlocked `CommsLock`.
-    ///
-    /// # Returns
-    /// * `Self` - An unlocked `CommsLock` instance.
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            locked: AtomicBool::new(false),
-        }
-    }
-
-    /// Attempts to acquire the lock. Returns `true` if successful or `false` if already locked.
-    ///
-    /// # Returns
-    /// * `bool` - `true` if lock was acquired successfully, `false` otherwise.
-    #[must_use]
-    pub fn try_lock(&self) -> bool {
-        self.locked
-            .compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed)
-            .is_ok()
-    }
-
-    /// Releases the lock.
-    pub fn unlock(&self) {
-        self.locked.store(false, Ordering::Release);
-    }
-}
 
 impl Default for FrameReader {
     fn default() -> Self {
@@ -845,12 +782,6 @@ mod tests {
     }
 
     #[test]
-    fn test_comms_lock_default() {
-        let lock = CommsLock::default();
-        assert!(lock.try_lock());
-    }
-
-    #[test]
     fn test_host_comms_defaults() {
         struct TestComms;
         impl HostComms for TestComms {
@@ -984,37 +915,6 @@ mod tests {
             assert_eq!(buf[1], 0x55);
             assert!(n >= 6);
         }
-    }
-
-    /// `CommsLock` is a single-holder flag: the first `try_lock` wins, every
-    /// later one fails until `unlock`, and `unlock` is idempotent.
-    #[test]
-    fn test_comms_lock_excludes_second_holder() {
-        let lock = CommsLock::new();
-
-        assert!(lock.try_lock(), "an unlocked lock must be acquirable");
-        for _ in 0..4 {
-            assert!(!lock.try_lock(), "a held lock must stay held");
-        }
-
-        lock.unlock();
-        assert!(lock.try_lock(), "unlock must release the flag");
-
-        lock.unlock();
-        lock.unlock();
-        assert!(lock.try_lock(), "a repeated unlock must not wedge the lock");
-        lock.unlock();
-    }
-
-    /// A fresh lock starts unlocked, and `Default` agrees with `new`.
-    #[test]
-    fn test_comms_lock_starts_unlocked() {
-        let a = CommsLock::new();
-        assert!(a.try_lock());
-
-        let b = CommsLock::default();
-        assert!(b.try_lock());
-        assert!(!b.try_lock());
     }
 
     #[test]

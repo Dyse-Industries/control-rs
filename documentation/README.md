@@ -116,7 +116,8 @@ record and its status.
 
 | Design                                                     | Status | Implementation                   |
 |:-----------------------------------------------------------|:-------|:---------------------------------|
-| [Embedded Test Server](ets/embedded-test-server-design.md) | Stale  | `control-rs-ets/src/server.rs`   |
+| [Embedded Test Server](ets/embedded-test-server-design.md) | Draft  | `control-rs-ets/` (Lead Subsystem) |
+| [Server Runtime](ets/server-runtime-design.md)             | Draft  | `control-rs-ets/src/server.rs`   |
 | [`HostComms`](ets/host-comm-design.md)                     | Stale  | `control-rs-ets/src/comms.rs`    |
 | [`CPUProfiler`](ets/cpu-profiler-design.md)                | Stale  | `control-rs-ets/src/profiler.rs` |
 | [Exportable Test Suites](ets/test-suite-design.md)         | Stale  | `src/**/tests/` (`ets` feature)  |

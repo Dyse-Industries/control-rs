@@ -370,7 +370,7 @@ fn ets_panic_impl() -> proc_macro2::TokenStream {
             unsafe {
                 if !server_ptr.is_null() {
                     let server = &mut *server_ptr;
-                    let comms_ok = server.context.comms_lock.try_lock();
+                    let comms_ok = true;
                     ::control_rs_ets::util::handle_failure(
                         &mut server.context,
                         msg,
@@ -417,7 +417,7 @@ fn ets_exception_impl() -> proc_macro2::TokenStream {
             let server_ptr = ETS_SERVER.load(::core::sync::atomic::Ordering::Acquire);
             if !server_ptr.is_null() {
                 let server = unsafe { &mut *server_ptr };
-                let comms_ok = server.context.comms_lock.try_lock();
+                let comms_ok = true;
                 ::control_rs_ets::util::handle_exception(
                     &mut server.context,
                     msg,
@@ -451,7 +451,7 @@ fn ets_exception_impl() -> proc_macro2::TokenStream {
             let server_ptr = ETS_SERVER.load(::core::sync::atomic::Ordering::Acquire);
             if !server_ptr.is_null() {
                 let server = unsafe { &mut *server_ptr };
-                let comms_ok = server.context.comms_lock.try_lock();
+                let comms_ok = true;
                 ::control_rs_ets::util::handle_exception(
                     &mut server.context,
                     msg,
@@ -693,5 +693,23 @@ mod tests {
             fn setup() {}
         });
         assert!(no_ret.to_string().contains("compile_error"));
+    }
+
+    #[test]
+    fn test_zero_static_ram_descriptors() {
+        let expanded = ets_suite_impl(quote::quote! {
+            /// Read-only suite
+            mod rom_suite {
+                /// Case doc
+                fn check_invariant() {}
+            }
+        });
+        let text = expanded.to_string();
+        assert!(text.contains("pub static SUITE_DESCRIPTOR"));
+        assert!(text.contains("pub static SUITE_DESCRIPTOR_PTR"));
+        assert!(text.contains(".ets_test_suites"));
+        assert!(!text.contains("static mut"));
+        assert!(!text.contains("Box::"));
+        assert!(!text.contains("Vec::"));
     }
 }
