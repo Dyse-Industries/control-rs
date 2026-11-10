@@ -11,7 +11,7 @@ work follows both tracks.
 
 - [x] **PR1**: Workspace Foundations & Strict Lint Baseline
 - [x] **PR2**: ETS Host Extraction & Terminal Dashboard
-  ([#55](https://github.com/Dyse-Industries/control-rs/pull/55); [ets-host](ets-host/ets-host-design.md), [tui](tui/tui-design.md))
+  ([#55](https://github.com/Dyse-Industries/control-rs/pull/55); [ets-host](ets/ets-host-design.md), [tui](tui/tui-design.md))
 - [x] **PR3**: CI Quality Gate Infrastructure (`control-rs-ci`)
   ([#58](https://github.com/Dyse-Industries/control-rs/pull/58); [ci](ci/ci-design.md))
     - [x] **PR3-1**: Multi-Oracle Differential Test Harness
@@ -27,13 +27,16 @@ work follows both tracks.
     - [x] **PR3-4**: CI Gate — Requirement Traceability (`trace`) (
       [requirement-traceability](vv/requirement-traceability-design.md))
     - [x] **PR3-5**: Technical Debt & Verification Hardening
-      ([#67](https://github.com/Dyse-Industries/control-rs/pull/67); [ci](ci/ci-design.md) rev 1.33)
+      ([#67](https://github.com/Dyse-Industries/control-rs/pull/67); [ci](ci/ci-design.md)
+      rev 1.33)
         - [x] Exclusive `pre`/`post` stages with the `fetch` gate; groups in
           declaration order; bounded concurrency (`max_jobs`)
         - [x] Configuration validation, versioned gate outcomes, budget-safe
           report, fail-closed `valgrind`, retired schema and dead code removed
-    - [x] **PR3-6**: Formal Verification & Dynamic Analysis Gates (`kani`, `miri`)
-      ([#69](https://github.com/Dyse-Industries/control-rs/pull/69); gates failing at merge; repaired in PR3-7)
+    - [x] **PR3-6**: Formal Verification & Dynamic Analysis Gates (`kani`,
+      `miri`)
+      ([#69](https://github.com/Dyse-Industries/control-rs/pull/69); gates
+      failing at merge; repaired in PR3-7)
     - [x] **PR3-7**: Main Repair — Patch Failing Gates
       ([#74](https://github.com/Dyse-Industries/control-rs/pull/74))
         - Reproduce each failing gate on `main` with `cargo ci` and patch it
@@ -43,9 +46,10 @@ work follows both tracks.
           `control-rs-trace-macros`, `trace-marks` and `trace/marks.rs`
     - [x] **PR3-9**: Workspace Audit & Cleanup
       ([#75](https://github.com/Dyse-Industries/control-rs/pull/75); mutant
-      resolution in [#68](https://github.com/Dyse-Industries/control-rs/pull/68))
+      resolution
+      in [#68](https://github.com/Dyse-Industries/control-rs/pull/68))
         - Review PR3 against its design docs, reconcile docs, gate config and
-          tests, and remove stray additions
+          tests and remove stray additions
     - [x] **PR3-10**: ADRs & Requirement Tracer Updates
       ([#76](https://github.com/Dyse-Industries/control-rs/pull/76),
       [#79](https://github.com/Dyse-Industries/control-rs/pull/79),
@@ -66,6 +70,17 @@ work follows both tracks.
           warning bound
         - Condition `link` method and link graph
           ([tracer-link-graph](vv/tracer-link-graph-design.md))
+    - [x] **PR3-13**: Tracer Method Overhaul & Link Graph Optimizations
+      ([#130](https://github.com/Dyse-Industries/control-rs/pull/130),
+      [#131](https://github.com/Dyse-Industries/control-rs/pull/131),
+      [#132](https://github.com/Dyse-Industries/control-rs/pull/132),
+      [#133](https://github.com/Dyse-Industries/control-rs/pull/133);
+      [#134](https://github.com/Dyse-Industries/control-rs/pull/134) reverted in
+      [#138](https://github.com/Dyse-Industries/control-rs/pull/138))
+        - Tracer method overhaul: unified method table, structured compare and
+          JUnit methods
+        - Link graph caching (built once per process), bounded SCC traversal
+          and regression verdict floor
 - [x] **PR4**: Classical Control Synthesis & Math Core (`src/classical_control`)
   ([#88](https://github.com/Dyse-Industries/control-rs/pull/88); stacked
   [#92](https://github.com/Dyse-Industries/control-rs/pull/92) and
@@ -91,7 +106,8 @@ until its design is approved, implemented and `cargo ci` is green.
 - [ ] **PR6**: Robust Control Analysis (`src/robust_control`)
     - Design drafted (`control-toolboxes/robust-control-design.md`); needs
       `modern_control::schur` from PR5
-- [ ] **PR7**: Nonlinear Control Synthesis & Estimators (`src/nonlinear_control`)
+- [ ] **PR7**: Nonlinear Control Synthesis & Estimators
+  (`src/nonlinear_control`)
     - Design drafted (`control-toolboxes/nonlinear-control-design.md`)
 - [ ] **PR8**: System Identification (SysID) & Frequency Estimation
   (`src/sysid`)
@@ -104,55 +120,39 @@ until its design is approved, implemented and `cargo ci` is green.
 
 ## Track B: ETS overhaul and examples (parallel, non-blocking)
 
-The overhaul replaces the lifecycle-suite branch (`mdsdev/ets-loop-suite`),
-which is archived instead of merged. Each PR follows one component of the
-current separation and lands one or more complete design documents with their
-implementation, `VC` tests and examples. A document is Approved and traced at
-merge and no later PR adds requirements to it. No design-only PRs. PRs stack
-in dependency order, ETS-1 first.
+The authoritative lead design document for the target-side runtime is
+`documentation/ets/embedded-test-server-design.md`, supported by the overall
+subsystem development integration plan in `documentation/ets/ets-overview.md`.
 
-- [ ] **ETS-1**: Link and Wire Schema (`control-rs-ets`, `control-rs-ets-host`)
-  ([#103](https://github.com/Dyse-Industries/control-rs/pull/103), open)
-    - Design: `ets/ets-link-design.md`, `ets/ets-overview.md`
-    - Whole-message `Link`; stream, USB bulk and CAN links behind features;
-      byte stream trait and `embedded-io` adapter; host counterparts
-    - Schema revision 2 (`PROTOCOL_VERSION = 2`): settings dictionary, task
-      and supervision variants, panic capture; golden vectors
-    - Existing server, session and TUI moved onto the link without new
-      behavior; `link_discovery` example; QEMU and Teensy 4.1 on the stream link
-- [ ] **ETS-2**: Target Executive and Suites (`control-rs-ets`, `control-rs-macros`)
-  ([#104](https://github.com/Dyse-Industries/control-rs/pull/104), open)
-    - Design: `ets/ets-executive-design.md`, `ets/embedded-test-server-design.md`,
-      `ets/test-suite-design.md`, `ets/macros-design.md`,
-      `ets/cpu-profiler-design.md`; ADR-0002
-    - Dispatcher, `Context` and runner; `Atomic`, `Lockstep`, `FreeRunning`,
-      `Periodic` and `Triggered`; `LifecycleTask`, `TaskSlot`, `Packet`
-      derive; named settings (`SettingCell`, static dispatch); board binding;
-      fault path and `safe_state`; step jitter profiling; atomic-free build
-    - Examples: QEMU and Teensy 4.1 firmware with cases, settings and tasks;
-      DWT boundary and jitter measurement
-- [ ] **ETS-3**: Host Session and Runs (`control-rs-ets-host`, `control-rs-ci`)
-  ([#105](https://github.com/Dyse-Industries/control-rs/pull/105), open)
-    - Design: `ets/ets-host-design.md`
-    - `Session`, case and task runs, `TaskSim`, `RunObserver`, device state
-      tracking, unresponsive-run recovery, release-paced runs, settings over
-      the session without the ELF; CI runs cases only
-    - Examples: headless QEMU lockstep task with a host plant; Teensy 4.1
-      periodic and triggered runs
-- [ ] **ETS-4**: Terminal Dashboard (`control-rs-tui`)
-  ([#106](https://github.com/Dyse-Industries/control-rs/pull/106), open)
-    - Design: `ets/tui-design.md`
-    - Tasks beside cases, setting console, fault and link status,
-      release-paced controls, independent monitoring
-    - Examples: TUI sessions against QEMU and Teensy 4.1
-- [ ] **ETS-5**: Board Examples
+- [ ] **ETS-1**: Target Suites, Macros and Profiler (`control-rs-ets`,
+  `control-rs-macros`)
+    - Branch: `mdsdev/ets-1-suites-profiler`
+    - Design: `ets/embedded-test-server-design.md`,
+      `ets/cpu-profiler-design.md`, `ets/test-suite-design.md`,
+      `ets/macros-design.md`
+- [ ] **ETS-2**: Target `HostComms` and Wire Protocol (`control-rs-ets`)
+  (replaces [#103](https://github.com/Dyse-Industries/control-rs/pull/103))
+    - Branch: `mdsdev/ets-2-host-comms` (base: `main`, parallel with ETS-1)
+    - Design: `ets/host-comm-design.md`
+- [ ] **ETS-3**: Target `Server` & Execution Platform (`control-rs-ets`)
+  (replaces [#104](https://github.com/Dyse-Industries/control-rs/pull/104))
+    - Branch: `mdsdev/ets-3-target-server` (base: `main` after ETS-1 and ETS-2)
+    - Design: `ets/embedded-test-server-design.md` (lead design),
+      `ets/server-runtime-design.md`
+- [ ] **ETS-4**: Host `Session` and Headless Runner (`control-rs-ets-host`,
+  `control-rs-ci`)
+  (replaces [#105](https://github.com/Dyse-Industries/control-rs/pull/105))
+    - Branch: `mdsdev/ets-4-host-session` (base: `main` after ETS-3)
+    - Design: `ets-host/ets-host-design.md`
+- [ ] **ETS-5**: Host Terminal Dashboard (`control-rs-tui`)
+  (replaces [#106](https://github.com/Dyse-Industries/control-rs/pull/106))
+    - Branch: `mdsdev/ets-5-tui` (base: `main` after ETS-4)
+    - Design: `tui/tui-design.md`
+- [ ] **ETS-6**: Board Examples
   ([#107](https://github.com/Dyse-Industries/control-rs/pull/107), open)
-    - Design: new `ets/board-examples-design.md` (per-board link, throughput
-      and fault reporting requirements)
-    - [ ] ESP32-C6 (standalone showcase), Arduino Uno R4 Minima and Seeed XIAO
-      nRF52840 on the stream link
-      ([#107](https://github.com/Dyse-Industries/control-rs/pull/107))
-    - [ ] Seeed XIAO ESP32-S3 and Teensy 4.0 (not started)
+    - Branch: `mdsdev/ets-6-board-examples` (base: `main` after ETS-3, parallel
+      with ETS-4 and ETS-5)
+    - Design: `ets/board-examples-design.md`
 
 ## Independent
 
@@ -162,20 +162,11 @@ in dependency order, ETS-1 first.
     - Traits and backends are independent of both tracks
     - Open: whether the kernels required by PR5, PR6 and PR8 land in those PRs
       or here
-- [ ] **PR3-13**: Tracer & CI Follow-ups (open)
-    - Tracer method overhaul: one method table, structured compare and JUnit
-      methods ([#131](https://github.com/Dyse-Industries/control-rs/pull/131))
-    - Link graph built once per process, tracer-link-graph FR-6
-      ([#132](https://github.com/Dyse-Industries/control-rs/pull/132))
-    - Bounded SCC traversal in the link graph
-      ([#130](https://github.com/Dyse-Industries/control-rs/pull/130))
-    - Regression verdict floor applied to the added time
-      ([#133](https://github.com/Dyse-Industries/control-rs/pull/133))
 
 ## Release
 
 - [ ] **PR12**: CI Workflow Hardening & Physical-Target ETS Runners (Teensy 4.1)
-    - Follows ETS-5 for the board list and ETS-2 for the runner API
+    - Follows ETS-6 for the board list and ETS-3 for the runner API
     - Teensy 4.1 `target-build` gate (`ci-design.md` FR-17; ITCM layout)
     - Workflow: build cache, pinned actions and tools, top-level
       `permissions:`, no duplicate `cargo doc` in the report job

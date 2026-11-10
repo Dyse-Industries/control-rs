@@ -13,6 +13,9 @@
 //!   with sentinel bytes to compute high-water-mark stack usage safely.
 //! - **Platform Implementations**: Cortex-M DWT-based and RISC-V CSR-based profiling structures.
 
+/// Maximum number of retries for reading `SysTick` before falling back to whole-millisecond ticks.
+pub const MAX_SYSTICK_RETRIES: usize = 8;
+
 /// Target-specific utilities for CPU profiling, stack tracking and interrupt management during ETS tests.
 ///
 /// This trait provides a target-agnostic interface to low-level hardware features, allowing the
@@ -44,6 +47,12 @@
 /// assert_eq!(profiler.get_nanos(), 1000);
 /// ```
 pub trait CPUProfiler {
+    /// Whether this profiler has a cycle-accurate hardware clock.
+    /// Returns false on architectures lacking DWT or cycle counters (for example, ARMv6-M).
+    fn has_clock(&self) -> bool {
+        true
+    }
+
     /// Board identifier reported in `Telemetry::TargetInfo`; `0` when the
     /// profiler does not know the board.
     fn board_id(&self) -> u16 {
@@ -201,6 +210,9 @@ pub trait CPUProfiler {
     #[inline(never)] // Crucial for predictable stack frame analysis
     unsafe fn read_stack_peak(&self, sp: usize) -> u32 {
         let stack_end_ptr = self.get_stack_end();
+        if sp <= stack_end_ptr {
+            return 0;
+        }
         let mut ptr = stack_end_ptr as *const u32;
         let limit_ptr = sp as *const u32;
 
@@ -235,19 +247,40 @@ pub trait CPUProfiler {
     }
 }
 
-/// FPU capability bits for the given target properties: bit 0 is set for a
-/// hard-float ABI or the single-precision feature, bit 1 for double precision.
-#[must_use]
-const fn fpu_flags_from(
-    hard_float_abi: bool,
-    single: bool,
-    double: bool,
-) -> u8 {
-    match (hard_float_abi || single, double) {
-        (false, false) => 0b00,
-        (true, false) => 0b01,
-        (false, true) => 0b10,
-        (true, true) => 0b11,
+/// Mock CPU profiler for host-side testing and simulation.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct HostCPUProfiler;
+
+/// Hardware reading snapshot from ARM Cortex-M `SysTick` down-counter and status.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct SysTickReading {
+    /// The current 24-bit down-counter value (`SYST_CVR`).
+    pub current: u32,
+    /// Whether the `SysTick` exception is pending in ICSR (`PENDSTSET`).
+    pub pending: bool,
+}
+
+impl CPUProfiler for HostCPUProfiler {
+    fn get_cycles(&self) -> u64 {
+        0
+    }
+
+    fn get_nanos(&self) -> u64 {
+        0
+    }
+
+    fn get_sp(&self) -> usize {
+        0
+    }
+
+    fn get_stack_end(&self) -> usize {
+        0
+    }
+
+    unsafe fn paint_stack(&self, _sp: usize) {}
+
+    unsafe fn read_stack_peak(&self, _sp: usize) -> u32 {
+        0
     }
 }
 
@@ -285,6 +318,10 @@ impl CortexMProfiler {
 
 #[cfg(target_arch = "arm")]
 impl CPUProfiler for CortexMProfiler {
+    fn has_clock(&self) -> bool {
+        cfg!(target_has_atomic = "ptr")
+    }
+
     fn core_clock_hz(&self) -> u32 {
         self.clock_frequency
     }
@@ -301,36 +338,46 @@ impl CPUProfiler for CortexMProfiler {
     }
 
     fn get_cycles(&self) -> u64 {
-        cortex_m::peripheral::DWT::cycle_count() as u64
+        #[cfg(target_has_atomic = "ptr")]
+        {
+            cortex_m::peripheral::DWT::cycle_count() as u64
+        }
+        #[cfg(not(target_has_atomic = "ptr"))]
+        {
+            0
+        }
     }
 
     fn get_nanos(&self) -> u64 {
-        loop {
-            let ms1 =
-                self.ticks.load(core::sync::atomic::Ordering::Relaxed) as u64;
+        let reload =
+            self.clock_frequency.saturating_div(1000).saturating_sub(1);
+        for _ in 0..MAX_SYSTICK_RETRIES {
+            let ms1 = u64::from(
+                self.ticks.load(core::sync::atomic::Ordering::Relaxed),
+            );
             let current = cortex_m::peripheral::SYST::get_current();
             let icsr =
                 unsafe { core::ptr::read_volatile(0xE000_ED04 as *const u32) };
-            let ms2 =
-                self.ticks.load(core::sync::atomic::Ordering::Relaxed) as u64;
-
+            cortex_m::asm::isb();
+            let ms2 = u64::from(
+                self.ticks.load(core::sync::atomic::Ordering::Relaxed),
+            );
             if ms1 == ms2 {
-                let reload = self.clock_frequency / 1000 - 1;
-                let pending = (icsr & (1 << 26)) != 0;
-                // If SysTick is pending, it means the timer has wrapped. If current is large (not about to wrap/just wrapped),
-                // the wrap happened before reading current.
-                let adjusted_ms = if pending && current > 200 {
-                    ms1 + 1
-                } else {
-                    ms1
+                let reading = SysTickReading {
+                    current,
+                    pending: (icsr & (1 << 26)) != 0,
                 };
-                let cycles = reload.saturating_sub(current);
-                let us = adjusted_ms * 1000
-                    + (cycles as u64)
-                        / (self.clock_frequency as u64 / 1_000_000);
-                return us * 1000;
+                return calculate_systick_nanos(
+                    ms1,
+                    reading,
+                    reload,
+                    self.clock_frequency,
+                );
             }
         }
+        let ms =
+            u64::from(self.ticks.load(core::sync::atomic::Ordering::Relaxed));
+        ms.saturating_mul(1_000_000)
     }
 
     fn get_sp(&self) -> usize {
@@ -451,6 +498,51 @@ impl CPUProfiler for RiscvProfiler {
     }
 }
 
+/// FPU capability bits for the given target properties: bit 0 is set for a
+/// hard-float ABI or the single-precision feature, bit 1 for double precision.
+#[must_use]
+const fn fpu_flags_from(
+    hard_float_abi: bool,
+    single: bool,
+    double: bool,
+) -> u8 {
+    match (hard_float_abi || single, double) {
+        (false, false) => 0b00,
+        (true, false) => 0b01,
+        (false, true) => 0b10,
+        (true, true) => 0b11,
+    }
+}
+
+/// Calculates wall-clock nanoseconds from a `SysTick` reading and millisecond ticks,
+/// reconciling pending counter rollovers.
+#[must_use]
+pub fn calculate_systick_nanos(
+    ms: u64,
+    reading: SysTickReading,
+    reload: u32,
+    clock_frequency_hz: u32,
+) -> u64 {
+    let adjusted_ms = if reading.pending && reading.current > reload / 2 {
+        ms.saturating_add(1)
+    } else {
+        ms
+    };
+    let cycles = reload.saturating_sub(reading.current);
+    let cycles_per_us = u64::from(clock_frequency_hz)
+        .checked_div(1_000_000)
+        .unwrap_or(1);
+    let fractional_us = if cycles_per_us > 0 {
+        u64::from(cycles).checked_div(cycles_per_us).unwrap_or(0)
+    } else {
+        0
+    };
+    let us = adjusted_ms
+        .saturating_mul(1000)
+        .saturating_add(fractional_us);
+    us.saturating_mul(1000)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -537,5 +629,142 @@ mod tests {
             cfg!(target_feature = "d"),
         );
         assert_eq!(TestProfiler::new().fpu_flags(), expected);
+    }
+
+    #[test]
+    fn test_stack_paint_exhaustion_clamp() {
+        let profiler = TestProfiler::new();
+        let sp = profiler.get_stack_end();
+        unsafe {
+            profiler.paint_stack(sp);
+            let peak = profiler.read_stack_peak(sp);
+            assert_eq!(peak, 0);
+        }
+    }
+
+    #[test]
+    fn test_naive_systick_rollover_flaw_and_hardened_resolution() {
+        // Setup a 600 MHz clock (for example, Teensy 4 / i.MX RT1062, where 1 ms = 600,000 cycles)
+        let clock_freq = 600_000_000u32;
+        let reload = clock_freq / 1000 - 1; // 599_999 cycles
+
+        // Sample 1: Just before rollover (at the end of millisecond 10)
+        let ms_before = 10u64;
+        let current_before = 5u32; // down-counter is nearly at zero (599,994 cycles elapsed)
+
+        // Naive calculation (without pending rollover detection):
+        // (ms * 1000 + (reload - current) / cycles_per_us) * 1000
+        let naive_before = {
+            let cycles = reload - current_before;
+            let microsecond = ms_before * 1000
+                + u64::from(cycles) / u64::from(clock_freq / 1_000_000);
+            microsecond * 1000
+        };
+        // At 600 MHz, 599,994 cycles / 600 = 999 microseconds.
+        // naive_before = (10 * 1000 + 999) * 1000 = 10_999_000 nanoseconds.
+        assert_eq!(naive_before, 10_999_000);
+
+        // Sample 2: Immediately after rollover in hardware (counter wrapped to reload - 10,
+        // and ICSR PENDSTSET is set), but the software interrupt has not yet incremented ticks.
+        let ms_after = 10u64; // Stale! The ISR hasn't executed yet.
+        let current_after = reload - 10; // Counter reloaded and has only elapsed 10 cycles.
+        let icsr_pending = true;
+
+        let naive_after = {
+            let cycles = reload - current_after;
+            let microsecond = ms_after * 1000
+                + u64::from(cycles) / u64::from(clock_freq / 1_000_000);
+            microsecond * 1000
+        };
+        // At 600 MHz, 10 cycles / 600 = 0 microseconds.
+        // naive_after = (10 * 1000 + 0) * 1000 = 10_000_000 nanoseconds.
+        assert_eq!(naive_after, 10_000_000);
+
+        // --- NEGATIVE TEST ASSERTION ---
+        // Verify that the naive implementation is demonstrably flawed:
+        // despite time moving forward in hardware, the computed timestamp went BACKWARDS by 999 microseconds!
+        assert!(
+            naive_after < naive_before,
+            "Flaw confirmed: naive SysTick calculation stepped backwards in time ({naive_after} < {naive_before})"
+        );
+        let time_regression_ns = naive_before - naive_after;
+        assert_eq!(
+            time_regression_ns, 999_000,
+            "Naive implementation suffered a 999 microsecond backward retrograde glitch"
+        );
+
+        // --- HARDENED RESOLUTION ASSERTION ---
+        // Verify that calculate_systick_nanos detects the pending rollover and reconciles ms,
+        // ensuring strictly monotonic time progression.
+        let reading_before = SysTickReading {
+            current: current_before,
+            pending: false,
+        };
+        let reading_after = SysTickReading {
+            current: current_after,
+            pending: icsr_pending,
+        };
+        let hardened_before = calculate_systick_nanos(
+            ms_before,
+            reading_before,
+            reload,
+            clock_freq,
+        );
+        let hardened_after = calculate_systick_nanos(
+            ms_after,
+            reading_after,
+            reload,
+            clock_freq,
+        );
+
+        assert_eq!(hardened_before, 10_999_000);
+        assert_eq!(hardened_after, 11_000_000); // Correctly accounts for next millisecond (11 ms + 0 us)!
+        assert!(
+            hardened_after > hardened_before,
+            "Hardened implementation must advance monotonically across rollover ({hardened_after} > {hardened_before})"
+        );
+    }
+
+    #[test]
+    fn test_systick_nanos_boundary_cases() {
+        let clock_freq = 600_000_000u32;
+        let reload = clock_freq / 1000 - 1;
+
+        // Start of millisecond (current == reload)
+        let at_start = calculate_systick_nanos(
+            5,
+            SysTickReading {
+                current: reload,
+                pending: false,
+            },
+            reload,
+            clock_freq,
+        );
+        assert_eq!(at_start, 5_000_000);
+
+        // Late in millisecond before rollover (current small, pending false)
+        let near_end = calculate_systick_nanos(
+            5,
+            SysTickReading {
+                current: 50,
+                pending: false,
+            },
+            reload,
+            clock_freq,
+        );
+        assert_eq!(near_end, 5_999_000);
+
+        // Rollover occurred after read (current small, pending true):
+        // Because current <= reload / 2, it belongs to the pre-rollover interval.
+        let wrap_after_read = calculate_systick_nanos(
+            5,
+            SysTickReading {
+                current: 50,
+                pending: true,
+            },
+            reload,
+            clock_freq,
+        );
+        assert_eq!(wrap_after_read, 5_999_000);
     }
 }

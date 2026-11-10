@@ -18,7 +18,6 @@ mod dsp_debug_contract_tests {
     }
 }
 
-#[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod dsp_test_suite {
     #![allow(clippy::indexing_slicing)]
 

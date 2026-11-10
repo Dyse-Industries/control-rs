@@ -238,6 +238,40 @@ timeout_secs = 2400
 description = "Builds QEMU ETS firmware and runs every suite headless on each target"
 
 # ==============================================================================
+# Hardware Lane Gates (Local hardware-in-the-loop runs, not executed in CI)
+# ==============================================================================
+
+[ets-teensy4]
+mode = "fail"
+default = false
+required = false
+command = "cargo run"
+args = ["--package", "control-rs-ci", "--bin", "ets", "--", "teensy", "--release"]
+diff-trigger = ["examples/teensy4/", "control-rs-ets/", "control-rs-ci/"]
+timeout_secs = 300
+description = "Executes ETS test suites over USB CDC on a physical Teensy 4.1 (Cortex-M7 @ 600 MHz)"
+
+[ets-xiao]
+mode = "fail"
+default = false
+required = false
+command = "cargo run"
+args = ["--package", "control-rs-ci", "--bin", "ets", "--", "--path", "examples/xiao_nrf52840", "--release"]
+diff-trigger = ["examples/xiao_nrf52840/", "control-rs-ets/", "control-rs-ci/"]
+timeout_secs = 300
+description = "Executes ETS test suites on a physical Seeed XIAO nRF52840 (Cortex-M4F)"
+
+[ets-esp32c6]
+mode = "fail"
+default = false
+required = false
+command = "cargo run"
+args = ["--package", "control-rs-ci", "--bin", "ets", "--", "--path", "examples/esp32c6", "--release"]
+diff-trigger = ["examples/esp32c6/", "control-rs-ets/", "control-rs-ci/"]
+timeout_secs = 300
+description = "Executes ETS test suites on a physical ESP32-C6 (RISC-V RV32IMAC @ 160 MHz)"
+
+# ==============================================================================
 # Audit and Verify Lane Gates (geiger and valgrind: audit; cross-compare: verify)
 # ==============================================================================
 

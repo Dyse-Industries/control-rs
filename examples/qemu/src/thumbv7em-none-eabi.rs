@@ -66,21 +66,15 @@ impl HostComms for SemihostingComms {
     }
 }
 
-// Force linking of the math test suites by referencing them
-#[allow(unused_imports)]
-pub use control_rs::math::tests::suites::*;
-// Force linking of the matrix test suites by referencing them
-#[allow(unused_imports)]
-pub use control_rs::matrix::tests::suites::*;
-// Force linking of the classical control test suites by referencing them
-#[allow(unused_imports)]
-pub use control_rs::classical_control::suites::*;
+mod macro_suite;
+mod profiler_suite;
 
 use control_rs_ets::CortexMProfiler;
 use core::sync::atomic::AtomicU32;
 use cortex_m::peripheral::syst::SystClkSource;
 
-static MILLISECONDS: AtomicU32 = AtomicU32::new(0);
+pub(crate) static MILLISECONDS: AtomicU32 = AtomicU32::new(0);
+pub(crate) const CLOCK_FREQ: u32 = 25_000_000;
 
 #[cortex_m_rt::exception]
 fn SysTick() {
@@ -113,7 +107,6 @@ fn setup() -> Context<SemihostingComms, CortexMProfiler> {
 
     let mut syst = p.SYST;
     syst.set_clock_source(SystClkSource::Core);
-    const CLOCK_FREQ: u32 = 25_000_000;
     let reload = CLOCK_FREQ / 1000;
     syst.set_reload(reload - 1);
     syst.clear_current();
@@ -123,6 +116,6 @@ fn setup() -> Context<SemihostingComms, CortexMProfiler> {
     let comms = SemihostingComms {
         reader: FrameReader::new(),
     };
-    let cpu_utils = CortexMProfiler::new(25_000_000, &MILLISECONDS);
+    let cpu_utils = CortexMProfiler::new(CLOCK_FREQ, &MILLISECONDS);
     Context::new(comms, cpu_utils)
 }

@@ -51,10 +51,9 @@ mod sealed {
     pub trait Sealed {}
 }
 
-#[cfg(any(test, feature = "ets"))]
-#[cfg_attr(not(test), control_rs_macros::ets_suite)]
-/// Unit and ETS test suite for the firmware realizations.
-pub mod tests {
+#[cfg(test)]
+/// Unit tests for the firmware realizations.
+mod tests {
     use super::*;
     use crate::math::num_traits::Trig;
     use crate::tensor::ArrayTensor;
