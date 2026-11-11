@@ -1,6 +1,6 @@
 # Requirement Traceability Infrastructure (requirement-traceability)
 
-![Date Badge](https://img.shields.io/badge/Date-November_11,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_23,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 ![Design Status Badge](https://img.shields.io/badge/Design%20Status-Ready-brightgreen)
 
@@ -95,10 +95,10 @@ editing tools; and any systems-engineering view.
   first requirement ID on each line that matches the `definition` pattern,
   with the definition text formed per [Matching Rules](#matching-rules).
 - **FR-2 - Conditions**: `trace-reqs` shall record one condition row for each
-  line that matches the `verification` pattern, with the condition ID of the
-  first cell as `id`, the requirement IDs of the second cell as `parents`, the
-  method named in a code span of the third cell as `method` and the code spans
-  of the fourth cell as `targets`.
+  line that matches the `verification` pattern, with the condition ID on the
+  line as `id`, every requirement ID outside condition IDs as `parents`, the
+  method named in a code span as `method` and the code spans of the `Target`
+  cell as `targets`.
 - **FR-3 - Qualified IDs**: `trace-reqs` shall qualify every recorded ID as
   `<doc>#<id>` per [Matching Rules](#matching-rules), with `<doc>` extracted by
   the `doc_id` pattern, so that equal IDs in different documents never collide,
@@ -215,7 +215,7 @@ editing tools; and any systems-engineering view.
    condition may name multiple:
 
    | Method            | Target format                                  | Result log (`target/ci-artifacts/`)                                      |
-            |:------------------|:-----------------------------------------------|:-------------------------------------------------------------------------|
+                  |:------------------|:-----------------------------------------------|:-------------------------------------------------------------------------|
    | `libtest`         | `crate::module::tests::test_name`              | `test.log` (`test <path> ... ok`)                                        |
    | `libtest` doctest | `crate::<file> - <item>`                       | `test.log` (`test <file> - <item> (line N) ... ok`)                      |
    | `kani`            | `crate::module::proofs::harness_name`          | `kani.log` (`Checking harness <path>...`)                                |
