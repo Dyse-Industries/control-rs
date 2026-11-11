@@ -21,6 +21,11 @@ retired = [
     "requirement-traceability#VC-12.1",
 ]
 
+[doc_status]
+status = 'Design%20Status-(?P<status>[A-Za-z_]+)-'
+pass = ["Ready", "Shipped"]
+warn = ["Draft"]
+
 [method.libtest]
 result_artifact = "target/ci-artifacts/test.log"
 interpreter_artifact = "target/ci-artifacts/miri.log"

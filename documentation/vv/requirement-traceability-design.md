@@ -1,6 +1,6 @@
 # Requirement Traceability Infrastructure (requirement-traceability)
 
-![Date Badge](https://img.shields.io/badge/Date-October_23,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-November_11,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 ![Design Status Badge](https://img.shields.io/badge/Design%20Status-Ready-brightgreen)
 
@@ -95,10 +95,10 @@ editing tools; and any systems-engineering view.
   first requirement ID on each line that matches the `definition` pattern,
   with the definition text formed per [Matching Rules](#matching-rules).
 - **FR-2 - Conditions**: `trace-reqs` shall record one condition row for each
-  line that matches the `verification` pattern, with the condition ID on the
-  line as `id`, every requirement ID outside condition IDs as `parents`, the
-  method named in a code span as `method` and the code spans of the `Target`
-  cell as `targets`.
+  line that matches the `verification` pattern, with the condition ID of the
+  first cell as `id`, the requirement IDs of the second cell as `parents`, the
+  method named in a code span of the third cell as `method` and the code spans
+  of the fourth cell as `targets`.
 - **FR-3 - Qualified IDs**: `trace-reqs` shall qualify every recorded ID as
   `<doc>#<id>` per [Matching Rules](#matching-rules), with `<doc>` extracted by
   the `doc_id` pattern, so that equal IDs in different documents never collide,
@@ -345,6 +345,11 @@ retired = [
     "requirement-traceability#VC-12.1",
 ]
 
+[doc_status]
+status = 'Design%20Status-(?P<status>[A-Za-z_]+)-'
+pass = ["Ready", "Shipped"]
+warn = ["Draft"]
+
 [method.libtest]
 result_artifact = "target/ci-artifacts/test.log"
 interpreter_artifact = "target/ci-artifacts/miri.log"
@@ -372,10 +377,13 @@ accepted = ["Accepted"]
 | Key                                   | Meaning                                                                                                                                                                            |
 |:--------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `id`                                  | Regex for one requirement ID                                                                                                                                                       |
-| `condition`                           | Regex for one condition ID; optional (defaults to `VC-[0-9]+(?:\.[0-9]+[a-z]?)?`)                                                                                                  |
+| `condition`                           | Regex for one condition ID                                                                                                                                                         |
 | `doc`                                 | Regex for the document name in a qualified ID `<doc>#<id>`                                                                                                                         |
 | `files`                               | Markdown files, and directories whose `.md` files are read (see [File Selection](#file-selection))                                                                                 |
-| `doc_id`                              | Regex for the document ID declaration; optional (defaults to `^#\s+.*\((?P<doc>[a-z0-9-]+)\)`)                                                                                     |
+| `doc_id`                              | Regex whose `<doc>` capture is the document name in the document ID declaration                                                                                                    |
+| `doc_status.status`                   | Regex whose `<status>` capture is a traced document's status                                                                                                                       |
+| `doc_status.pass`                     | Document statuses on which a `doc-status` condition passes                                                                                                                         |
+| `doc_status.warn`                     | Document statuses on which it passes with W-4; optional                                                                                                                            |
 | `definition`                          | Regex for a line that defines a requirement                                                                                                                                        |
 | `verification`                        | Regex for a line that defines a condition                                                                                                                                          |
 | `method.<m>`                          | Result artifact path for method `<m>`; a `<m>` that names no method of `METHODS` is a configuration error, and a condition of a result-artifact method with no artifact is `Unrun` |
@@ -419,8 +427,7 @@ pub(crate) const METHODS: [TraceCheckMethod; 7] = [/* libtest, kani, compare, ju
   deserializing the typed `GateOutcome` via
   `control_rs_ci::gate::GateOutcome::load_from_file`.
 - `doc-status` reads a document target's status from the file the rows give
-  for that document, as the first match of `DocumentMetaPatterns` (the fixed
-  pattern `(?:Design|Doc)%20Status-(?P<status>[A-Za-z_]+)-`), and a decision
+  for that document, as the first match of `doc_status.status`, and a decision
   target's status with `[decisions]`. A `doc-status` condition cannot target its
   own document. Its targets add no link edge.
 - `link` returns the status that `LinkGraph::derive` gave the row; `derive`
@@ -448,11 +455,11 @@ The rules below are the whole parser:
    not an occurrence.
 3. A line that matches `definition` defines the first requirement ID on it.
    Its text is the line plus the indented lines that follow it.
-4. A line that matches `verification` defines the condition ID on it. Every
-   requirement ID on the line is a parent, the one code span whose content
-   is in the method set is the method and the code spans of the fourth cell of
-   a row
-   with five or more cells are the targets.
+4. A line that matches `verification` is split into cells at each `|` not
+   escaped as `\|`. The first cell holds the condition ID, every requirement
+   ID in the second cell is a parent, the code span of the third cell whose
+   content is in the method set is the method and the code spans of the fourth
+   cell are the targets. Later cells are not read.
 5. The document name is the `<doc>` captured by the `doc_id` pattern on the
    first matching line: `# Title (storage)` yields `storage`. An ID written
    without `<doc>#` belongs to the document it appears in. A document with no
@@ -514,8 +521,8 @@ logs in `target/ci-artifacts/`:
 | Method `doc-status`, condition targets its own document               | `Fail`                        | yes                  |
 | Method `doc-status`, a target naming no traced document or decision   | `Unrun`                       | yes                  |
 | Method `doc-status`, decision target with a status in `accepted`      | `Pass`                        | no                   |
-| Method `doc-status`, document target with status `Ready` or `Shipped` | `Pass`                        | no                   |
-| Method `doc-status`, document target with status `Draft`              | `Pass`, warning W-4           | no                   |
+| Method `doc-status`, document target with a status in `pass`        |   `Pass`                        | no                   |
+| Method `doc-status`, document target with a status in `warn`        |   `Pass`, warning W-4           | no                   |
 | Method `doc-status`, any other status or none                         | `Fail`                        | yes                  |
 | Method `doc-status`, multiple targets                                 | Worst status among targets    | iff that status does |
 
@@ -573,7 +580,8 @@ another suite or class than the one logged is absent, even when its bare
 signal, key or name is logged.
 
 **Draft warning.** `trace-check` emits the non-fatal warning **W-4 (Draft
-document)** when a `doc-status` target is a document whose status is `Draft`.
+document)** when a `doc-status` target is a document whose status is in
+`doc_status.warn`.
 The warning points at the condition row and names the document.
 
 **Interpreter warning.** Miri serves as a secondary interpreter for test
@@ -759,9 +767,6 @@ Four choices keep the stronger levels additive:
   `Unrun`.
 - A condition has no link to the code that implements it, so a surviving
   mutant cannot be attributed to a requirement.
-- Every requirement ID on a verification row is a parent, including one
-  mentioned in the Criterion, and a second condition ID or a second method
-  code span is a defect. Criteria therefore name neither.
 - A requirement deleted without being added to `retired` is not detected;
   review of the diff is the control.
 - W-3 compares file modification times with the traced documents only. A
@@ -837,6 +842,7 @@ Four choices keep the stronger levels additive:
 | 7.0      | October 21, 2026   | @MitchellDScott, Claude Sonnet 5.5, Claude Opus 5.5 | Links (FR-13) and the `--graph` argument.                                                                                                                          |
 | 8.0      | October 23, 2026   | @MitchellDScott, Antigravity, Claude Opus 5.5       | Structured compare and junit methods in one METHODS table; doc-status reads document status; report schema 5.                                                      |
 | 8.1      | October 23, 2026   | @MitchellDScott, Antigravity, Cursor Agent          | Quality gate method (gate), self-targeting condition guard on doc-status, typed compare and gate dependencies, and JUnit token-bounded and CDATA-safe XML parsing. |
+| 8.2      | November 11, 2026  | @MitchellDScott, Claude Fable 5.2                   | Condition fields are read from their own table cells; document status pattern and words come from configuration.                                                   |
 
 ---
 

@@ -98,6 +98,7 @@ mod cli {
          doc_id = '^#\\s+.*\\((?P<doc>[a-z0-9-]+)\\)'\n\
          definition = '^- \\*\\*(?:FR|NFR|C)-'\n\
          verification = '^\\| *(?:[a-z0-9-]+#)?VC-'\n\
+         doc_status = { status = 'Design%20Status-(?P<status>[A-Za-z_]+)-', pass = [\"Ready\", \"Shipped\"], warn = [\"Draft\"] }\n\
          retired = []\n\n\
          [method.libtest]\n\
          result_artifact = \"out/test.log\"\n"

@@ -15,7 +15,7 @@ use regex::Regex;
 use serde::Deserialize;
 
 use super::link::LinkGraph;
-use super::status::{LINK, METHODS};
+use super::status::METHODS;
 use super::{
     CONDITION, DEFINITION, Defect, QUALIFIER, Row, SCHEMA, normalize, read_text,
 };
@@ -71,8 +71,9 @@ pub struct TraceConfig {
     /// Markdown files, and directories whose Markdown files are read.
     pub files: Vec<String>,
     /// Pattern matching the document ID declaration in a Markdown document.
-    #[serde(default = "default_doc_id")]
     pub doc_id: String,
+    /// The status badge of a traced document and the outcome of each status.
+    pub doc_status: DocStatusConfig,
     /// Pattern for a line that defines a requirement.
     pub definition: String,
     /// Pattern for a line that defines a verification condition.
@@ -86,6 +87,30 @@ pub struct TraceConfig {
     /// do not run.
     #[serde(default)]
     pub decisions: Option<DecisionConfig>,
+}
+
+/// The `[doc_status]` table of a `trace.toml`.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DocStatusConfig {
+    /// Pattern whose `status` capture is a traced document's status.
+    pub status: String,
+    /// Statuses on which a `doc-status` condition passes.
+    pub pass: Vec<String>,
+    /// Statuses on which a `doc-status` condition passes with warning W-4.
+    #[serde(default)]
+    pub warn: Vec<String>,
+}
+
+/// The compiled pattern and status lists of a [`DocStatusConfig`].
+#[derive(Debug, Clone)]
+pub struct DocStatusRules {
+    /// A traced document's status, in its `status` capture.
+    status: Regex,
+    /// Statuses that pass.
+    pass: BTreeSet<String>,
+    /// Statuses that pass with warning W-4.
+    warn: BTreeSet<String>,
 }
 
 /// The `[decisions]` table of a `trace.toml`.
@@ -217,6 +242,7 @@ impl TraceConfig {
         compile("id", &self.id)?;
         compile("condition", &self.condition)?;
         compile("doc_id", &self.doc_id)?;
+        self.doc_status.rules(path)?;
         let decisions =
             self.decisions.as_ref().map(|d| d.rules(path)).transpose()?;
         let occurrence = format!(
@@ -236,6 +262,50 @@ impl TraceConfig {
             retired: self.retired.iter().cloned().collect(),
             decisions,
         })
+    }
+}
+
+impl DocStatusConfig {
+    /// Compiles the pattern; `path` names the configuration in errors.
+    ///
+    /// # Errors
+    /// `GateError::Config` for an invalid pattern, or one without a `status`
+    /// capture.
+    pub fn rules(&self, path: &Path) -> GateResult<DocStatusRules> {
+        let error = |message: String| GateError::Config {
+            path: path.to_path_buf(),
+            message: format!("`doc_status.status` {message}"),
+        };
+        let status = Regex::new(&self.status)
+            .map_err(|e| error(format!("is not a valid pattern: {e}")))?;
+        if !status.capture_names().any(|n| n == Some("status")) {
+            return Err(error("has no `status` capture".to_string()));
+        }
+        Ok(DocStatusRules {
+            status,
+            pass: self.pass.iter().cloned().collect(),
+            warn: self.warn.iter().cloned().collect(),
+        })
+    }
+}
+
+impl DocStatusRules {
+    /// The status of the document whose text is `source`, if it has one.
+    pub(super) fn status(&self, source: &str) -> Option<String> {
+        self.status
+            .captures(source)
+            .and_then(|c| c.name("status"))
+            .map(|m| m.as_str().to_string())
+    }
+
+    /// Whether a `doc-status` condition passes on `status`.
+    pub(super) fn passes(&self, status: &str) -> bool {
+        self.pass.contains(status)
+    }
+
+    /// Whether a `doc-status` condition passes with a warning on `status`.
+    pub(super) fn warns(&self, status: &str) -> bool {
+        self.warn.contains(status)
     }
 }
 
@@ -314,10 +384,6 @@ pub fn is_method(name: &str) -> bool {
     METHODS.iter().any(|m| m.name == name)
 }
 
-fn default_doc_id() -> String {
-    r"^#\s+.*\((?P<doc>[a-z0-9-]+)\)".to_string()
-}
-
 /// Finds the declared document ID in `lines` using `rules.doc_id`, returning
 /// the declared ID or reporting scan defects.
 fn extract_doc_id<'a>(
@@ -360,62 +426,53 @@ fn extract_doc_id<'a>(
     declared.map(|(id, _)| id)
 }
 
-/// The first cell of a Markdown table line.
-fn first_cell(line: &str) -> &str {
-    let trimmed = line.trim_start();
-    let rest = trimmed.strip_prefix('|').unwrap_or(trimmed);
-    rest.split('|').next().unwrap_or(rest).trim()
-}
-
-/// The code spans of the fourth cell of a table line with five or more cells.
-fn targets(line: &str) -> Vec<String> {
+/// The cells of a Markdown table line, trimmed; a `|` escaped as `\|` does
+/// not end a cell.
+fn cells(line: &str) -> Vec<&str> {
     let trimmed = line.trim();
     let inner = trimmed.strip_prefix('|').unwrap_or(trimmed);
     let inner = inner.strip_suffix('|').unwrap_or(inner);
-    let cells: Vec<&str> = inner.split('|').collect();
-    if cells.len() < 5 {
-        return Vec::new();
+    let mut cells = Vec::new();
+    let mut start = 0;
+    let mut escaped = false;
+    for (idx, c) in inner.char_indices() {
+        if c == '|' && !escaped {
+            cells.push(inner.get(start..idx).unwrap_or_default().trim());
+            start = idx.saturating_add(1);
+        }
+        escaped = c == '\\' && !escaped;
     }
+    cells.push(inner.get(start..).unwrap_or_default().trim());
     cells
-        .get(3)
-        .map(|cell| {
-            super::code_spans(cell)
-                .iter()
-                .map(|s| s.content.trim().to_string())
-                .collect()
-        })
-        .unwrap_or_default()
 }
 
-/// `line` with the fourth cell of a table line of five or more cells emptied.
-fn without_target_cell(line: &str) -> String {
-    let trimmed = line.trim();
-    let inner = trimmed.strip_prefix('|').unwrap_or(trimmed);
-    let inner = inner.strip_suffix('|').unwrap_or(inner);
-    let mut cells: Vec<&str> = inner.split('|').collect();
-    if cells.len() >= 5
-        && let Some(cell) = cells.get_mut(3)
-    {
-        *cell = "";
-    }
-    cells.join("|")
-}
-
+/// The condition row of a verification line. Each field is read from its own
+/// cell: the condition ID from the first, the parents from the second, the
+/// method from the third and the targets from the fourth.
 fn scan_condition_line(
     line: &str,
-    cell: &str,
     at: At<'_>,
     ctx: &ScanContext<'_>,
 ) -> Option<Row> {
-    let cond_caps = ctx.rules.condition_occurrence.captures(cell)?;
+    let cells = cells(line);
+    let cell = |idx: usize| cells.get(idx).copied().unwrap_or_default();
+
+    let cond_caps = ctx.rules.condition_occurrence.captures(cell(0))?;
     let c_id = cond_caps.name("trace_id")?.as_str();
     let c_doc = cond_caps.name("trace_doc").map_or(ctx.doc, |m| m.as_str());
     let cond_qualified = format!("{c_doc}{QUALIFIER}{c_id}");
 
-    // The method is the code span whose content is in `METHODS`; failing
-    // that, the first code span that holds no ID, so that `check` reports it
-    // as an unknown method.
-    let spans = super::code_spans(line);
+    let mut seen = BTreeSet::new();
+    let parents = ctx
+        .rules
+        .ids(cell(1), ctx.doc)
+        .filter(|p| seen.insert(p.clone()))
+        .collect();
+
+    // The method is the code span of the Method cell whose content is in
+    // `METHODS`; failing that, its first code span that holds no ID, so that
+    // `check` reports an unknown method.
+    let spans = super::code_spans(cell(2));
     let method = spans
         .iter()
         .find(|s| is_method(s.content))
@@ -427,31 +484,13 @@ fn scan_condition_line(
         })
         .map(|s| s.content.to_string());
 
-    // The targets of a link condition are not its parents.
-    let is_link = method.as_deref().is_some_and(|m| m == LINK.name);
-    let scanned = if is_link {
-        without_target_cell(line)
-    } else {
-        line.to_string()
-    };
-    let mut parents: Vec<String> = ctx
-        .rules
-        .occurrence
-        .captures_iter(&scanned)
-        .filter_map(|caps| {
-            let id = caps.name("trace_id")?.as_str();
-            let owner = caps.name("trace_doc").map_or(ctx.doc, |d| d.as_str());
-            Some(format!("{owner}{QUALIFIER}{id}"))
-        })
-        .collect();
-
-    let mut seen = BTreeSet::new();
-    parents.retain(|p| seen.insert(p.clone()));
-
     let mut condition = row(cond_qualified, CONDITION, at, line);
     condition.parents = parents;
     condition.method = method;
-    condition.targets = targets(line);
+    condition.targets = super::code_spans(cell(3))
+        .iter()
+        .map(|s| s.content.trim().to_string())
+        .collect();
     Some(condition)
 }
 
@@ -488,8 +527,7 @@ pub fn scan_markdown(file: &str, source: &str, rules: &Rules) -> MarkdownScan {
         {
             rows.push(row(id, DEFINITION, at, &definition_text(&lines, idx)));
         } else if rules.verification.is_match(line) {
-            let cell = first_cell(line);
-            match scan_condition_line(line, cell, at, &ctx) {
+            match scan_condition_line(line, at, &ctx) {
                 Some(row) => rows.push(row),
                 None => defects.push(Defect {
                     file: file.to_string(),
@@ -600,10 +638,9 @@ fn check_condition_methods(
 ) {
     for condition in conditions {
         let id = &condition.id;
-        let ids = rules
-            .condition_occurrence
-            .find_iter(&condition.text)
-            .count();
+        let row_cells = cells(&condition.text);
+        let cell = |idx: usize| row_cells.get(idx).copied().unwrap_or_default();
+        let ids = rules.condition_occurrence.find_iter(cell(0)).count();
         if ids > 1 {
             defects.push(Defect::at(
                 condition,
@@ -612,7 +649,7 @@ fn check_condition_methods(
                 ),
             ));
         }
-        let methods = super::code_spans(&condition.text)
+        let methods = super::code_spans(cell(2))
             .iter()
             .filter(|s| is_method(s.content))
             .count();
@@ -933,6 +970,7 @@ condition = 'VC-[0-9]+(?:\.[0-9]+[a-z]?)?'
 doc = '[a-z0-9-]+'
 files = ["docs/*-design.md"]
 doc_id = '^#\s+.*\((?P<doc>[a-z0-9-]+)\)'
+doc_status = { status = 'Design%20Status-(?P<status>[A-Za-z_]+)-', pass = ["Ready", "Shipped"], warn = ["Draft"] }
 definition = '^- \*\*(?:FR|NFR|C)-'
 verification = '^\| *(?:[a-z0-9-]+#)?VC-'
 "#;
@@ -1051,7 +1089,8 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
         assert_eq!(cond.id, "widget#VC-1.1");
         assert_eq!(
             cond.parents,
-            ["widget#FR-1", "storage#FR-3", "widget#FR-2"]
+            ["widget#FR-1", "storage#FR-3"],
+            "an ID outside the Requirement cell is not a parent"
         );
         assert_eq!(cond.method, Some("libtest".to_string()));
     }
@@ -1111,19 +1150,28 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
     }
 
     #[test]
-    fn the_default_doc_id_pattern_reads_a_heading_suffix() {
-        let keys: String = KEYS
-            .lines()
-            .filter(|l| !l.starts_with("doc_id"))
-            .collect::<Vec<_>>()
-            .join("\n");
-        let config: TraceConfig =
-            toml::from_str(&format!("{keys}\nretired = []")).unwrap();
-        let rules = config.rules(Path::new("trace.toml")).unwrap();
-        assert_eq!(
-            scan(CLEAN, &rules).first(),
-            Some(&expect(DEFINITION, "widget#FR-1", 3))
-        );
+    fn the_document_patterns_are_required() {
+        for key in ["doc_id", "doc_status"] {
+            let keys: String = KEYS
+                .lines()
+                .filter(|l| !l.starts_with(&format!("{key} ")))
+                .collect::<Vec<_>>()
+                .join("\n");
+            let parsed: Result<TraceConfig, _> =
+                toml::from_str(&format!("{keys}\nretired = []"));
+            assert!(parsed.is_err(), "{key}");
+        }
+    }
+
+    #[test]
+    fn a_doc_status_pattern_needs_a_status_capture() {
+        let text = format!("{KEYS}retired = []")
+            .replace("(?P<status>[A-Za-z_]+)", "[A-Za-z_]+");
+        let config: TraceConfig = toml::from_str(&text).unwrap();
+        assert!(matches!(
+            config.rules(Path::new("trace.toml")),
+            Err(GateError::Config { .. })
+        ));
     }
 
     #[test]
@@ -1144,13 +1192,29 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
     }
 
     #[test]
-    fn targets_come_from_the_fourth_of_at_least_five_cells() {
+    fn cells_split_at_unescaped_pipes() {
         assert_eq!(
-            targets("| VC-1.1 | FR-1 | `libtest` | `a::b` | note |"),
-            ["a::b"]
+            cells("| VC-1.1 | FR-1 | `libtest` | `a::b` | x \\| y |"),
+            ["VC-1.1", "FR-1", "`libtest`", "`a::b`", "x \\| y"]
         );
-        let got = targets("| VC-1.1 | FR-1 | `libtest` | `a::b` |");
-        assert!(got.is_empty(), "{got:?}");
+        assert_eq!(cells("VC-1.1 | FR-1"), ["VC-1.1", "FR-1"]);
+        assert_eq!(cells("| a \\\\| b |"), ["a \\\\", "b"]);
+    }
+
+    #[test]
+    fn condition_fields_come_from_their_own_cells() {
+        let source = "# Widget (widget)\n\n\
+            | VC-1.1 | FR-1 | `libtest` | `a::t::x` | Unlike FR-2, `kani` \\| `b::y` |\n";
+        let (rows, _) = scan_markdown(FILE, source, &rules());
+        let row = rows.first().unwrap();
+        assert_eq!(row.parents, ["widget#FR-1".to_string()]);
+        assert_eq!(row.method.as_deref(), Some("libtest"));
+        assert_eq!(row.targets, ["a::t::x".to_string()]);
+        assert!(
+            !messages(source, &rules())
+                .iter()
+                .any(|m| m.contains("more than one method"))
+        );
     }
 
     #[test]
@@ -1293,7 +1357,7 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
     fn row_and_method_defects_are_reported() {
         let cases = [
             (
-                "| VC-1.1 | VC-1.2 | FR-1 | `libtest` | Two |",
+                "| VC-1.1, VC-1.2 | FR-1 | `libtest` | `a::b` | Two |",
                 "verification row of widget#VC-1.1 names more than one \
                  condition ID",
             ),
@@ -1314,7 +1378,7 @@ verification = '^\| *(?:[a-z0-9-]+#)?VC-'
                 "condition widget#VC-1.1 names unknown method `deferred`",
             ),
             (
-                "| VC-1.1 | FR-1 | `libtest` | `doc-status` |",
+                "| VC-1.1 | FR-1 | `libtest`, `doc-status` | `a::b` |",
                 "condition widget#VC-1.1 names more than one method",
             ),
             (

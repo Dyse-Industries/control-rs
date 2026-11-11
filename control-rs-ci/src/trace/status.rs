@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use super::link::{
     Acyclic, GraphFormat, LinkGraph, LinkStatuses, RequirementMap, link_graph,
 };
-use super::reqs::{DecisionRules, RecordStatus, TraceConfig};
+use super::reqs::{DecisionRules, DocStatusRules, RecordStatus, TraceConfig};
 use super::select::select;
 use super::{
     CONDITION, DEFINITION, Defect, Defects, QUALIFIER, Row, SCHEMA, read_text,
@@ -266,11 +266,6 @@ struct ArtifactMethod {
     strip: bool,
 }
 
-/// The fixed pattern that reads a design document's status badge.
-struct DocumentMetaPatterns {
-    status: Option<regex::Regex>,
-}
-
 /// A verification method a condition row may name.
 pub(crate) struct TraceCheckMethod {
     /// The method as a condition row writes it.
@@ -288,7 +283,7 @@ pub(crate) struct StatusCtx<'a> {
     interpreter_results: Option<&'a ResultLog>,
     documents: DocFiles<'a>,
     decisions: Option<DecisionRules>,
-    patterns: DocumentMetaPatterns,
+    doc_status: Option<DocStatusRules>,
     defects: &'a mut Defects,
     warnings: &'a mut Vec<InterpreterWarning>,
 }
@@ -297,7 +292,7 @@ pub(crate) struct StatusCtx<'a> {
 struct TargetDocState {
     status: Option<String>,
     passed: bool,
-    draft: bool,
+    warned: bool,
 }
 
 /// `trace-report.json`.
@@ -1195,18 +1190,17 @@ fn find_doc_or_decision_status(
             TargetDocState {
                 status,
                 passed: accepted,
-                draft: false,
+                warned: false,
             }
         })
     } else {
         document_status(target, ctx).map(|status| {
-            let accepted =
-                matches!(status.as_deref(), Some("Ready" | "Shipped"));
-            let draft = status.as_deref() == Some("Draft");
+            let rules = ctx.doc_status.as_ref().zip(status.as_deref());
+            let warned = rules.is_some_and(|(r, s)| r.warns(s));
             TargetDocState {
+                passed: warned || rules.is_some_and(|(r, s)| r.passes(s)),
+                warned,
                 status,
-                passed: accepted || draft,
-                draft,
             }
         })
     }
@@ -1241,13 +1235,16 @@ fn doc_target(
         ));
         return (outcome(false, Some(message)), Status::Unrun);
     };
-    if doc_state.draft {
+    if doc_state.warned {
         ctx.warnings.push(InterpreterWarning {
             code: "W-4".to_string(),
             file: row.file.clone(),
             line: row.line,
             item: target.to_string(),
-            message: "document status is Draft".to_string(),
+            message: format!(
+                "document status is {}",
+                doc_state.status.as_deref().unwrap_or_default()
+            ),
         });
     }
     if doc_state.passed {
@@ -1282,11 +1279,11 @@ fn decision_status(id: &str, ctx: &StatusCtx<'_>) -> RecordStatus {
 fn document_status(doc: &str, ctx: &StatusCtx<'_>) -> RecordStatus {
     let file = ctx.documents.get(doc)?;
     let source = read_text(&ctx.base.join(file)).ok()?;
-    Some(ctx.patterns.status.as_ref().and_then(|re| {
-        re.captures(&source)
-            .and_then(|c| c.name("status"))
-            .map(|m| m.as_str().to_string())
-    }))
+    Some(
+        ctx.doc_status
+            .as_ref()
+            .and_then(|rules| rules.status(&source)),
+    )
 }
 
 /// Condition `row` with `status` and `items`.
@@ -1529,12 +1526,7 @@ pub fn derive_with_graph(
             .decisions
             .as_ref()
             .and_then(|d| d.rules(Path::new("trace.toml")).ok()),
-        patterns: DocumentMetaPatterns {
-            status: regex::Regex::new(
-                r"(?:Design|Doc)%20Status-(?P<status>[A-Za-z_]+)-",
-            )
-            .ok(),
-        },
+        doc_status: config.doc_status.rules(Path::new("trace.toml")).ok(),
         defects: &mut defects,
         warnings: &mut warnings,
     };
@@ -1565,6 +1557,7 @@ pub fn derive_with_graph(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::trace::reqs::DocStatusConfig;
     use std::fs;
     use std::path::PathBuf;
 
@@ -1994,6 +1987,11 @@ mod tests {
             doc: "[a-z0-9-]+".to_string(),
             files: vec!["docs".to_string()],
             doc_id: r"^#\s+.*\((?P<doc>[a-z0-9-]+)\)".to_string(),
+            doc_status: DocStatusConfig {
+                status: "Design%20Status-(?P<status>[A-Za-z_]+)-".to_string(),
+                pass: vec!["Ready".to_string(), "Shipped".to_string()],
+                warn: vec!["Draft".to_string()],
+            },
             definition: r"^- \*\*(?:FR|NFR|C)-".to_string(),
             verification: r"^\| *(?:[a-z0-9-]+#)?VC-".to_string(),
             method,
@@ -2439,6 +2437,43 @@ mod tests {
             assert!(derived.1.is_empty(), "{:?}", derived.1);
             assert!(derived.0.warnings.is_empty(), "{:?}", derived.0.warnings);
         }
+    }
+
+    #[test]
+    fn doc_status_words_come_from_the_configuration() {
+        let dir = test_dir("doc_words");
+        fs::create_dir_all(dir.join("docs")).unwrap();
+        fs::write(
+            dir.join("docs/other.md"),
+            "# Other (other)\n\nState: Done.\n",
+        )
+        .unwrap();
+        let other = Row {
+            id: "other#FR-1".to_string(),
+            file: "docs/other.md".to_string(),
+            ..definition()
+        };
+        let derive = |pass: &str, warn: &[&str]| {
+            let mut config = default_config();
+            config.doc_status = DocStatusConfig {
+                status: "State: (?P<status>[A-Za-z]+)".to_string(),
+                pass: vec![pass.to_string()],
+                warn: warn.iter().map(ToString::to_string).collect(),
+            };
+            let rows = [
+                definition(),
+                other.clone(),
+                condition("doc-status", &["other"]),
+            ];
+            derive_with_base(&rows, &config, &dir)
+        };
+        let passed = derive("Done", &[]);
+        assert_eq!(status(&passed), Some(Status::Pass));
+        assert!(passed.0.warnings.is_empty(), "{:?}", passed.0.warnings);
+        let warned = derive("Final", &["Done"]);
+        assert_eq!(status(&warned), Some(Status::Pass));
+        assert_eq!(warned.0.warnings.len(), 1);
+        assert_eq!(status(&derive("Final", &[])), Some(Status::Fail));
     }
 
     #[test]
