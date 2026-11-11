@@ -21,32 +21,32 @@ fixed quantization step $\Delta = 2^{-\text{SHIFT}}$ (ARM, 1996; Spiteri,
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Compile-Time Scale**: The scale exponent `SHIFT` is a const generic
+- **FR-1 - Compile-Time Scale**: The scale exponent `SHIFT` is a const generic
   type parameter validated at compile time via `Dim` trait bounds (`DimMax`). It
   is not stored at runtime.
-- **FR-2 — Binary Power-of-Two Scale**: A value with scale `SHIFT` is
+- **FR-2 - Binary Power-of-Two Scale**: A value with scale `SHIFT` is
   `raw · 2^(−SHIFT)`. Adjacent values differ by a constant `Δ = 2^(−SHIFT)`.
   Decimal (power-of-ten) scales are out of scope.
-- **FR-3 — Total Saturating Arithmetic**: `Add`, `Sub`, `Mul`, `Div` and `Neg`
+- **FR-3 - Total Saturating Arithmetic**: `Add`, `Sub`, `Mul`, `Div` and `Neg`
   always return a value of the type, and each equals the matching `math::ops`
   `Saturating*` method. Overflow saturates to min or max; it does not wrap or
   panic. Division by zero returns `MAX` for a positive numerator, `MIN` for a
   negative one and zero for `0 / 0`. Overflow and division-by-zero detection
   is provided via the `math::ops` `Try*` traits, which return `Result`.
-- **FR-4 — Exact Product Rescale**: `Mul` forms the full product in a wider
+- **FR-4 - Exact Product Rescale**: `Mul` forms the full product in a wider
   integer, then rescales to `SHIFT`. A same-width multiply is not used.
-- **FR-5 — Scale Conversion**: `rescale` converts `Fixed<Repr, Q>` to
+- **FR-5 - Scale Conversion**: `rescale` converts `Fixed<Repr, Q>` to
   `Fixed<Repr, R>` by a left shift of `R − Q` or a right shift of
   `Q − R`. It always returns a value of the destination type. Overflow
   saturates to min or max.
-- **FR-6 — Numeric Trait Participation**: The type implements `Zero`, `One`,
+- **FR-6 - Numeric Trait Participation**: The type implements `Zero`, `One`,
   `Conjugate` (identity), `Scalar` with `Real = Self`, and
   `SaturatingInteger`, subject to FR-7. It does not implement `Float`,
   `Radical`, `Exponential`, or `Trig`.
-- **FR-7 — Representable-Constant Gating**: A trait is implemented only when
+- **FR-7 - Representable-Constant Gating**: A trait is implemented only when
   its properties hold. Do not implement `One` when `1` is not representable:
   then `1 * n ≠ n`. `SaturatingInteger` also requires `2`.
-- **FR-8 — Multiply Accumulate**: `Fixed<Repr, SHIFT>` implements `MulAcc`
+- **FR-8 - Multiply Accumulate**: `Fixed<Repr, SHIFT>` implements `MulAcc`
   (`num-traits-design.md` FR-7) with an accumulator `Repr::Acc` that holds
   exact products at scale $2\,\text{SHIFT}$. `mac` adds the exact product of
   two values to the accumulator and saturates only at the accumulator bounds.
@@ -55,21 +55,21 @@ fixed quantization step $\Delta = 2^{-\text{SHIFT}}$ (ARM, 1996; Spiteri,
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Single-Word Footprint**: `Fixed<Repr, SHIFT>` has the size
+- **NFR-1 - Single-Word Footprint**: `Fixed<Repr, SHIFT>` has the size
   and alignment of `Repr`. `SHIFT` occupies no storage.
-- **NFR-2 — Zero-Cost Arithmetic**: Each operator compiles to the integer
+- **NFR-2 - Zero-Cost Arithmetic**: Each operator compiles to the integer
   instructions a hand-scaled `Repr` implementation would emit. No
   runtime scale bookkeeping and no call trampoline.
 
 #### 2.3 Constraints
 
-- **C-1 — `no_std`**: `core` only. No allocation. No `std`.
-- **C-2 — No New Dependencies**: No new crate dependencies. Width and scale
+- **C-1 - `no_std`**: `core` only. No allocation. No `std`.
+- **C-2 - No New Dependencies**: No new crate dependencies. Width and scale
   use const generics and `math::num_types` already in this crate.
-- **C-3 — Scale Range**: `SHIFT` is in `0..=BITS`, where `BITS` is the bit
+- **C-3 - Scale Range**: `SHIFT` is in `0..=BITS`, where `BITS` is the bit
   width of `Repr`, enforced as a compile-time dimension bound (
   `Const<SHIFT>: Dim + DimMax<Repr::BitsDim, Output = Repr::BitsDim>`).
-- **C-4 — No Bare Primitive Arithmetic**: No operator uses a bare primitive
+- **C-4 - No Bare Primitive Arithmetic**: No operator uses a bare primitive
   `+`, `-`, or `*`. Arithmetic goes through `saturating_*` or `checked_*`.
 
 ---

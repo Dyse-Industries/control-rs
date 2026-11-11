@@ -34,61 +34,61 @@ Primary usage scenarios:
 
 #### 2.1. Functional Requirements
 
-- **FR-1 — Compile-Time Shape Verification**: Matrix operations validate operand
+- **FR-1 - Compile-Time Shape Verification**: Matrix operations validate operand
   dimension compatibility at compile time before execution. A dimension
   mismatch (such as multiplying a $2 \times 2$ matrix by a $3 \times 1$ vector)
   must prevent compilation rather than panicking at runtime in embedded control
   loops.
-- **FR-2 — Matrix Algebra & Linear Transformations**: Matrices provide standard
+- **FR-2 - Matrix Algebra & Linear Transformations**: Matrices provide standard
   matrix-vector and matrix-matrix
   products ($y = \alpha A x + \beta y$, $C = \alpha A B + \beta C$), addition,
   subtraction, negation, transposition, and scaling. Operations must
   mathematically match standard linear algebra without requiring intermediate
   heap buffers.
-- **FR-3 — Fallible Factorizations & Direct Solvers**: Direct linear system
+- **FR-3 - Fallible Factorizations & Direct Solvers**: Direct linear system
   solvers ($A x = b$), triangular solvers, and matrix factorizations (LU,
   Cholesky, $LDL^T$, QR) return explicit error variants (`LinAlgError`) when
   inputs are singular, rank-deficient, or non-positive-definite (Anderson et
   al., 1999). Numerical failures must never panic or silently corrupt downstream
   state estimates.
-- **FR-4 — Coordinate Element Access**: Element indexing by 2D
+- **FR-4 - Coordinate Element Access**: Element indexing by 2D
   coordinates $(i, j)$ accesses the correct logical entry for both row-major and
   column-major representations. Out-of-bounds indices return `None` on checked
   access and fail at compile time for fixed-index lookups.
-- **FR-5 — Structural Specializations**: Symmetric, Hermitian, triangular, and
+- **FR-5 - Structural Specializations**: Symmetric, Hermitian, triangular, and
   diagonal matrix structures provide element access and tailored algebraic
   operations that exploit symmetry and sparsity without allocating full dense
   storage.
-- **FR-6 — Zero-Copy Submatrix Views**: Callers can extract rectangular
+- **FR-6 - Zero-Copy Submatrix Views**: Callers can extract rectangular
   sub-windows, row slices, and column vectors without copying underlying matrix
   data. Slices preserve stride semantics for zero-copy kernel execution.
 
 #### 2.2. Non-Functional Requirements
 
-- **NFR-1 — Zero-Allocation Deterministic Execution**: Matrix operations and
+- **NFR-1 - Zero-Allocation Deterministic Execution**: Matrix operations and
   factorizations over statically sized dimensions execute entirely on stack or
   borrowed memory without dynamic allocation.
-- **NFR-2 — Interoperable C-ABI Layout**: Contiguous matrix layouts expose flat
+- **NFR-2 - Interoperable C-ABI Layout**: Contiguous matrix layouts expose flat
   slice views conforming to standard C-ABI contiguous array layouts for hardware
   DMA and vendor DSP library interoperability.
-- **NFR-3 — Predictable Real-Time Latency**: Factorization and solver execution
+- **NFR-3 - Predictable Real-Time Latency**: Factorization and solver execution
   loops address memory without runtime bounds checking or unwinding landing
   pads, guaranteeing bounded Worst-Case Execution Time (WCET).
 
 #### 2.3. Constraints
 
-- **C-1 — Stable Rust Toolchain**: Code must compile on `stable` Rust without
+- **C-1 - Stable Rust Toolchain**: Code must compile on `stable` Rust without
   requiring incomplete experimental features (`generic_const_exprs`).
-- **C-2 — Stack Footprint Limit**: Each of `R` and `C` is a `Dim`, so it lies
+- **C-2 - Stack Footprint Limit**: Each of `R` and `C` is a `Dim`, so it lies
   in the `num-types-design.md` C-1 set ($0..=1024$ plus $2048$, $4096$,
   $8192$, $16384$). The element count $R \times C$ carries no type-level
   bound: `ArrayStorage` is a nested array and no API names the flattened
   product as a `Dim`. An owned matrix occupies $R \times C \times
   \text{size\_of}(T)$ bytes of stack, which the caller budgets against target
   RAM (§7).
-- **C-3 — `#![no_std]` Environment**: Operates strictly in `#![no_std]` without
+- **C-3 - `#![no_std]` Environment**: Operates strictly in `#![no_std]` without
   standard library dependencies.
-- **C-4 — In-Place Factorization Mutability**: In-place matrix decompositions
+- **C-4 - In-Place Factorization Mutability**: In-place matrix decompositions
   require mutable dense storage and cannot be executed over immutable or
   packed-view backends.
 
@@ -395,7 +395,7 @@ the call site (FR-5; `subprograms-design.md` §4.1). `Matrix` supplies:
 | Kernel input            | Source                                                                |
 |:------------------------|:----------------------------------------------------------------------|
 | Operand `&A` / `&mut Y` | `&self.storage`, typed `S: DenseStorage<T>`                           |
-| Shape                   | `S::R::USIZE`, `S::C::USIZE` — monomorphization constants             |
+| Shape                   | `S::R::USIZE`, `S::C::USIZE` (monomorphization constants)             |
 | Addressing              | `as_ptr()` with `r_stride()` / `c_stride()` (`storage-design.md` C-1) |
 | `trans` / `ta`, `tb`    | The algebraic operation, never the layout (§4.6)                      |
 | `uplo`, `diag`, `side`  | The structural intent of the call (`UpLo`, `Diag`, `Side`)            |
@@ -703,7 +703,7 @@ slots only and rejects structural violations with
 `StorageError::InvalidHermitianDiagonal` (`storage-design.md` FR-3, §4.4).
 
 *Codegen Advantage*: Delegating coordinate lookup to the concrete leaves lets
-each monomorphized implementation compile without dead layout branches —
+each monomorphized implementation compile without dead layout branches:
 `ArrayStorage` folds $r \cdot 1 + c \cdot R$ directly, while
 `SymmetricPackedStorage` handles triangular index reflection natively. Hot
 arithmetic paths bypass lookup entirely and run inside the subprogram
@@ -968,19 +968,19 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 
 | Requirement                                     | Method                                           | Artifact                                               |
 |:------------------------------------------------|:-------------------------------------------------|:-------------------------------------------------------|
-| FR-1 — Compile-Time Shape Verification          | Compile-time shape check                         | rustdoc `compile_fail` doctests in `src/matrix/mod.rs`              |
-| FR-2 — Matrix Algebra & Linear Transformations  | Property-based test, Back-to-back comparison     | `src/matrix/tests/matrix_tests.rs::prop_add_associativity`          |
-| FR-3 — Fallible Factorizations & Direct Solvers | Requirements-based test, Back-to-back comparison | `src/matrix/tests/matrix_tests.rs::test_lu_solve_mut`, `test_lu_factor_residual`, `test_cholesky_factor_residual`, `test_qr_orthogonality` |
-| FR-4 — Coordinate Element Access                | Requirements-based test                          | `src/matrix/tests/matrix_tests.rs::test_coordinate_access`          |
-| FR-5 — Structural Specializations               | Property-based test, Requirements-based test     | `src/matrix/tests/matrix_tests.rs::test_symmetric_construction`        |
-| FR-6 — Zero-Copy Submatrix Views                | Property-based test, Requirements-based test     | `src/matrix/tests/matrix_tests.rs::test_strided_submatrix`          |
-| NFR-1 — Zero-Allocation Deterministic Execution | Resource usage evaluation                        | `#![no_std]` host check & `size_of` assertions                      |
-| NFR-2 — Interoperable C-ABI Layout              | Resource usage evaluation                        | `src/matrix/tests/matrix_tests.rs::test_c_abi_layout`               |
-| NFR-3 — Predictable Real-Time Latency           | On-target execution                              | ETS suite `matrix_test_suite`                                       |
-| C-1 — Stable Rust Toolchain                     | Compile-time shape check                         | Workspace build on `stable` Rust                       |
-| C-2 — Stack Footprint Limit                     | Resource usage evaluation                        | `clippy::large_stack_arrays` CI check                  |
-| C-3 — `#![no_std]` Environment                  | Resource usage evaluation                        | Compilation under `#![no_std]` target triples          |
-| C-4 — In-Place Factorization Mutability         | Compile-time shape check                         | Type bound verification on `DenseStorageMut`           |
+| FR-1 - Compile-Time Shape Verification          | Compile-time shape check                         | rustdoc `compile_fail` doctests in `src/matrix/mod.rs`              |
+| FR-2 - Matrix Algebra & Linear Transformations  | Property-based test, Back-to-back comparison     | `src/matrix/tests/matrix_tests.rs::prop_add_associativity`          |
+| FR-3 - Fallible Factorizations & Direct Solvers | Requirements-based test, Back-to-back comparison | `src/matrix/tests/matrix_tests.rs::test_lu_solve_mut`, `test_lu_factor_residual`, `test_cholesky_factor_residual`, `test_qr_orthogonality` |
+| FR-4 - Coordinate Element Access                | Requirements-based test                          | `src/matrix/tests/matrix_tests.rs::test_coordinate_access`          |
+| FR-5 - Structural Specializations               | Property-based test, Requirements-based test     | `src/matrix/tests/matrix_tests.rs::test_symmetric_construction`        |
+| FR-6 - Zero-Copy Submatrix Views                | Property-based test, Requirements-based test     | `src/matrix/tests/matrix_tests.rs::test_strided_submatrix`          |
+| NFR-1 - Zero-Allocation Deterministic Execution | Resource usage evaluation                        | `#![no_std]` host check & `size_of` assertions                      |
+| NFR-2 - Interoperable C-ABI Layout              | Resource usage evaluation                        | `src/matrix/tests/matrix_tests.rs::test_c_abi_layout`               |
+| NFR-3 - Predictable Real-Time Latency           | On-target execution                              | ETS suite `matrix_test_suite`                                       |
+| C-1 - Stable Rust Toolchain                     | Compile-time shape check                         | Workspace build on `stable` Rust                       |
+| C-2 - Stack Footprint Limit                     | Resource usage evaluation                        | `clippy::large_stack_arrays` CI check                  |
+| C-3 - `#![no_std]` Environment                  | Resource usage evaluation                        | Compilation under `#![no_std]` target triples          |
+| C-4 - In-Place Factorization Mutability         | Compile-time shape check                         | Type bound verification on `DenseStorageMut`           |
 
 #### 6.5. Coverage
 
@@ -1086,48 +1086,44 @@ cofactor expansion ($O(N!)$, intractable past $N=3$).
 ## References
 
 1. **Golub, G. H., & Van Loan, C. F. (2013).** _Matrix Computations_ (4th ed.).
-   Johns Hopkins University Press. — Flop-count basis for in-place
+   Johns Hopkins University Press. - Flop-count basis for in-place
    factorizations ($O(N^3/3)$ Cholesky/$LDL^T$, $O(2N^3/3)$ LU, $O(4N^3/3)$ QR).
-2. **Anderson, E., et al. (1999).** _LAPACK Users' Guide_ (3rd ed.). SIAM. —
-   Reference performance/blocking conventions behind BLAS-backed solver
+2. **Anderson, E., et al. (1999).** _LAPACK Users' Guide_ (3rd ed.). SIAM. - Reference performance/blocking conventions behind BLAS-backed solver
    routines.
 3. **Frison, G., et al. (2018).** BLASFEO: Basic Linear Algebra Subroutines for
-   Embedded Optimization. _ACM Transactions on Mathematical Software_. — Direct
+   Embedded Optimization. _ACM Transactions on Mathematical Software_. - Direct
    embedded runtime benchmarks and panel-major vs. column-major memory-layout
    comparison.
 4. **Bini, D. A., Boito, P., Eidelman, Y., Gemignani, L., & Gohberg, I. (2010).
    ** A Fast Implicit QR Eigenvalue Algorithm for Companion Matrices. _Linear
-   Algebra and its Applications_, 432(8), 2006–2031. —
-   Explicit $O(N^3) \to O(N^2)$ time and $O(N)$ space reduction for
+   Algebra and its Applications_, 432(8), 2006–2031. - Explicit $O(N^3) \to O(N^2)$ time and $O(N)$ space reduction for
    companion-matrix eigenvalue solving.
 5. **Aurentz, J. L., Mach, T., Vandebril, R., & Watkins, D. S. (2014).** Fast
    and backward stable computation of roots of polynomials. _TW Reports_, KU
-   Leuven. — Speed-vs-backward-stability trade-off evaluation for companion
+   Leuven. - Speed-vs-backward-stability trade-off evaluation for companion
    matrix polynomial rootfinding.
 6. **Higham, N. J. (2002).** _Accuracy and Stability of Numerical Algorithms_ (
-   2nd ed.). SIAM. — Condition-number and error-bound analysis underpinning the
+   2nd ed.). SIAM. - Condition-number and error-bound analysis underpinning the
    rule against forming $A^T A$ and pivoting stability rules.
 7. **Yiu, J. (2013).** _The Definitive Guide to ARM Cortex-M3 and Cortex-M4
-   Processors_ (3rd ed.). Newnes. — FPU register count (32 single-precision
+   Processors_ (3rd ed.). Newnes. - FPU register count (32 single-precision
    registers) and micro-architectural execution constraints.
-8. **Demmel, J. W. (1997).** _Applied Numerical Linear Algebra_. SIAM. —
-   Reference textbook for standard numerical linear algebra algorithms and
+8. **Demmel, J. W. (1997).** _Applied Numerical Linear Algebra_. SIAM. - Reference textbook for standard numerical linear algebra algorithms and
    conventional BLAS/LAPACK routine mapping.
 9. **Faddeev, D. K., & Faddeeva, V. N. (1963).** _Computational Methods of
-   Linear Algebra_. W. H. Freeman and Company. — Classical derivation behind the
+   Linear Algebra_. W. H. Freeman and Company. - Classical derivation behind the
    division-free Faddeev–LeVerrier matrix characteristic polynomial formulation.
 10. **Greif, C., He, S., & Liu, P. (2016).** SYM-ILDL: Incomplete $LDL^T$
     Factorization of Symmetric Indefinite and Skew-Symmetric Matrices. _arXiv:
-    1505.07589_. — $O(n)$ per-step pivot-search cost for symmetric partial
+    1505.07589_. - $O(n)$ per-step pivot-search cost for symmetric partial
     pivoting, bounding the `Iamax` work per elimination step.
 11. **Higham, N. J., & Tisseur, F. (2000).** A Block Algorithm for Matrix 1-Norm
     Estimation, with an Application to 1-Norm Pseudospectra. _SIAM Journal on
-    Matrix Analysis and Applications_, 21(4). doi: 10.1137/S0895479899356080. —
-    Multiple-right-hand-side triangular solves arising in LU-based solver paths.
+    Matrix Analysis and Applications_, 21(4). doi: 10.1137/S0895479899356080. - Multiple-right-hand-side triangular solves arising in LU-based solver paths.
 12. **PLASMA (Univ. of Tennessee Innovative Computing Laboratory). (2025).**
     `plasma_2.4.5/include/cblas.h` Source File. _PLASMA
     Documentation_. [Online].
     Available: https://icl.utk.edu/plasma/docs/cblas_8h_source.html. Accessed:
-    Aug. 8, 2026. — `CBLAS_ORDER` as a per-call argument rather than a routine
+    Aug. 8, 2026. - `CBLAS_ORDER` as a per-call argument rather than a routine
     property, and the `lda`/`ldb`/`ldc` positions in `cblas_sgemm`, behind
     §4.2's layout-forwarding rule and §4.5.2's operand table.

@@ -17,14 +17,14 @@ work follows both tracks.
     - [x] **PR3-1**: Multi-Oracle Differential Test Harness
       (`control-rs-compare`)
       ([#59](https://github.com/Dyse-Industries/control-rs/pull/59); [cross-compare](vv/cross-compare-design.md))
-    - [x] **PR3-2**: CI Gate — Performance & Benchmarking (`regression`)
+    - [x] **PR3-2**: CI Gate - Performance & Benchmarking (`regression`)
       ([#60](https://github.com/Dyse-Industries/control-rs/pull/60); [ci](ci/ci-design.md)
       §4.7)
-    - [x] **PR3-3**: CI Cleanup & ETS Gate — Gate Selection vs Policy,
+    - [x] **PR3-3**: CI Cleanup & ETS Gate - Gate Selection vs Policy,
       Process-Tree Timeouts, Bare-Metal Target Build & QEMU ETS Execution
       (`control-rs-ci`)
       ([#63](https://github.com/Dyse-Industries/control-rs/pull/63); [ci](ci/ci-design.md))
-    - [x] **PR3-4**: CI Gate — Requirement Traceability (`trace`) (
+    - [x] **PR3-4**: CI Gate - Requirement Traceability (`trace`) (
       [requirement-traceability](vv/requirement-traceability-design.md))
     - [x] **PR3-5**: Technical Debt & Verification Hardening
       ([#67](https://github.com/Dyse-Industries/control-rs/pull/67); [ci](ci/ci-design.md) rev 1.33)
@@ -34,7 +34,7 @@ work follows both tracks.
           report, fail-closed `valgrind`, retired schema and dead code removed
     - [x] **PR3-6**: Formal Verification & Dynamic Analysis Gates (`kani`, `miri`)
       ([#69](https://github.com/Dyse-Industries/control-rs/pull/69); gates failing at merge; repaired in PR3-7)
-    - [x] **PR3-7**: Main Repair — Patch Failing Gates
+    - [x] **PR3-7**: Main Repair - Patch Failing Gates
       ([#74](https://github.com/Dyse-Industries/control-rs/pull/74))
         - Reproduce each failing gate on `main` with `cargo ci` and patch it
           minimally, with no redesign

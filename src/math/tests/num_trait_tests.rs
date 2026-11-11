@@ -320,7 +320,7 @@ pub mod num_trait_test_suite {
     fn _float_property_check<T: Float + TrySub + TryMul + core::fmt::Debug>() {
         // NaN/Infinity are produced generically via total IEEE-754 division
         // (0/0, 1/0) rather than dedicated NAN/INF constants (`Float`
-        // deliberately carries neither — see `num-traits-design.md`).
+        // deliberately carries neither; see `num-traits-design.md`).
         let nan = T::ZERO.saturating_div(&T::ZERO);
         let inf = T::ONE.saturating_div(&T::ZERO);
         assert_ne!(nan.clone(), nan);

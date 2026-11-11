@@ -91,19 +91,19 @@ editing tools; and any systems-engineering view.
 
 ### Functional Requirements
 
-- **FR-1 — Definitions**: `trace-reqs` shall record one definition for the
+- **FR-1 - Definitions**: `trace-reqs` shall record one definition for the
   first requirement ID on each line that matches the `definition` pattern,
   with the definition text formed per [Matching Rules](#matching-rules).
-- **FR-2 — Conditions**: `trace-reqs` shall record one condition row for each
+- **FR-2 - Conditions**: `trace-reqs` shall record one condition row for each
   line that matches the `verification` pattern, with the condition ID on the
   line as `id`, every requirement ID outside condition IDs as `parents`, the
   method named in a code span as `method` and the code spans of the `Target`
   cell as `targets`.
-- **FR-3 — Qualified IDs**: `trace-reqs` shall qualify every recorded ID as
+- **FR-3 - Qualified IDs**: `trace-reqs` shall qualify every recorded ID as
   `<doc>#<id>` per [Matching Rules](#matching-rules), with `<doc>` extracted by
   the `doc_id` pattern, so that equal IDs in different documents never collide,
   and shall recognize an ID only at word boundaries.
-- **FR-4 — Checks**: `trace-reqs` shall report as a defect: a missing document
+- **FR-4 - Checks**: `trace-reqs` shall report as a defect: a missing document
   ID declaration matching `doc_id`; a document, requirement or condition defined
   more than once; a condition with no parent or with an undefined parent; a
   verification row with no condition ID or with more than one; a condition row
@@ -111,31 +111,31 @@ editing tools; and any systems-engineering view.
   [Methods](#methods), with no target, or a `doc-status` condition whose target
   names its own document; a defined requirement with no condition; and a retired
   ID that is defined or referenced.
-- **FR-6 — Requirement Rows**: `trace-reqs` shall write `reqs.jsonl` with one
+- **FR-6 - Requirement Rows**: `trace-reqs` shall write `reqs.jsonl` with one
   row per definition and per condition, in the row schema of
   [Artifacts](#artifacts).
-- **FR-8 — Coverage Verdict**: `trace-check` shall derive condition and
+- **FR-8 - Coverage Verdict**: `trace-check` shall derive condition and
   requirement status per [Status Derivation](#status-derivation), write
   `trace-report.json` and exit 0 iff no condition is `Uncovered`, `Unrun` or
   `Fail`.
-- **FR-9 — Diagnostic Format**: `trace-reqs` and `trace-check`
+- **FR-9 - Diagnostic Format**: `trace-reqs` and `trace-check`
   shall report each defect as one `path:line: message` line and shall exit
   non-zero when any defect exists.
-- **FR-10 — File Selection**: `trace-reqs` shall select its input files per
+- **FR-10 - File Selection**: `trace-reqs` shall select its input files per
   [File Selection](#file-selection).
-- **FR-11 — Targets**: `trace-check` shall resolve each target of a condition
+- **FR-11 - Targets**: `trace-check` shall resolve each target of a condition
   whose method is automated against the result log or outcome record of that
   method, and shall report a target that is absent from the log or directory,
   failed, or ambiguous (for example conflicting outcomes across repeats) as a
   defect at the condition row.
-- **FR-12 — Decision References**: When the configuration has a `[decisions]`
+- **FR-12 - Decision References**: When the configuration has a `[decisions]`
   table, `trace-reqs` shall record the ID and status of each decision record
   it selects, and shall report as a defect: a decision record with no status
   or defined more than once; and a decision ID cited in the text of a
   requirement definition that no decision record defines, or whose status is
   not in `accepted` (ADR-0001).
 
-- **FR-13 — Links**: For a condition whose method is `link`,
+- **FR-13 - Links**: For a condition whose method is `link`,
   `trace-reqs` shall resolve each target as a design document, a requirement or
   a condition per [Matching Rules](#matching-rules), and shall report as a
   defect a target that names nothing defined, a document
@@ -143,7 +143,7 @@ editing tools; and any systems-engineering view.
   `trace-check` shall give the condition the status of what it names per
   [Status Derivation](#status-derivation), using the graph of
   `tracer-link-graph-design.md`.
-- **FR-14 — Quality Gate References**: For a condition whose method is `gate`,
+- **FR-14 - Quality Gate References**: For a condition whose method is `gate`,
   `trace-check` shall resolve each target as a quality gate slug against
   `<result_dir>/<gate>.result.json` using `GateOutcome::load_from_file`, and
   shall report as a defect: a target naming a gate with no outcome artifact, an
@@ -152,34 +152,34 @@ editing tools; and any systems-engineering view.
 
 ### Non-Functional Requirements
 
-- **NFR-1 — Audit Latency**: Each of the two binaries shall complete on the
+- **NFR-1 - Audit Latency**: Each of the two binaries shall complete on the
   `control-rs` workspace in under 1 s of wall-clock time, excluding compilation.
-- **NFR-3 — Dependency Budget**: The two binaries shall add no dependency to
+- **NFR-3 - Dependency Budget**: The two binaries shall add no dependency to
   `control-rs-ci` beyond its current set, workspace crates
   `control-rs-compare`, and the `regex` crate.
-- **NFR-4 — Schema Versioning**: Every row and `trace-report.json` shall carry
+- **NFR-4 - Schema Versioning**: Every row and `trace-report.json` shall carry
   an integer `schema` field, incremented on every incompatible change.
 
 ### Constraints
 
-- **C-1 — Plain-Text Source**: Requirements and their verification shall live in
+- **C-1 - Plain-Text Source**: Requirements and their verification shall live in
   the Markdown files the configuration lists; no generated file shall be
   committed or required for reading or writing a requirement.
-- **C-2 — No Editor Integration**: The design shall deliver diagnostics only; it
+- **C-2 - No Editor Integration**: The design shall deliver diagnostics only; it
   shall ship no editor plugin, schema, snippet or language server.
-- **C-3 — Paths from Configuration**: Every input and output path of the two
+- **C-3 - Paths from Configuration**: Every input and output path of the two
   binaries shall arrive from a command-line argument or the configuration file.
-- **C-4 — Read-Only Inputs**: The tracer shall run no test, build or gate; it
+- **C-4 - Read-Only Inputs**: The tracer shall run no test, build or gate; it
   reads Markdown, the configuration, its own artifacts and per-target test and
   proof result logs from `target/ci-artifacts/`.
-- **C-5 — External Systems Tooling**: Hierarchy views, allocation, verification
+- **C-5 - External Systems Tooling**: Hierarchy views, allocation, verification
   matrices and model export shall consume the `.jsonl` files outside this
   workspace's CI path.
-- **C-6 — Artifact Location**: The two binaries shall write under
+- **C-6 - Artifact Location**: The two binaries shall write under
   `target/ci-artifacts/` when run as gates.
-- **C-7 — Document Style Exclusion**: `trace-reqs` shall check no citation,
+- **C-7 - Document Style Exclusion**: `trace-reqs` shall check no citation,
   reference or general document style.
-- **C-8 — Per-Target Verification Status**: The tracer shall derive condition
+- **C-8 - Per-Target Verification Status**: The tracer shall derive condition
   status from per-target test and proof results; it shall never infer condition
   status from aggregate gate verdicts.
 
@@ -192,7 +192,7 @@ editing tools; and any systems-engineering view.
 1. **Define the requirement** in the Requirements section:
 
    ```markdown
-   - **FR-3 — Packed Storage**: Packed symmetric, Hermitian and triangular storage
+   - **FR-3 - Packed Storage**: Packed symmetric, Hermitian and triangular storage
      shall return `None` from `value(i, j)` when `i` or `j` is out of bounds.
    ```
 
@@ -247,7 +247,7 @@ Every line of `reqs.jsonl` is one occurrence of one ID:
   "kind": "definition",
   "file": "documentation/math/storage-design.md",
   "line": 42,
-  "text": "- **FR-3 — Packed Storage**: Packed symmetric ... out of bounds."
+  "text": "- **FR-3 - Packed Storage**: Packed symmetric ... out of bounds."
 }
 {
   "schema": 5,

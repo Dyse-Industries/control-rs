@@ -30,51 +30,51 @@ work is done once per process.
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Link target resolution**: Each target of a link condition resolves
+- **FR-1 - Link target resolution**: Each target of a link condition resolves
   to a design document, a requirement or a condition defined in the selected
   rows. A link with no target, a target that names nothing defined and a
   target document that defines no requirement are each a defect at the
   condition row.
-- **FR-2 — Link cycle detection**: Every link condition that lies on a cycle of
+- **FR-2 - Link cycle detection**: Every link condition that lies on a cycle of
   links is reported at its row. A link to the condition itself, to its parent
   requirement, to its own document or into a chain that returns to it is a
   cycle; a link to another requirement of the same document is not.
-- **FR-3 — Link status**: A link condition takes the worst status of the items
+- **FR-3 - Link status**: A link condition takes the worst status of the items
   it names, a document taking the worst status of its requirements. A link
   condition on a cycle is `Fail`, a link with no target is `Uncovered`and a
   status passes along a chain of links.
-- **FR-4 — One set of link defects**: `trace-reqs` and `trace-check` report the
+- **FR-4 - One set of link defects**: `trace-reqs` and `trace-check` report the
   same link defects for the same rows.
-- **FR-5 — Viewable link graph**: `trace-check` writes the link structure as a
+- **FR-5 - Viewable link graph**: `trace-check` writes the link structure as a
   diagram that opens in a common viewer without a bespoke tool, showing each
   vertex with its status and marking every link that lies on a cycle. The
   diagram is read-only; links change by editing the Markdown.
-- **FR-6 — One graph per process**: Each binary obtains the acyclic link graph
+- **FR-6 - One graph per process**: Each binary obtains the acyclic link graph
   of its rows once. `trace-check` derives statuses and renders the diagram from
   that one graph.
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Linear cost**: Resolution, cycle detection and status derivation
+- **NFR-1 - Linear cost**: Resolution, cycle detection and status derivation
   take time and space linear in the number of rows plus link targets. The cost
   of a document that many links name does not grow with the number of those
   links.
-- **NFR-2 — Bounded stack**: The depth of a link chain does not bound the call
+- **NFR-2 - Bounded stack**: The depth of a link chain does not bound the call
   stack. A chain of 100 000 documents is processed on the default test stack.
-- **NFR-3 — Reproducible diagram**: The same rows and results give a
+- **NFR-3 - Reproducible diagram**: The same rows and results give a
   byte-identical diagram, so a diagram under review changes only when the links
   or their statuses change.
 
 #### 2.3 Constraints
 
-- **C-1 — Inherited dependency budget**: Conforms to
+- **C-1 - Inherited dependency budget**: Conforms to
   `requirement-traceability-design.md` NFR-3.
-- **C-2 — Inherited schema**: Conforms to `requirement-traceability-design.md`
+- **C-2 - Inherited schema**: Conforms to `requirement-traceability-design.md`
   NFR-4; the graph reads existing rows and adds no field to a row or to
   `trace-report.json`.
-- **C-3 — No panic path**: Link problems are defects, never errors or panics;
+- **C-3 - No panic path**: Link problems are defects, never errors or panics;
   the graph code contains no `unwrap`, `expect` or `panic!` outside tests.
-- **C-4 — Inherited plain-text source**: Conforms to
+- **C-4 - Inherited plain-text source**: Conforms to
   `requirement-traceability-design.md` C-1; the diagram is generated output and
   no tool reads it back.
 

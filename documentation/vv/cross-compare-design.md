@@ -26,57 +26,57 @@ numerical tolerance bounds.
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Typed HDF5 Variant Container**: Each execution variant (for example,
+- **FR-1 - Typed HDF5 Variant Container**: Each execution variant (for example,
   `rust`, `scipy`, `jax`, `ngspice`) emits its results to an independent HDF5 file
   formatted as `<out_dir>/<suite>.<variant>.h5` (the workspace configuration
   uses `target/verification/`). Datasets carry typed floating-point
   arrays (`f64`, 1D/2D) and string logs.
-- **FR-2 — Unified Standalone Runner & Comparator CLI (`compare`)**: `control-rs-compare`
+- **FR-2 - Unified Standalone Runner & Comparator CLI (`compare`)**: `control-rs-compare`
   publishes a standalone binary `compare` (`cargo compare`) that parses `compare.toml`,
   resolves Python virtual environments, executes variants with timeouts, and performs
   typed HDF5 dataset comparisons.
-- **FR-3 — Flexible Subsystem Filtering**: `compare` supports `--run <suites>`,
+- **FR-3 - Flexible Subsystem Filtering**: `compare` supports `--run <suites>`,
   `--skip-run`, `--compare <suites>`, and `--skip-compare` to allow running or
   comparing in isolation or combined.
-- **FR-4 — Unified Modular Configuration Schema**: `compare` parses an identical,
+- **FR-4 - Unified Modular Configuration Schema**: `compare` parses an identical,
   unified `compare.toml` configuration schema at all directory levels, supporting both
   `suites = [...]` references and inlined `[[suite]]` definitions.
-- **FR-5 — Typed Numerical Comparison Engine**: Evaluates datasets using standard
+- **FR-5 - Typed Numerical Comparison Engine**: Evaluates datasets using standard
   numerical methods: `abs`, `rel`, `rms`, `matrix_norm` and `exact_match`. A method outside this
   set fails the comparison.
-- **FR-6 — Composite Evaluation Policies**: Allows declaring multiple comparison methods
+- **FR-6 - Composite Evaluation Policies**: Allows declaring multiple comparison methods
   per dataset with configurable satisfaction policies (`policy = "all_of"` or `"any_of"`).
-- **FR-7 — CI Custom Gate Integration**: Adheres to the custom quality gate protocol
+- **FR-7 - CI Custom Gate Integration**: Adheres to the custom quality gate protocol
   expected by `control-rs-ci` (`gate.toml`), emitting `cross-val-report.json`,
   `cross-val-report.md`, and deterministic process exit codes.
-- **FR-8 — Zero Cargo Dependency for Examples**: Example suites in `examples/` do not
+- **FR-8 - Zero Cargo Dependency for Examples**: Example suites in `examples/` do not
   declare `control-rs-compare` or `control-rs-ci` in their dependencies; they interact
   solely through `.rust.h5` output and `compare.toml`.
-- **FR-9 — Isolated Suite Emitters**: Running an example suite directly computes only
+- **FR-9 - Isolated Suite Emitters**: Running an example suite directly computes only
   native Rust math and emits `<out_dir>/<suite>.rust.h5`.
-- **FR-10 — Fail-Closed Discrepancy Accumulation**: Missing datasets, dimension
+- **FR-10 - Fail-Closed Discrepancy Accumulation**: Missing datasets, dimension
   mismatches, NaNs/infinities, and tolerance breaches are accumulated and terminate
   with non-zero exit code.
-- **FR-11 — Decoupled Diagnostic Plot Generation (withdrawn)**: Withdrawn as a
+- **FR-11 - Decoupled Diagnostic Plot Generation (withdrawn)**: Withdrawn as a
   binary functional requirement in revision 5.0; diagnostic visualization is
   provided by non-Rust companion scripts governed by C-3.
-- **FR-12 — Pure Rust HDF5 Compatibility**: Reading and writing `.h5` containers
+- **FR-12 - Pure Rust HDF5 Compatibility**: Reading and writing `.h5` containers
   operates via pure-Rust implementations to eliminate host C-library compiler and
   version drift.
-- **FR-13 — Parallel Chunked Dataset Evaluation**: `compare` must support evaluating
+- **FR-13 - Parallel Chunked Dataset Evaluation**: `compare` must support evaluating
   massive numerical datasets ($N \ge 65,536$) by partitioning arrays into cache-aligned
   contiguous chunks processed concurrently across a pool of worker threads (`std::thread::scope`).
-- **FR-14 — Associative Map-Reduce Reduction**: Chunk workers must compute partial
+- **FR-14 - Associative Map-Reduce Reduction**: Chunk workers must compute partial
   statistics (`max_abs`, `max_rel`, `sum_sq`, `has_invalid`) in parallel with deterministic
   reduction to maintain numerical stability and reproducibility (Higham, 2002; Demmel and Nguyen, 2013).
-- **FR-15 — Configurable Concurrency**: Concurrency must be configurable via CLI `--threads <N>` /
+- **FR-15 - Configurable Concurrency**: Concurrency must be configurable via CLI `--threads <N>` /
   `-j <N>` and `compare.toml` (`threads = N`), defaulting to `std::thread::available_parallelism()`.
-- **FR-16 — Annotated Signal Omission**: A suite may carry more than one variant, one
+- **FR-16 - Annotated Signal Omission**: A suite may carry more than one variant, one
   container each. Every peer must provide every true-oracle signal unless the oracle
   dataset carries a non-zero `missing_ok.<peer>` attribute; an unannotated omission
   fails (FR-10). A peer that provides no oracle signal fails. Per-peer bounds use the
   `bound.<peer>` attribute (C-2).
-- **FR-17 — Baseline Margin Drift**: Before overwriting `cross-val-report.json`,
+- **FR-17 - Baseline Margin Drift**: Before overwriting `cross-val-report.json`,
   `compare` reads the report already in its output directory as the baseline (the
   previous local run, or the `main` report restored by the CI workflow). For each
   method present in both reports, matched by suite, comparison key and method type, it
@@ -86,39 +86,39 @@ numerical tolerance bounds.
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Publishable Crate Standards**: Both `control-rs-compare` and
+- **NFR-1 - Publishable Crate Standards**: Both `control-rs-compare` and
   `control-rs-ci` must meet crates.io publication standards, so that the
   release pipeline (roadmap PR10) can publish them; both are `publish = false`
   today (Rust API Guidelines
   C-METADATA, SemVer adherence, permissive MIT/Apache-2.0 licensing, and complete
   documentation) (Rust API Guidelines, 2026; The Cargo Book, 2026).
-- **NFR-2 — Strict Isolation from Embedded Toolbox**: Zero host-runner,
+- **NFR-2 - Strict Isolation from Embedded Toolbox**: Zero host-runner,
   HDF5, or Python dependencies may leak into the core `control-rs` library
   crates (`#![no_std]`).
-- **NFR-3 — Deterministic Verification**: Numerical comparisons must be
+- **NFR-3 - Deterministic Verification**: Numerical comparisons must be
   deterministic across runs on host platforms (`x86_64`, `aarch64`), depending
   strictly on IEEE 754 floating-point bounds (IEEE, 2019).
-- **NFR-4 — Memory-Efficient Dataset Traversal**: HDF5 reading and traversal
+- **NFR-4 - Memory-Efficient Dataset Traversal**: HDF5 reading and traversal
   must operate dataset-by-dataset to avoid loading multi-gigabyte simulation
   trajectories simultaneously into host memory.
 
 #### 2.3 Constraints
 
-- **C-1 — Python Runtime Resolution Hierarchy**: Process execution must
+- **C-1 - Python Runtime Resolution Hierarchy**: Process execution must
   resolve Python interpreters in strict priority order: `PYTHON` environment
   variable, active `VIRTUAL_ENV` path, crate-root `.venv`
   (`../../.venv/bin/python3`), local `.venv`, and system `PATH`.
-- **C-2 — Multi-Tier Tolerance Discovery**: Numerical tolerance bounds
+- **C-2 - Multi-Tier Tolerance Discovery**: Numerical tolerance bounds
   are resolved hierarchically: (1) external TOML tables (`examples/<suite>/tolerances/*.toml`),
   (2) oracle dataset HDF5 attributes (`methods`, `measure`/`method`, `bound`, `bound.<peer>`),
   or (3) fallback default (`abs` $\le 10^{-4}$, `policy = "all_of"`).
-- **C-3 — Decoupled Non-Rust Visualization**: Diagnostic plot generators
+- **C-3 - Decoupled Non-Rust Visualization**: Diagnostic plot generators
   must read exclusively from persisted `<out_dir>/*.h5` files using Python
   (`matplotlib` with headless `agg` backend). Visualizations must not be
   implemented in Rust and must not affect gate pass/fail status.
-- **C-4 — Published Binary Naming**: The unified runner and comparator
+- **C-4 - Published Binary Naming**: The unified runner and comparator
   binary is named `compare` (`cargo compare`), provided by `control-rs-compare`.
-- **C-5 — Dynamic HDF5 Dataset Discovery & Explicit Overrides**: Dataset inspection
+- **C-5 - Dynamic HDF5 Dataset Discovery & Explicit Overrides**: Dataset inspection
   recursively traverses the HDF5 group hierarchy (`ls`-style) from the root group,
   excluding metadata groups (`_meta`). When explicit signals are specified in `compare.toml`
   (`signals = [...]`) or via CLI (`--signals <s1,s2>`), explicit signals override

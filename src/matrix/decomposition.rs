@@ -2,7 +2,7 @@
 //!
 //! Decomposition objects encapsulate a matrix's factors alongside
 //! statically bounded auxiliary state (pivot indices), with no heap
-//! allocation — `matrix-design.md` §4.7. Explicit decomposition objects
+//! allocation (see `matrix-design.md` §4.7). Explicit decomposition objects
 //! (rather than a convenience `invert() -> Matrix`) avoid hiding an
 //! `O(N^3)` operation's stack allocation and let repeated solves reuse one
 //! factorization (`matrix-design.md` §5.1).
@@ -15,7 +15,7 @@
 //! restated on every impl/struct below because `Dim` is implemented per
 //! literal (`Const<1>` .. `Const<1024>` plus extra powers of two through
 //! `Const<16384>`, `num_types` generated impls), not via a blanket
-//! `impl<const N: usize> Dim for Const<N>` — the
+//! `impl<const N: usize> Dim for Const<N>` (the
 //! same pattern `storage.rs`'s own `ArrayStorage` impls already use.
 #![allow(
     clippy::arbitrary_source_item_ordering,
@@ -65,7 +65,7 @@ where
 }
 
 /// `LDL^T` factorization for symmetric matrices (`A = L * D * L^T`), with no
-/// square roots — chosen as the default symmetric solver over Cholesky for
+/// square roots: chosen as the default symmetric solver over Cholesky for
 /// that reason (`matrix-design.md` §5.6).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LdltDecomposition<T, const D: usize>
@@ -80,7 +80,7 @@ where
 ///
 /// Half the arithmetic of `LU` and no pivoting, at the cost of requiring
 /// square roots per diagonal entry and being restricted to positive-definite
-/// input (`matrix-design.md` §5.5) — `LDL^T` is the default symmetric solver
+/// input (`matrix-design.md` §5.5); `LDL^T` is the default symmetric solver
 /// for that reason; this is available when a caller already knows `A` is
 /// positive definite.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,7 +94,7 @@ where
 /// `QR` factorization via Householder reflections (`A = Q * R`), restricted
 /// to square matrices.
 ///
-/// Numerically stable even for rank-deficient or ill-conditioned `A` —
+/// Numerically stable even for rank-deficient or ill-conditioned `A`:
 /// unlike `LU`/`LDL^T`, decomposition itself never fails
 /// (`matrix-design.md` §5.5); only `solve_mut` can fail, if `R` turns out
 /// singular.
@@ -315,7 +315,7 @@ impl<T: Float + Copy, const D: usize> Symmetric<T, D>
 where
     Const<D>: Dim,
 {
-    /// Performs `LDL^T` decomposition purely in-place (no pivoting — adequate
+    /// Performs `LDL^T` decomposition purely in-place (no pivoting, which is adequate
     /// for well-conditioned symmetric matrices; block pivoting for
     /// indefinite matrices is out of scope, `matrix-design.md` §5.6).
     ///

@@ -24,41 +24,41 @@ binary encoding, but no shipped consumer bounds on a flattened product.
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Base Dimension Trait**: Define a single trait for "a compile-time
+- **FR-1 - Base Dimension Trait**: Define a single trait for "a compile-time
   dimension," exposing a runtime `usize` value and a canonical type-level
   representation; concrete types must be `Clone + Copy + PartialEq + Eq`.
-- **FR-2 — Type-Level Arithmetic**: Define one trait per arithmetic operation (
+- **FR-2 - Type-Level Arithmetic**: Define one trait per arithmetic operation (
   addition, subtraction, multiplication, maximum, minimum), each producing an
   output satisfying the base dimension trait (FR-1).
-- **FR-3 — Const-Generic Bridge**: Provide a const-generic wrapper
+- **FR-3 - Const-Generic Bridge**: Provide a const-generic wrapper
   letting call sites write an ordinary integer literal that resolves to the
   canonical representation. The wrapper is a ZST; it has no runtime
   constructor that pairs a value with `N`. Every `N` in C-1 (defined in
   §2.3 below) exposes that canonical type as `TypeNum`.
-- **FR-4 — Convenience Aliases**: Provide named `U*` aliases for a small
+- **FR-4 - Convenience Aliases**: Provide named `U*` aliases for a small
   checked-in subset of C-1 (defined in §2.3 below). Dimensions in C-1
   without a `U*` name are spelled `<Const<N> as Dim>::TypeNum`.
-- **FR-5 — Type-Level Bitwise Operations**: Define traits for bitwise logic
+- **FR-5 - Type-Level Bitwise Operations**: Define traits for bitwise logic
   (`DimBitAnd`, `DimBitOr`, `DimBitXor`), each producing a canonical output
   satisfying the base dimension trait (FR-1) with automatic leading-zero
   trimming where cancellations occur.
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Zero Memory Footprint**: Every dimension type must occupy zero bytes
+- **NFR-1 - Zero Memory Footprint**: Every dimension type must occupy zero bytes
   at runtime and not inflate the size of any struct carrying it as a type
   parameter.
-- **NFR-2 — `no_std` Compatibility**: The module must depend only on `core`,
+- **NFR-2 - `no_std` Compatibility**: The module must depend only on `core`,
   with no allocation and no OS or std-only feature dependency.
 
 #### 2.3 Constraints
 
-- **C-1 — `Const<N>: Dim` Range**: `Const<N>` implements `Dim` for every
+- **C-1 - `Const<N>: Dim` Range**: `Const<N>` implements `Dim` for every
   $N \in 0..=1024$ and for $2048, 4096, 8192, 16384$. The range is an
   authoring bound for array-backed storage, not a trait-solver bound; binary
   encoding depth is $O(\log N)$. Impls are contiguous through $1024$ because
   `TypeNum` is defined from `Const<{N/2}>`.
-- **C-2 — Unnamed Canonical Arithmetic Results**: `DimAdd`/`DimSub`/
+- **C-2 - Unnamed Canonical Arithmetic Results**: `DimAdd`/`DimSub`/
   `DimMul`/`DimMax`/`DimMin`/`DimBit*` on canonical types (`UTerm`/`UInt`)
   succeed for operands whose bit-width stays within the solver budget. The
   result is a `UTerm`/`UInt` tree; it need not have a `U*` alias and need
@@ -232,7 +232,7 @@ projections.
    literal AST identity, so `N + M` and `M + N` are different, non-unifying
    types to the compiler even though they denote the same value (RFC 2000,
    2017). Encoding dimensions as `Dim`-bound associated types makes
-   commutativity provable through trait implementations — the existing
+   commutativity provable through trait implementations; the existing
    `test_num_type_addition_commutativity` test depends on exactly this.
 
 3. **Sealing the arithmetic traits.**
@@ -428,14 +428,14 @@ Accessed: Aug. 7, 2026.
 https://docs.rs/generic-array/latest/generic_array/trait.ArrayLength.html.
 Accessed: Aug. 7, 2026.
 
-[6] Rust Project, "Glossary — Zero-sized type (ZST)," *The Rust Reference*,
+[6] Rust Project, "Glossary - Zero-sized type (ZST)," *The Rust Reference*,
 
 2026. [Online]. Available:
       https://doc.rust-lang.org/reference/glossary.html#zero-sized-type-zst.
       Accessed:
       Aug. 7, 2026.
 
-[7] Rust Project, "Type layout — The Rust representation," *The Rust Reference*,
+[7] Rust Project, "Type layout - The Rust representation," *The Rust Reference*,
 
 2026. [Online]. Available:
       https://doc.rust-lang.org/reference/type-layout.html#the-rust-representation.
@@ -445,14 +445,14 @@ Accessed: Aug. 7, 2026.
 Available: https://doc.rust-lang.org/std/marker/struct.PhantomData.html.
 Accessed: Aug. 7, 2026.
 
-[9] Rust Project, "Version 1.51.0 (2021-03-25) — RELEASES.md," *rust-lang/rust*,
+[9] Rust Project, "Version 1.51.0 (2021-03-25) - RELEASES.md," *rust-lang/rust*,
 
 2021. [Online]. Available:
       https://raw.githubusercontent.com/rust-lang/rust/1.51.0/RELEASES.md.
       Accessed:
       Aug. 7, 2026.
 
-[10] Rust Project, "recursion_limit," *The Rust Reference — Attributes*,
+[10] Rust Project, "recursion_limit," *The Rust Reference - Attributes*,
 
 2026. [Online]. Available:
       https://doc.rust-lang.org/reference/attributes/limits.html. Accessed: Aug.

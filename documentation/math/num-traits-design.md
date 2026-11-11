@@ -20,28 +20,28 @@ vs. saturating).
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Overflow Mode Disambiguation**: Primitive integer types explicitly
+- **FR-1 - Overflow Mode Disambiguation**: Primitive integer types explicitly
   partition overflow semantics into wrapping or saturating execution modes at
   compile time (num-traits, 2024a; num-traits, 2024b; Spiteri, 2026a).
-- **FR-2 — Unsigned Primitive Ring Bound**: Unsigned integer primitives (`u8`,
+- **FR-2 - Unsigned Primitive Ring Bound**: Unsigned integer primitives (`u8`,
   `u16`, `u32`, `u64`, `usize`) satisfy `Zero + One + Sub + Mul`.
   Linear-algebra kernels consume that bound via `T: Scalar`
   (`subprograms-design.md` FR-1); this document does not specify BLAS-loop
   monomorphization (num-traits, 2024a).
-- **FR-3 — Reflexive & Complex Conjugation**: `Conjugate` is a `Scalar`
+- **FR-3 - Reflexive & Complex Conjugation**: `Conjugate` is a `Scalar`
   super trait exposing `fn conj(self) -> Self`. Real scalars (integer
   primitives, `f32`, `f64`, `Quantized<Repr, SHIFT>`) implement it as the
   identity; `Complex<T>` implements it as imaginary-component negation. A
   value is real iff `self == self.conj()`.
-- **FR-4 — Real Projection**: Every `Scalar` exposes
+- **FR-4 - Real Projection**: Every `Scalar` exposes
   `type Real: Scalar<Real = Self> + PartialOrd` plus `re()`, `im()`,
   `from_real()`, and `abs2()` (`re² + im²`, no square root; Proposal; not in
   evidence). Real types
   set `Real = Self`; `Complex<T>` sets `Real = T`.
-- **FR-5 — Implementor Partition**: `Scalar`, `Float`, `Complex<T>`, and
+- **FR-5 - Implementor Partition**: `Scalar`, `Float`, `Complex<T>`, and
   `Quantized` occupy distinct implementor sets; the partition is the §4.3
   table.
-- **FR-6 — Total Arithmetic Contract**: Every `Scalar` implements
+- **FR-6 - Total Arithmetic Contract**: Every `Scalar` implements
   `SaturatingAdd`, `SaturatingSub` and `SaturatingMul`; `Signed` adds
   `SaturatingNeg` and `Float` adds `SaturatingDiv`. Each operation is total:
   integer and `Quantized` results clamp to `[MIN, MAX]`, floats follow
@@ -49,7 +49,7 @@ vs. saturating).
   `core::ops` operators, so no kernel panics or wraps on overflow for any
   implementor (§4.4). `clippy::arithmetic_side_effects` is `deny` with no
   suppression (num-traits, 2024b).
-- **FR-7 — Multiply Accumulate**: An open trait `MulAcc` gives a type an
+- **FR-7 - Multiply Accumulate**: An open trait `MulAcc` gives a type an
   accumulator type `Acc`, `to_acc(self) -> Acc`, `mac(acc, a, b) -> Acc`
   equal to $\text{acc} + a \cdot b$, and `from_acc(acc) -> Self`, which
   rounds and saturates once under the FR-6 contract. The crate implements
@@ -59,13 +59,13 @@ vs. saturating).
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Zero-Cost Abstraction**: Trait calls, zero/one constants, and
+- **NFR-1 - Zero-Cost Abstraction**: Trait calls, zero/one constants, and
   saturating/wrapping operations compile to direct primitive FPU/ALU
   instructions with zero runtime overhead or function call trampolines.
 
 #### 2.3 Constraints
 
-- **C-1 — `#![no_std]` Compatibility**: Numerical traits operate without
+- **C-1 - `#![no_std]` Compatibility**: Numerical traits operate without
   standard library dependencies or dynamic allocation.
 
 ---
@@ -386,8 +386,8 @@ records the decision.
       abstract algebra, of the kind the `noether` crate ships (`Magma`,
       `Semigroup`, `Monoid`, `Group`, `Ring`, `Field`) (warlock-labs, 2025).
     - _Rejected_: Too complex for practical control systems engineering. Rust's
-      trait solver overhead and complex bound signatures outweigh the benefits
-      — `noether`'s own documentation cautions that "extensive use of dispatch
+      trait solver overhead and complex bound signatures outweigh the benefits;
+      `noether`'s own documentation cautions that "extensive use of dispatch
       ... may incur some runtime cost" (warlock-labs, 2025; secondary,
       uncorroborated claim), a risk this design avoids entirely by not
       building a comparably deep tower. The pragmatic tiering (`Zero`,
@@ -404,8 +404,8 @@ records the decision.
     - _Considered_: Giving `Scalar` a `Div<Output = Self>` bound directly, so
       one trait covers every arithmetic operator a control loop might need.
     - _Rejected_: Integer division is not total (`/0` panics, `i32::MIN / -1`
-      overflows), so requiring it on every `Scalar` implementor — including
-      plain signed integers and `Quantized` — reintroduces exactly the panic
+      overflows), so requiring it on every `Scalar` implementor (including
+      plain signed integers and `Quantized`) reintroduces exactly the panic
       surface this hierarchy exists to remove. `Div` stays off `Scalar`.
       `Float` requires it (IEEE-754 `inf`/`NaN`). Division kernels bound
       `T: Scalar + SaturatingDiv` instead, which is total on every
@@ -413,10 +413,10 @@ records the decision.
 4. **Wrapper-Type Semantics (`fixed`-crate Pattern) Instead of Method-Level
    Traits**:
     - _Considered_: Expressing wrapping/saturating behavior through a new type
-      wrapper — analogous to the `fixed` crate's `Saturating<F>`, which
+      wrapper, analogous to the `fixed` crate's `Saturating<F>`, which
       "provides saturating arithmetic on fixed-point numbers" by overloading
       operators on the wrapper rather than exposing named methods on the
-      underlying type (Spiteri, 2026b) — instead of `Integer`/
+      underlying type (Spiteri, 2026b), instead of `Integer`/
       `SaturatingInteger` method calls (`wrapping_add()`, `saturating_add()`)
       on the scalar type itself.
     - _Rejected_: Requiring callers to convert into and out of a wrapper type at
@@ -587,7 +587,7 @@ for Complex<T>`). Every implementor must name `Real` and provide
    wrapper with twelve concrete per-primitive types) (Reitermarkus, 2024; RFC
    2307, 2018), but its `Zeroable`/`ZeroablePrimitive` sealing was adopted
    specifically because "it is unclear what happens ... when `T` is some type
-   other than a raw pointer or a primitive integer" (RFC 2307, 2018) — a
+   other than a raw pointer or a primitive integer" (RFC 2307, 2018): a
    future `SafeDiv` needs its own answer for custom scalar types, since it
    cannot rely on `core::num::NonZero<T>` covering them.
 4. **Evolution of `const fn` Traits**: When Rust stabilizes `const_trait_impl`,

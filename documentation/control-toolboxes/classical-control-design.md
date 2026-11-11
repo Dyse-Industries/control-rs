@@ -59,11 +59,11 @@ Primary usage scenarios:
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Root locus**: For an open-loop `TransferFunction`
+- **FR-1 - Root locus**: For an open-loop `TransferFunction`
   $L (s) = N (s)/D (s)$ and a caller-supplied gain set $\lbrace k_i \rbrace$,
   returns for
   each $k_i$ the roots of $D (s) + k_i N (s)$.
-- **FR-2 — Routh-Hurwitz count**: For a real characteristic polynomial,
+- **FR-2 - Routh-Hurwitz count**: For a real characteristic polynomial,
   returns the number of roots in the open right half plane and whether roots
   lie on the imaginary axis, without computing roots, including the
   zero-first-column and zero-row cases. When leading terms of an entry
@@ -72,12 +72,12 @@ Primary usage scenarios:
   by positive scaling of the polynomial. When no stage can decide the count
   (§4.3), the routine returns `RouthIndeterminate` and never a guessed
   count.
-- **FR-3 — Frequency response**: For a continuous or discrete
+- **FR-3 - Frequency response**: For a continuous or discrete
   `TransferFunction` and a caller-supplied frequency set, returns
   $G (j\omega)$ or $G (e^{j\omega T_s})$ as complex values and as magnitude in
   dB with unwrapped phase in degrees, which serve Bode, Nyquist and Nichols
   data.
-- **FR-4 — Nyquist encirclement count**: For a continuous open-loop
+- **FR-4 - Nyquist encirclement count**: For a continuous open-loop
   `TransferFunction`, returns the net number of encirclements of $-1$ by the
   Nyquist contour, indenting around open-loop poles on the imaginary axis.
   The count and the pole count $P$ do not depend on where the samples fall:
@@ -86,7 +86,7 @@ Primary usage scenarios:
   between two samples returns `ContourThroughCriticalPoint`. A numerator
   or denominator padded with trailing zero coefficients is read by its
   degree, and a zero denominator returns `Improper`.
-- **FR-5 — Stability margins**: From an open-loop `TransferFunction` and a
+- **FR-5 - Stability margins**: From an open-loop `TransferFunction` and a
   frequency set, returns gain margin, phase margin, their crossover
   frequencies and the stability margin $\min_\omega |1 + L (j\omega)|$, the
   minimum over every finite sample of the set, and reports a margin as
@@ -99,38 +99,38 @@ Primary usage scenarios:
   the one phase crossover whose gain margin is closest to 0 dB and the one
   gain crossover with the smallest $\lvert \phi_m \rvert$, so a caller reads
   a single gain margin and phase margin without sizing a crossing buffer.
-- **FR-6 — PID compensator**: Constructs a PID `TransferFunction` in
+- **FR-6 - PID compensator**: Constructs a PID `TransferFunction` in
   standard, series or parallel form, with an optional first-order
   derivative filter.
-- **FR-7 — Lead and lag compensators**: Constructs lead and lag
+- **FR-7 - Lead and lag compensators**: Constructs lead and lag
   `TransferFunction` values from their corner frequencies and gain.
-- **FR-8 — Direct-form realization**: For a discrete `TransferFunction`
+- **FR-8 - Direct-form realization**: For a discrete `TransferFunction`
   normalized to $a_0 = 1$, executes its difference equation one sample per
   call in Transposed Direct Form II with one state per denominator order,
   for any `T: Scalar`, and resets the state to zero on request.
-- **FR-9 — Second-order-section cascade**: Executes a series of
+- **FR-9 - Second-order-section cascade**: Executes a series of
   second-order sections of one caller-selected structure, Direct Form I (FR-17)
   or Transposed Direct Form II, one sample per call, for any
   `T: Scalar`, and resets every section state on request.
-- **FR-10 — Section factorization**: Converts a discrete `TransferFunction`
+- **FR-10 - Section factorization**: Converts a discrete `TransferFunction`
   into second-order sections by pairing poles with their nearest zeros,
   starting with the poles closest to the unit circle, with at most one
   first-order section for odd order, such that the product of the sections
   equals the source transfer function.
-- **FR-11 — Discrete PID execution**: Per sample, returns
+- **FR-11 - Discrete PID execution**: Per sample, returns
   $u = \operatorname{sat} (K_p e + I + D)$ between output limits
   $u_{min} \le u_{max}$, with the derivative acting on the measurement
   through a first-order filter discretized by backward difference and the
   integral discretized by forward Euler. A setpoint step at constant
   measurement leaves $D$ unchanged (VC-11.2); the literature basis for
   measurement derivative is open (§8).
-- **FR-12 — Integrator anti-windup**: Under output saturation, updates the
+- **FR-12 - Integrator anti-windup**: Under output saturation, updates the
   integrator by a caller-selected mode: conditional integration (clamping)
   or back-calculation with tracking time constant $T_t$. Back-calculation
   adds the tracking term $h (u - v)/T_t$ and is zero when unsaturated, so it
   keeps exact integral action; it is not a discount of the error or a leak
   of the integrator (§5).
-- **FR-13 — Bumpless gain change**: Changing $K_p$ or $K_d$ between samples
+- **FR-13 - Bumpless gain change**: Changing $K_p$ or $K_d$ between samples
   corrects the integrator so the unsaturated output recomputed from the last
   sample's error and derivative state is unchanged, for each gain alone and
   together, and also before the first sample. A change of $K_i$ needs no
@@ -139,22 +139,22 @@ Primary usage scenarios:
   differs by the intended
   response $\Delta K_p\, \Delta e + \Delta K_d\, \Delta \delta$;
   changes of $T_f$, $h$, $T_t$ and the limits are not bumpless.
-- **FR-14 — PID analysis model**: Returns the continuous-time transfer
+- **FR-14 - PID analysis model**: Returns the continuous-time transfer
   function of the unsaturated controller, coefficient-identical to the
   FR-6 parallel form with derivative filter.
-- **FR-15 — Step-response metrics**: From sampled response data
+- **FR-15 - Step-response metrics**: From sampled response data
   $(t_k, y_k)$, returns rise time from 10% to 90%, settling time for a
   caller threshold (default 2%), percent overshoot, peak and peak time,
   taking $y_{init} = 0$ and $y_{final}$ as the last sample unless supplied.
-- **FR-16 — Delay margin**: Returns the delay margin at each gain crossover
+- **FR-16 - Delay margin**: Returns the delay margin at each gain crossover
   found under FR-5, in time units for continuous systems and in samples for
   discrete systems.
-- **FR-17 — Direct Form I section**: Executes a second-order section in
+- **FR-17 - Direct Form I section**: Executes a second-order section in
   Direct Form I with four states (two past inputs, two past outputs), one
   sample per call, and resets the state to zero on request.
-- **FR-18 — Coefficient update**: Replaces the coefficients of a section,
+- **FR-18 - Coefficient update**: Replaces the coefficients of a section,
   cascade or direct form between samples without clearing its state.
-- **FR-19 — Coefficient quantization**: Converts floating-point section
+- **FR-19 - Coefficient quantization**: Converts floating-point section
   coefficients to `Fixed<Repr, SHIFT>` with round-to-nearest, and returns
   an error naming the section when a coefficient lies outside the
   representable range instead of saturating it. The range comparison does
@@ -164,48 +164,48 @@ Primary usage scenarios:
   against the raw bounds, with a $\pm 0.5$ rounding margin below $2^{52}$,
   above which every `f64` is an integer and the margin is dropped; `NaN` and
   infinities are rejected.
-- **FR-20 — Section stability test**: Reports whether a first- or
+- **FR-20 - Section stability test**: Reports whether a first- or
   second-order section, or every section in a caller-supplied set, has its
   poles strictly inside the unit circle, from its denominator coefficients
   without root finding.
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Numeric output only**: No routine depends on a plotting or GUI
+- **NFR-1 - Numeric output only**: No routine depends on a plotting or GUI
   library; outputs are numeric buffers.
-- **NFR-2 — Caller-owned buffers**: Sweep and locus outputs are written into
+- **NFR-2 - Caller-owned buffers**: Sweep and locus outputs are written into
   caller-provided, statically sized buffers; no routine allocates.
-- **NFR-3 — Fixed operation count**: Routh array construction,
+- **NFR-3 - Fixed operation count**: Routh array construction,
   frequency-response evaluation and margin refinement perform a fixed number
   of operations for a given polynomial order, frequency count and refinement
   depth.
-- **NFR-4 — Constant per-sample cost**: Each update of FR-8, FR-9, FR-11
+- **NFR-4 - Constant per-sample cost**: Each update of FR-8, FR-9, FR-11
   and FR-17, and each FR-18 coefficient update, executes a fixed operation
   count set by order or section count, with no allocation and no
   data-dependent loop bound.
 
 #### 2.3 Constraints
 
-- **C-1 — Existing model types**: Builds on `Polynomial` and
+- **C-1 - Existing model types**: Builds on `Polynomial` and
   `TransferFunction` and introduces no parallel representation.
-- **C-2 — Capacity bounds**: Conforms to `polynomial-design.md` C-1 and
+- **C-2 - Capacity bounds**: Conforms to `polynomial-design.md` C-1 and
   `transfer-function-design.md` C-3.
-- **C-3 — Root-crate module**: Ships as `src/classical_control` of
+- **C-3 - Root-crate module**: Ships as `src/classical_control` of
   `control-rs` (the stub `src/classical_tools` renamed) and adds no
   dependency.
-- **C-4 — Error convention**: Conforms to `error-design.md` NFR-1.
-- **C-5 — Excluded scope**: Multivariable systems and interactive tuning
+- **C-4 - Error convention**: Conforms to `error-design.md` NFR-1.
+- **C-5 - Excluded scope**: Multivariable systems and interactive tuning
   are out of scope; the PID (FR-11 to FR-14) requires `T: Float`.
-- **C-6 — On-target test enrollment**: The test modules for FR-8 to FR-13
+- **C-6 - On-target test enrollment**: The test modules for FR-8 to FR-13
   and FR-17 to FR-20 declare ETS suites per `macros-design.md` FR-1.
-- **C-7 — Discretization ownership**: Continuous-to-discrete conversion
+- **C-7 - Discretization ownership**: Continuous-to-discrete conversion
   conforms to `transfer-function-design.md` FR-4; this module adds none.
-- **C-8 — Multiply accumulate**: Realizations bound
+- **C-8 - Multiply accumulate**: Realizations bound
   `T: Scalar + Signed + MulAcc`, accumulate through `MulAcc`, and
   conform to `num-traits-design.md` FR-7 and `fixed-num-design.md` FR-8.
   `Signed` is required because sections store `-a_i`; unsigned `Fixed`
   implements `saturating_neg` as zero and would clear the feedback taps.
-- **C-9 — Fixed-point scale**: Fixed-point realizations use scales for which
+- **C-9 - Fixed-point scale**: Fixed-point realizations use scales for which
   `Fixed<Repr, SHIFT>: Scalar`, conforming to `fixed-num-design.md` FR-7.
 
 ---

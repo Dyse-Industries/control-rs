@@ -20,14 +20,14 @@ repository's lint tasks. This document specifies that layer as an independent
 library crate, consumed by `control-rs-tui` and by the `ets` gate binary of
 `control-rs-ci`.
 
-**Scenario 1 — Headless target execution.** A CI runner builds a target ELF,
+**Scenario 1: Headless target execution.** A CI runner builds a target ELF,
 opens a session, discovers suites, runs them to completion, and receives a
 structured result, with no terminal attached.
 
-**Scenario 2 — Interactive session.** The terminal dashboard opens the same
+**Scenario 2: Interactive session.** The terminal dashboard opens the same
 session and consumes the same message stream, adding only presentation.
 
-**Scenario 3 — Downstream adoption.** An external firmware project depending
+**Scenario 3: Downstream adoption.** An external firmware project depending
 on `control-rs-ets` drives its own on-target suites from an integration test
 without vendoring this repository.
 
@@ -37,67 +37,67 @@ without vendoring this repository.
 
 #### 2.1. Functional Requirements
 
-- **FR-1 — Target session lifecycle**: Open, poll, and close a session against
+- **FR-1 - Target session lifecycle**: Open, poll, and close a session against
   a target identified at run time. Session setup is not required to know
   whether the target is emulated or physical.
 
-- **FR-2 — Two transports**: Carry the session over a spawned subprocess
+- **FR-2 - Two transports**: Carry the session over a spawned subprocess
   (QEMU under `cargo run`) or a USB CDC serial port. Additional transports are
   out of scope for this crate revision.
 
-- **FR-3 — Framed message exchange**: Serialize commands and deserialize
+- **FR-3 - Framed message exchange**: Serialize commands and deserialize
   telemetry across a sync-header, length-prefixed, CRC-checked frame, rejecting
   frames that fail integrity checks rather than surfacing partial payloads.
 
-- **FR-4 — Suite discovery and run queue**: Enumerate the suites and cases a
+- **FR-4 - Suite discovery and run queue**: Enumerate the suites and cases a
   target registers, and drive a queue of run requests through to per-case
   results.
 
-- **FR-5 — Panic recovery**: Detect a target panic, tear down the link, reset
+- **FR-5 - Panic recovery**: Detect a target panic, tear down the link, reset
   the target, and re-establish discovery without losing already-collected
   results.
 
-- **FR-6 — Bounded headless run**: Expose a single entrypoint that runs a
+- **FR-6 - Bounded headless run**: Expose a single entrypoint that runs a
   target to completion under a caller-supplied wall-clock timeout and returns a
   structured result. A run that exceeds the bound terminates the target and
   reports the timeout.
 
-- **FR-7 — Target ELF construction**: Build a target binary for a given triple
+- **FR-7 - Target ELF construction**: Build a target binary for a given triple
   and binary name so that a caller can go from source tree to running session
   in one step.
 
-- **FR-8 — Wire-contract compatibility check**: Establish at session open that
+- **FR-8 - Wire-contract compatibility check**: Establish at session open that
   the target speaks the same protocol revision as this crate, and fail the
   session with a named mismatch rather than decoding. A CRC-valid frame carries
   no evidence that the two sides agree on the meaning of its payload.
 
-- **FR-9 — QEMU shorthand names the example crate**: A shorthand architecture
+- **FR-9 - QEMU shorthand names the example crate**: A shorthand architecture
   name (arm, risc-v, …) builds and runs the QEMU example firmware, not a
   workspace-root `cargo run` for that triple. A documented shorthand that
   starts from `.` with no binary is not a session.
 
 #### 2.2. Non-Functional Requirements
 
-- **NFR-1 — No presentation dependencies**: The dependency closure contains no
+- **NFR-1 - No presentation dependencies**: The dependency closure contains no
   terminal-rendering or terminal-event crates. This is the property that makes
   the crate usable from a headless container and from a library consumer.
 
-- **NFR-2 — Structured errors**: Transport, build, and subprocess failures
+- **NFR-2 - Structured errors**: Transport, build, and subprocess failures
   return typed errors naming the failing stage. The crate does not abort the
   host process and does not panic outside tests.
 
 #### 2.3 Constraints
 
-- **C-1 — Host-only execution**: The crate requires `std`, OS threads,
+- **C-1 - Host-only execution**: The crate requires `std`, OS threads,
   `std::process::Command`, and platform serial drivers. It is not `no_std` and
   cannot be merged into `control-rs-ets`, which is a `no_std`, `no_alloc`
   firmware library.
 
-- **C-2 — Wire compatibility**: The framing and message schemas are fixed by
+- **C-2 - Wire compatibility**: The framing and message schemas are fixed by
   the target-side implementation in `../ets/host-comm-design.md`. This crate is the mirror
   of that contract, not an independent protocol.
 
-- **C-3 — Minimal dependencies**: Transport and codec dependencies are limited
+- **C-3 - Minimal dependencies**: Transport and codec dependencies are limited
   to `control-rs-ets`, `serial2`, and `postcard`. Frame CRC-16 lives in
   `control-rs-ets`. `thiserror` is admitted in addition, because the crate
   error rule requires library errors to be a crate-local `thiserror` enum; it
@@ -208,20 +208,20 @@ evidence of variant agreement only after this check passes.
 
 #### 4.4. Session State Machine
 
-1. **Discovery (Per-Suite Ready Bitmask)** — send `ListSuites`; the first
+1. **Discovery (Per-Suite Ready Bitmask)**: send `ListSuites`; the first
    reply is `TargetInfo`, checked as in §4.3. Populate `SuiteItem`
    descriptors directly. Incoming frames update integer readiness bitmasks
    (`SUITE_INFO_READY`, `TESTS_READY`, `SETTINGS_READY`). On `DiscoveryComplete`,
    readiness is validated in $O(1)$ by asserting `suite.ready_mask == SUITE_READY_MASK`.
    Incomplete suites trigger a retry rather than entering the run phase.
-2. **Run queue** — issue `RunExecutable` per queued case, accumulate cycle,
+2. **Run queue**: issue `RunExecutable` per queued case, accumulate cycle,
    duration, and peak-stack telemetry.
-3. **Panic & Comms Recovery** — on `Telemetry::TargetPanic` or unexpected link drop,
+3. **Panic & Comms Recovery**: on `Telemetry::TargetPanic` or unexpected link drop,
    attribute failure according to `SessionPhase` (for example, discovery vs active test case),
    send `Command::TryReset`, allow 50 ms for the frame to drain, and drop the bridge.
-4. **Reset** — wait 1 s for target initialization, rebuild the bridge, and re-enter
+4. **Reset**: wait 1 s for target initialization, rebuild the bridge, and re-enter
    discovery. Results already collected are retained.
-5. **Completion** — the queue drains, the reset budget is exhausted, or the
+5. **Completion**: the queue drains, the reset budget is exhausted, or the
    caller-supplied `RunOptions.timeout` expires.
 
 Discovery re-sends `ListSuites` every 500 ms until the target answers, so a

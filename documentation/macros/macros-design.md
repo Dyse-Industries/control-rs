@@ -26,38 +26,38 @@ automated discovery without a centralized registry.
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Distributed Module Annotation**: Developers must declare a suite by
+- **FR-1 - Distributed Module Annotation**: Developers must declare a suite by
   tagging a module with `#[ets_suite]`.
-- **FR-2 — Automatic Registration**: The macro must automatically identify
+- **FR-2 - Automatic Registration**: The macro must automatically identify
   non-underscore-prefixed functions within the module and generate test
   descriptors.
-- **FR-3 — Type-Safe Settings Translation**: Any static variable declared inside
+- **FR-3 - Type-Safe Settings Translation**: Any static variable declared inside
   the `#[ets_suite]` module must be translated into a thread-safe atomic setting
   structure.
-- **FR-4 — Entrypoint & Setup Generation**: The `#[ets_setup]` macro must
+- **FR-4 - Entrypoint & Setup Generation**: The `#[ets_setup]` macro must
   generate the `main()` entrypoint, call the user's hardware init code and
   instantiate the execution context.
-- **FR-5 — Custom Panic Redirection**: The macro-generated entrypoint must
+- **FR-5 - Custom Panic Redirection**: The macro-generated entrypoint must
   register a custom panic handler that routes test panics through the host
   communications layer.
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Zero Static RAM at Idle**: Emitted test descriptors and registration
+- **NFR-1 - Zero Static RAM at Idle**: Emitted test descriptors and registration
   tables reside entirely in read-only Flash/ROM (`.ets_test_suites`), consuming
   0 bytes of static RAM at idle.
-- **NFR-2 — Linker Retention Safety**: Generated descriptors must survive
+- **NFR-2 - Linker Retention Safety**: Generated descriptors must survive
   aggressive linker garbage collection (`--gc-sections`) in release builds.
-- **NFR-3 — Rust 2024/2027 Compliance**: Generated structures must eliminate
+- **NFR-3 - Rust 2024/2027 Compliance**: Generated structures must eliminate
   `static mut` usage in favor of type-safe atomic wrappers and interior
   mutability.
 
 #### 2.3 Constraints
 
-- **C-1 — Strict `#![no_std]` and Zero Runtime Allocation**: Code emitted by the
+- **C-1 - Strict `#![no_std]` and Zero Runtime Allocation**: Code emitted by the
   macros must compile on bare-metal targets without standard library or dynamic
   heap allocator runtime support.
-- **C-2 — Target Independency**: The macros must emit target-agnostic Rust code
+- **C-2 - Target Independency**: The macros must emit target-agnostic Rust code
   that delegates hardware specifics to the user-defined profiler.
 
 ---

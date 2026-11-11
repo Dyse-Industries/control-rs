@@ -46,7 +46,7 @@ Software, 2026a).
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Dense Level 1 BLAS**: Bounded over `DenseStorage<T>` (read) and
+- **FR-1 - Dense Level 1 BLAS**: Bounded over `DenseStorage<T>` (read) and
   `DenseStorageMut<T>` (in-place mutation):
   `Axpy` ($y \leftarrow \alpha x + y$),
   `Scal` ($x \leftarrow \alpha x$),
@@ -56,7 +56,7 @@ Software, 2026a).
   `Iamax` ($\arg\max |\text{Re}| + |\text{Im}|$),
   `Swap`, `Nrm2` ($\|x\|_2$), and `Rot` (plane Givens rotation) (Lawson et al.,
   1979; Netlib, 2026).
-- **FR-2 — Dense Level 2 BLAS**: Bounded over `DenseStorage<T>` (matrices and
+- **FR-2 - Dense Level 2 BLAS**: Bounded over `DenseStorage<T>` (matrices and
   vectors)
   and `DenseStorageMut<T>` (mutated outputs):
   `Gemv` ($y \leftarrow \alpha \text{op}(A) x + \beta y$),
@@ -67,20 +67,20 @@ Software, 2026a).
   `Syr`/`Syr2`, `Her`/`Her2`, `Trmv` ($x \leftarrow \text{op}(A) x$), and `Trsv`
   ($x \leftarrow \text{op}(A)^{-1} x$) (Dongarra et al., 1988; Netlib, 2026;
   Reference LAPACK, 2026a).
-- **FR-3 — Packed Level 2 BLAS**: Bounded over `PackedStorage<T>` /
+- **FR-3 - Packed Level 2 BLAS**: Bounded over `PackedStorage<T>` /
   `PackedStorageMut<T>`
   and vector `DenseStorage<T>` / `DenseStorageMut<T>` operands:
   `Spmv` (packed symmetric), `Hpmv` (packed Hermitian),
   `Spr`/`Spr2`, `Hpr`/`Hpr2`, `Tpmv`, and `Tpsv` (Dongarra et al., 1988;
   Anderson et al., 1999; Netlib, 2026).
-- **FR-4 — Dense Level 3 BLAS**: Bounded over `DenseStorage<T>` and
+- **FR-4 - Dense Level 3 BLAS**: Bounded over `DenseStorage<T>` and
   `DenseStorageMut<T>`:
   `Gemm` ($C \leftarrow \alpha \text{op}(A)\text{op}(B) + \beta C$),
   `Symm`, `Hemm`, `Syrk`/`Syr2k`,
   `Herk` ($C \leftarrow \alpha A A^H + \beta C$), `Her2k`,
   `Trmm`, and `Trsm` ($B \leftarrow \alpha \text{op}(A)^{-1} B$) (Dongarra et
   al., 1990; Netlib, 2026).
-- **FR-5 — Sparse BLAS (SpBLAS)**: Bounded over `CsrStorage<T>` /
+- **FR-5 - Sparse BLAS (SpBLAS)**: Bounded over `CsrStorage<T>` /
   `CscStorage<T>` /
   `SparseVectorStorage<T>` and dense operands `DenseStorage<T>` /
   `DenseStorageMut<T>`:
@@ -88,23 +88,23 @@ Software, 2026a).
   `SpDotc` ($x_{\text{sp}}^H y$),
   and `SpAxpy` ($y \leftarrow \alpha x_{\text{sp}} + y$) (Lawson et al., 1979;
   sparsemat, 2026a, 2026b; SciPy Developers, 2026; Eigen, 2026c).
-- **FR-6 — Direct LAPACK Factorizations**: Bounded over `DenseStorageMut<T>` and
+- **FR-6 - Direct LAPACK Factorizations**: Bounded over `DenseStorageMut<T>` and
   `PackedStorageMut<T>`: Cholesky `Potrf` ($A = L L^T$ / $L L^H$) / `Pptrf`,
   Householder QR `Geqrf` ($A = Q R$), and LU with partial pivoting
   `Getrf` ($P A = L U$)
   (Anderson et al., 1999; Reference LAPACK, 2026b).
-- **FR-7 — Direct LAPACK System Solvers**: `Potrs` / `Pptrs`, `Getrs`, and
+- **FR-7 - Direct LAPACK System Solvers**: `Potrs` / `Pptrs`, `Getrs`, and
   orthogonal/unitary application `Ormqr` /
   `Unmqr` ($C \leftarrow \text{op}(Q) C$)
   (Anderson et al., 1999; Reference LAPACK, 2026a).
-- **FR-8 — Eigendecomposition**: Real symmetric `Syev` ($A = V \Lambda V^T$) and
+- **FR-8 - Eigendecomposition**: Real symmetric `Syev` ($A = V \Lambda V^T$) and
   complex Hermitian `Heev` ($A = U \Lambda U^H$) via Jacobi rotations on MCU
   stack
   (Anderson et al., 1999). Both are iterative and therefore bounded by a Jacobi
   sweep budget; exhausting it returns `Err(LinAlgError::MaxIterationsReached)`
   rather than looping. The budget is part of the operation contract (§4.3), not
   an implementation detail.
-- **FR-11 — Pure-Rust Reference Backend**: `DefaultBlas` provides `#![no_std]`
+- **FR-11 - Pure-Rust Reference Backend**: `DefaultBlas` provides `#![no_std]`
   reference
   implementation for integers, fixed-points, floats, and complex numbers (
   rust-embedded, 2026a;
@@ -115,21 +115,21 @@ FR-1–FR-7 remain one FR per BLAS/LAPACK level. Each named operation maps to a
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — `#![no_std]` Execution**: Zero heap allocation; stack-allocated
+- **NFR-1 - `#![no_std]` Execution**: Zero heap allocation; stack-allocated
   workspaces (rust-embedded, 2026a). The requirement governs linkage and state,
   not allocation alone. Three sub-clauses, each independently checkable:
-    - **NFR-1a — No `std` linkage under `src/`**: no `extern crate std` on any
+    - **NFR-1a - No `std` linkage under `src/`**: no `extern crate std` on any
       `cfg`, including `cfg(test)`. *Assumption to verify*: the host test
       harness
       links without the library itself naming `std`, so `cfg(test)` needs no
       exemption. `src/` carries no `extern crate std`; confirm with
       `cargo test --lib` before the clause is enforced.
-    - **NFR-1b — No mutable global state**: no `static mut`, no interior-mutable
+    - **NFR-1b - No mutable global state**: no `static mut`, no interior-mutable
       `static` (`AtomicUsize`, `Cell`, `thread_local!`) reachable from kernel
       code. Kernel results are a function of arguments alone, which is what
       makes
       a bit-for-bit ETS oracle meaningful (§6.1.2).
-    - **NFR-1c — No `cfg`-conditional public API**: a symbol present in the host
+    - **NFR-1c - No `cfg`-conditional public API**: a symbol present in the host
       build and absent in a bare-metal build means the verified binary is not
       the
       deployed binary.
@@ -137,28 +137,28 @@ FR-1–FR-7 remain one FR per BLAS/LAPACK level. Each named operation maps to a
   Allocation-only wording does not imply NFR-1a–NFR-1c: `thread_local!` and
   `AtomicUsize` allocate nothing yet violate both NFR-1a and NFR-1b. The
   sub-clauses are stated so the gate can reject them (§5).
-- **NFR-2 — Compile-Time Verification**: High-level matrix containers enforce
+- **NFR-2 - Compile-Time Verification**: High-level matrix containers enforce
   dimensions statically.
-- **NFR-3 — Zero-Branch Release Codegen**: Monomorphized kernels over
+- **NFR-3 - Zero-Branch Release Codegen**: Monomorphized kernels over
   `ArrayStorage` compile to
   **0 branches** and **0 panic paths** at `opt-level=3`. Subprogram methods
   are marked `#[inline(always)]` (sarah-quinones, 2026b).
 
 #### 2.3 Constraints
 
-- **C-1 — Precondition Boundary**: Kernels assume valid operand dimensions
+- **C-1 - Precondition Boundary**: Kernels assume valid operand dimensions
   proven by caller (Netlib, 2026).
-- **C-2 — Parameterized Operation Flags**: Transposition and
+- **C-2 - Parameterized Operation Flags**: Transposition and
   conjugate-transposition
   dispatch conforms to the CBLAS parameter convention
   (`trans` / `uplo` / `diag` / `side`) (Netlib, 2026; Anderson et al., 1999).
-- **C-3 — NaN-Safe Beta Scaling**: When $\beta = 0$, destination memory is
+- **C-3 - NaN-Safe Beta Scaling**: When $\beta = 0$, destination memory is
   safely overwritten without
   reading uninitialized $y$ / $C$ (Dongarra et al., 1988, 1990; Netlib, 2026).
   The zeroing loop covers every dest entry the kernel will write (matrix
   row count for `Csrmv`/`Cscmv`/`Gemv`), not `y.rows()` alone when $y$ is a
   row vector.
-- **C-4 — No External Library Under `src/`**: `src/` declares the trait
+- **C-4 - No External Library Under `src/`**: `src/` declares the trait
   surface and `DefaultBlas` only. No C or Fortran library is vendored,
   linked or feature-gated inside the crate, and no backend marker is
   admitted under a `cfg` (NFR-1c). Accelerated backends are out of scope for

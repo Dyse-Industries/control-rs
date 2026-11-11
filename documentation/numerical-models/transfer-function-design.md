@@ -36,51 +36,51 @@ Primary usage scenarios:
 
 #### 2.1. Functional Requirements
 
-- **FR-1 — Rational SISO Transfer Function Representation**: Represents
+- **FR-1 - Rational SISO Transfer Function Representation**: Represents
   continuous ($G(s) = N(s)/D(s)$) and discrete ($G(z) = N(z)/D(z)$) single-input
   single-output (SISO) transfer functions as numerator and denominator
   polynomials with explicit sample time $T_s$ for discrete systems.
-- **FR-2 — Frequency Response Evaluation**: Evaluates complex frequency
+- **FR-2 - Frequency Response Evaluation**: Evaluates complex frequency
   response $G(j\omega)$ or $G(e^{j\omega T_s})$ across specified frequency
   points, computing magnitude and phase. Evaluation must execute in $O(N + D)$
   multiply-accumulate operations per point using Horner's method without dynamic
   allocations.
-- **FR-3 — Rational System Algebra**: Evaluates series ($G_1 \cdot G_2$),
+- **FR-3 - Rational System Algebra**: Evaluates series ($G_1 \cdot G_2$),
   parallel ($G_1 + G_2$), and negative feedback ($G / (1 + G H)$)
   interconnections via discrete polynomial convolution, with output polynomial
   orders determined at compile time.
-- **FR-4 — System Discretization**: Converts continuous transfer functions to
+- **FR-4 - System Discretization**: Converts continuous transfer functions to
   discrete form using Bilinear (Tustin, with optional pre-warping) and
   Zero-Order Hold (ZOH) methods, returning an error when the transformation is
   ill-conditioned.
-- **FR-5 — State-Space Canonical Realization**: Converts transfer functions into
+- **FR-5 - State-Space Canonical Realization**: Converts transfer functions into
   equivalent controllable canonical or observable canonical `StateSpace` models
   with state dimension equal to the denominator degree $n = D - 1$.
-- **FR-6 — Generic Pole and Zero Extraction**: Computes the complex poles
+- **FR-6 - Generic Pole and Zero Extraction**: Computes the complex poles
   ($p \in \mathbb{C}^D$) and zeros ($z \in \mathbb{C}^N$) returning fixed-size worst-case buffers
   `[Complex<T>; D]` and `[Complex<T>; N]` by delegating directly
   to `Polynomial::roots()` on the underlying denominator and numerator polynomial models.
 
 #### 2.2. Non-Functional Requirements
 
-- **NFR-1 — Deterministic Fixed-Memory Execution**: Frequency evaluation and
+- **NFR-1 - Deterministic Fixed-Memory Execution**: Frequency evaluation and
   rational arithmetic execute entirely within stack-allocated buffers with zero
   heap allocations.
-- **NFR-2 — Real-Time Frequency Sweep Throughput**: Frequency response
+- **NFR-2 - Real-Time Frequency Sweep Throughput**: Frequency response
   calculations maintain linear computational scaling across frequency sweeps
   without heap fragmentation.
 
 #### 2.3. Constraints
 
-- **C-1 — Properness Precondition**: Denominator coefficient capacity $D$ and
+- **C-1 - Properness Precondition**: Denominator coefficient capacity $D$ and
   numerator capacity $N$ must satisfy $D \ge 1$ and $D \ge N$ (denominator
   degree $n = D - 1 \ge m = N - 1$, proper transfer function).
-- **C-2 — Non-Zero Leading Denominator**: Leading denominator
+- **C-2 - Non-Zero Leading Denominator**: Leading denominator
   coefficient $a_{D-1}$ must be non-zero ($a_{D-1} \neq 0$).
-- **C-3 — Capacity Bound**: Numerator and denominator capacities `N`, `D` are
+- **C-3 - Capacity Bound**: Numerator and denominator capacities `N`, `D` are
   `Dim`s from the `num-types-design.md` C-1 set ($0..=1024$ plus $2048$,
   $4096$, $8192$, $16384$).
-- **C-4 — `#![no_std]` Environment**: Operates strictly in `#![no_std]` without
+- **C-4 - `#![no_std]` Environment**: Operates strictly in `#![no_std]` without
   standard library dependencies.
 
 ---
@@ -200,7 +200,7 @@ validating variant of `from_coefficients`/`from_storage`) return
 `Result<Self, TransferFunctionError>`. No `unwrap()`, `expect()` or `panic!()`
 is used outside tests and examples. Near-pole frequency-response evaluation
 (§4.7) and partial-fraction ZOH decomposition (§4.9) are *not* treated as
-constructor-time errors — a valid `TransferFunction` may still be evaluated at
+constructor-time errors; a valid `TransferFunction` may still be evaluated at
 an ill-conditioned point at call time, which is documented behavior (§4.7)
 rather than a distinct error variant, matching how `python-control`'s
 `warn_infinity` documents rather than rejects evaluation at a pole.
@@ -292,7 +292,7 @@ dimension bound: $(D_1 + D_2 - 1)$, matching series.
 $$\frac{H_1(s)}{1 + H_1(s) H_2(s)} = \frac{B_1 A_2}{A_1 A_2 + B_1 B_2}$$
 
 Numerator dimension bound: $(N_1 + D_2 - 1)$. Denominator dimension bound:
-$\max(D_1 + D_2 - 1,\ N_1 + N_2 - 1)$ — the sum of the two product terms
+$\max(D_1 + D_2 - 1,\ N_1 + N_2 - 1)$, the sum of the two product terms
 $A_1 A_2$ and $B_1 B_2$ is bounded by the larger of their two individual
 degree bounds, not their sum and is expressed via `DimMax` rather than a
 further `DimAdd`:
@@ -318,11 +318,10 @@ $\max(a + b,\ C + 1) = C + 1$ over the canonical `TypeNum` encodings
 (`DimAdd`, `DimMax`), so an undersized `NOUT` or `DOUT` is a type error
 (`E0271`).
 
-This mirrors the algebra used by reference implementations exactly —
-`python-control`'s `feedback()` computes
+This mirrors the algebra used by reference implementations exactly - `python-control`'s `feedback()` computes
 `num = polymul(num1, den2)` and
 `den = polyadd(polymul(den2, den1), -sign * polymul(num2, num1))`
-(python-control, `control/xferfcn.py`) — validating the formula above against
+(python-control, `control/xferfcn.py`), validating the formula above against
 the reference source, not just the textbook identity.
 
 ##### Non-Minimal Results
@@ -501,7 +500,7 @@ where
 
 | Architecture Option                     | Advantages                                                                                                                                                                                                        | Disadvantages                                                                                                                                                                                         | Decision     |
 |:----------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-------------|
-| **Wrapping `Polynomial`**               | Reuses existing polynomial methods.                                                                                                                                                                               | Breaks container peer model; adds artificial coupling; forces extra abstraction layers — the same rationale `state-space-design.md` uses to reject wrapping `Matrix` fields directly.                 | **Rejected** |
+| **Wrapping `Polynomial`**               | Reuses existing polynomial methods.                                                                                                                                                                               | Breaks container peer model; adds artificial coupling; forces extra abstraction layers (the same rationale `state-space-design.md` uses to reject wrapping `Matrix` fields directly).                 | **Rejected** |
 | **Second-Order-Sections (SOS) Cascade** | Standard embedded-DSP answer to coefficient sensitivity growing with filter order (ARM CMSIS-DSP `BiquadCascadeDF2T`; Rust `biquad` crate); bounds conditioning per-stage rather than across the full polynomial. | Cannot represent an arbitrary rational transfer function, only designed filters reducible to cascaded biquads; would require a structurally different type from this general $N/D$ container.         | **Rejected** |
 | **Direct Storage Wrapper (Chosen)**     | Symmetric with `Matrix` and `Polynomial`; zero cost; direct access to `Dim`/DSP/BLAS; supports views and ROM storage.                                                                                             | Requires implementing evaluation and convolution calls against storage directly; flat coefficient representation inherits the coefficient-sensitivity growth SOS is designed to avoid, at high order. | **Selected** |
 | **Transfer-function-direct ZOH by partial fractions** | Avoids the companion-form conditioning of the state-space-mediated path (§4.10). Poles are available from `Polynomial::roots()` (§4.11), in closed form for $D = 3$. | Residues at repeated or clustered poles are ill-conditioned and no residue computation is specified. | **Deferred** (§8) |
@@ -559,18 +558,18 @@ Validation compares against NumPy / SciPy reference models.
 
 | Requirement                                           | Method                                           | Artifact                                                                                                                                   |
 |:------------------------------------------------------|:-------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------|
-| FR-1 — Rational SISO Transfer Function Representation | Compile-time shape check                         | rustdoc `compile_fail` doctests in `src/transfer_function/mod.rs`                                                                          |
-| FR-2 — Frequency Response Evaluation                  | Requirements-based test, Back-to-back comparison | `src/transfer_function/tests/transfer_function_tests.rs::test_frequency_response_continuous`                                               |
-| FR-3 — Rational System Algebra                        | Property-based test, Back-to-back comparison     | `src/transfer_function/tests/transfer_function_tests.rs::test_transfer_function_series`                                                    |
-| FR-4 — System Discretization                          | Requirements-based test, Back-to-back comparison | `src/transfer_function/tests/transfer_function_tests.rs::test_tustin_prewarped`                                                            |
-| FR-5 — State-Space Canonical Realization              | Requirements-based test                          | `src/transfer_function/tests/transfer_function_tests.rs::test_controllable_canonical_form`, `test_ccf_eigenvalues_match_denominator_roots`; `compile_fail` doctests on the canonical forms and `to_discrete_zoh` |
-| FR-6 — Generic Pole and Zero Extraction               | Requirements-based test, Back-to-back comparison | `src/transfer_function/tests/transfer_function_tests.rs::test_transfer_function_poles_and_zeros`                                            |
-| NFR-1 — Deterministic Fixed-Memory Execution          | Resource usage evaluation                        | `#![no_std]` host allocator audit                                                                                                          |
-| NFR-2 — Real-Time Frequency Sweep Throughput          | Resource usage evaluation                        | `clippy::large_stack_arrays` CI check                                                                                                      |
-| C-1 — Properness Precondition                         | Compile-time shape check                         | Static properness shape assertions                                                                                                         |
-| C-2 — Non-Zero Leading Denominator                    | Requirements-based test                          | Zero leading coefficient error assertion                                                                                                   |
-| C-3 — Capacity Bound                                  | Compile-time shape check                         | Static size bounds checks                                                                                                                  |
-| C-4 — `#![no_std]` Environment                        | Resource usage evaluation                        | Compilation under `#![no_std]` target triples                                                                                              |
+| FR-1 - Rational SISO Transfer Function Representation | Compile-time shape check                         | rustdoc `compile_fail` doctests in `src/transfer_function/mod.rs`                                                                          |
+| FR-2 - Frequency Response Evaluation                  | Requirements-based test, Back-to-back comparison | `src/transfer_function/tests/transfer_function_tests.rs::test_frequency_response_continuous`                                               |
+| FR-3 - Rational System Algebra                        | Property-based test, Back-to-back comparison     | `src/transfer_function/tests/transfer_function_tests.rs::test_transfer_function_series`                                                    |
+| FR-4 - System Discretization                          | Requirements-based test, Back-to-back comparison | `src/transfer_function/tests/transfer_function_tests.rs::test_tustin_prewarped`                                                            |
+| FR-5 - State-Space Canonical Realization              | Requirements-based test                          | `src/transfer_function/tests/transfer_function_tests.rs::test_controllable_canonical_form`, `test_ccf_eigenvalues_match_denominator_roots`; `compile_fail` doctests on the canonical forms and `to_discrete_zoh` |
+| FR-6 - Generic Pole and Zero Extraction               | Requirements-based test, Back-to-back comparison | `src/transfer_function/tests/transfer_function_tests.rs::test_transfer_function_poles_and_zeros`                                            |
+| NFR-1 - Deterministic Fixed-Memory Execution          | Resource usage evaluation                        | `#![no_std]` host allocator audit                                                                                                          |
+| NFR-2 - Real-Time Frequency Sweep Throughput          | Resource usage evaluation                        | `clippy::large_stack_arrays` CI check                                                                                                      |
+| C-1 - Properness Precondition                         | Compile-time shape check                         | Static properness shape assertions                                                                                                         |
+| C-2 - Non-Zero Leading Denominator                    | Requirements-based test                          | Zero leading coefficient error assertion                                                                                                   |
+| C-3 - Capacity Bound                                  | Compile-time shape check                         | Static size bounds checks                                                                                                                  |
+| C-4 - `#![no_std]` Environment                        | Resource usage evaluation                        | Compilation under `#![no_std]` target triples                                                                                              |
 
 #### 6.5. Coverage
 
@@ -676,12 +675,12 @@ Validation compares against NumPy / SciPy reference models.
 ## References
 
 1. **Franklin, G. F., Powell, J. D., & Workman, M. L. (1998).** *Digital Control
-   of Dynamic Systems* (3rd ed.). Addison-Wesley. — Implementation-oriented
+   of Dynamic Systems* (3rd ed.). Addison-Wesley. - Implementation-oriented
    treatment of discretization and digital filter realization on embedded
    microcontrollers; direct transfer-function-domain ZOH formula.
 2. **Moler, C., & Van Loan, C. (2003).** Nineteen Dubious Ways to Compute the
    Exponential of a Matrix, Twenty-Five Years Later. *SIAM Review*, 45(1),
-   3–49. — Rationale and conditioning concerns for the state-space-mediated ZOH
+   3–49. - Rationale and conditioning concerns for the state-space-mediated ZOH
    path (§4.9).
 3. **python-control developers. (2026).** `control/xferfcn.py`, python-control
    library source. [Online].
@@ -696,25 +695,25 @@ Validation compares against NumPy / SciPy reference models.
    Transposed Structure*, CMSIS-DSP documentation. [Online].
    Available: https://arm-software.github.io/CMSIS-DSP/main/group__BiquadCascadeDF2T.html.
 7. **Oppenheim, A. V., & Schafer, R. W. (2009).** *Discrete-Time Signal
-   Processing* (3rd ed.). Pearson. — FIR/IIR filter representation, transfer
+   Processing* (3rd ed.). Pearson. - FIR/IIR filter representation, transfer
    function stability and frequency-response $H(e^{j\omega})$ theory.
 8. **Ogata, K. (2010).** *Modern Control Engineering* (5th ed.). Prentice
-   Hall. — Continuous transfer functions, bilinear (Tustin) transformation and
+   Hall. - Continuous transfer functions, bilinear (Tustin) transformation and
    frequency pre-warping derivations.
 9. **Henrici, P. (1974).** *Applied and Computational Complex Analysis, Volume
-   1*. Wiley. — Complex-arithmetic numerical stability foundations
+   1*. Wiley. - Complex-arithmetic numerical stability foundations
    for $H(j\omega)$ evaluation.
 10. **Higham, N. J. (2002).** *Accuracy and Stability of Numerical Algorithms* (
-    2nd ed.). SIAM, Ch. 5. — Horner's method backward-error bound and
+    2nd ed.). SIAM, Ch. 5. - Horner's method backward-error bound and
     conditioning near polynomial roots (§4.7).
 11. **Graillat, S., Langlois, P., & Louvet, N. (2006).** Faithful Polynomial
     Evaluation with Compensated Horner Algorithm. *Proceedings of the 17th IEEE
-    Symposium on Computer Arithmetic*. — Compensated Horner as a documented
+    Symposium on Computer Arithmetic*. - Compensated Horner as a documented
     mitigation for near-root evaluation error (§4.7).
 12. **Kenney, C. S., & Laub, A. J. (1988).** Controllability and stability radii
     for companion form systems. *Mathematics of Control, Signals and Systems*,
-    1, 239–256. — Formal treatment of near-uncontrollability and
+    1, 239–256. - Formal treatment of near-uncontrollability and
     near-singularity in high-order companion-form realizations (§4.10).
 13. **Yang, S., & Jones, C. N. (2026).** Numerically Reliable Brunovsky
-    Transformations. — Exponential condition-number growth of the standard
+    Transformations. - Exponential condition-number growth of the standard
     companion-form transformation with system dimension (§4.10).

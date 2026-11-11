@@ -28,7 +28,7 @@
 //!
 //! # Compile-Time Marker Boundary
 //!
-//! `AdditiveGroup` and `Signed` are withheld from unsigned primitives —
+//! `AdditiveGroup` and `Signed` are withheld from unsigned primitives:
 //! for them `a - b` underflows whenever `a < b`, an ordinary-value failure
 //! rather than a representation-edge one. See [`AdditiveGroup`] for compile-fail verification.
 //!
@@ -133,7 +133,7 @@ pub trait Conjugate: Sized {
 /// Unsigned primitives never implement it: their subtraction underflows
 /// whenever `a < b`, not just at the representation edge. Signed integers
 /// do implement it, but still overflow at the representation limits
-/// (for example, `i32::MIN - 1`, a debug panic / release wrap) — the marker
+/// (for example, `i32::MIN - 1`, a debug panic / release wrap); the marker
 /// guarantees underflow-free semantics away from those limits, not full
 /// mathematical totality. Implementors must guarantee `a - b` is well-defined
 /// for all `a`, `b` whose difference is representable in the type.

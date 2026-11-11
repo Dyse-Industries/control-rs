@@ -23,43 +23,43 @@ session management, and decoding are owned by `control-rs-ets-host::ETSBridge`
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Target Transport Abstraction**: The target firmware must expose a
+- **FR-1 - Target Transport Abstraction**: The target firmware must expose a
   hardware-agnostic API to poll commands, transmit telemetry, and flush data
   without coupling test execution logic to physical peripheral hardware.
-- **FR-2 — Bidirectional Packet Exchange**: The system must support host-to-target
+- **FR-2 - Bidirectional Packet Exchange**: The system must support host-to-target
   command packets and target-to-host telemetry packets over a shared stream.
-- **FR-3 — Catastrophic Failure Capture**: The target must capture panics and
+- **FR-3 - Catastrophic Failure Capture**: The target must capture panics and
   hardware exceptions, format them with timestamps and backtraces, and transmit
   them as prioritized telemetry before halting or rebooting.
-- **FR-4 — Explicit Wire-Contract Revision**: The protocol carries an explicit
+- **FR-4 - Explicit Wire-Contract Revision**: The protocol carries an explicit
   `PROTOCOL_VERSION` revision identifier in target telemetry that a host checks
   before acting on any payload, preventing misinterpretation of schema changes.
-- **FR-5 — Target Hardware and Environment Telemetry**: The target must transmit
-  hardware identity and environment metadata—including board identifier, core
-  clock frequency, FPU status, and link configuration—enabling the host to
+- **FR-5 - Target Hardware and Environment Telemetry**: The target must transmit
+  hardware identity and environment metadata (including board identifier, core
+  clock frequency, FPU status, and link configuration), enabling the host to
   interpret timing and platform capabilities without local out-of-band assumptions.
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Low Latency & Determinism**: Telemetry serialization and transmission
+- **NFR-1 - Low Latency & Determinism**: Telemetry serialization and transmission
   must introduce $\le 10\ \mu\text{s}$ jitter into the nominal 1 kHz control loop deadline.
-- **NFR-2 — Bounded Stack & Predictable Footprint**: Serialization paths must
+- **NFR-2 - Bounded Stack & Predictable Footprint**: Serialization paths must
   operate within bounded, pre-allocated stack envelopes without recursion or
   large intermediate copies.
-- **NFR-3 — High Bandwidth Efficiency**: The protocol must minimize transport
+- **NFR-3 - High Bandwidth Efficiency**: The protocol must minimize transport
   payload footprint via binary serialization, shifting formatting and UI state
   management onto the host.
 
 #### 2.3 Constraints
 
-- **C-1 — Strict `#![no_std]` and Zero Heap Allocation**: The target firmware
+- **C-1 - Strict `#![no_std]` and Zero Heap Allocation**: The target firmware
   library must compile under `#![no_std]` with strictly zero dynamic heap
   allocation.
-- **C-2 — Stack Footprint Restrictions**: Peak stack usage during message
+- **C-2 - Stack Footprint Restrictions**: Peak stack usage during message
   serialization must remain within the per-target stack budget specified in
   `cpu-profiler-design.md` to prevent overflow on memory-constrained
   microcontrollers.
-- **C-3 — Physical Interface Scope**: Target transport implementations are
+- **C-3 - Physical Interface Scope**: Target transport implementations are
   restricted to standard embedded peripherals (UART, Ethernet MAC/PHY) or
   hardware debug probes (SWD/JTAG).
 
@@ -450,8 +450,8 @@ reproduce that value.
 ### 7. Performance & Resource Considerations
 
 * **Solver Timing Budget**: ETS solvers operate on strict millisecond steps. The
-  entire target execution block—including controls, sensor reads and telemetry
-  serialization—must complete before the solver step expires. Late responses are
+  entire target execution block (including controls, sensor reads and telemetry
+  serialization) must complete before the solver step expires. Late responses are
   flagged as timing failures.
 * **Static Allocation Bounds**: All target buffer structures are statically
   allocated using `heapless` types. Storing large data blocks requires chunking
@@ -487,10 +487,10 @@ reproduce that value.
 
 | Task / Feature                                       | Description                                                                                                                                | Estimated Effort |
 |:-----------------------------------------------------|:-------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
-| **Step 1: Core Serialization & Framing** — *Shipped* | Postcard schemas, sync-header framing/deframing and CRC-16 verification, implemented in `control-rs-ets/src/comms.rs`.                     | Complete         |
+| **Step 1: Core Serialization & Framing** - *Shipped* | Postcard schemas, sync-header framing/deframing and CRC-16 verification, implemented in `control-rs-ets/src/comms.rs`.                     | Complete         |
 | **Step 2: Target Trait & Drivers**                   | Implement the `HostComms` trait on the target, writing UART DMA and SEGGER RTT drivers. Blocking HAL vs. Embassy is undecided (`embedded-test-server-design.md` Step 3). | 2 weeks          |
 | **Step 3: Target Crash Handlers**                    | The panic handler is the one `control-rs-macros` generates (`macros-design.md` FR-5), routing the black box through `HostComms`. Persisting it to a RAM region across reset is an optional extension. | 1 week           |
-| **Step 4: TargetInfo Wire Dispatch** — *Shipped*     | `Telemetry::TargetInfo` (last variant) carries `PROTOCOL_VERSION` = 1, board ID, core clock and FPU flags; sent first in discovery. Golden vector `test_golden_wire_vector_target_info`; host protocol-mismatch tests. Physical-target check is PR9. | Complete         |
+| **Step 4: TargetInfo Wire Dispatch** - *Shipped*     | `Telemetry::TargetInfo` (last variant) carries `PROTOCOL_VERSION` = 1, board ID, core clock and FPU flags; sent first in discovery. Golden vector `test_golden_wire_vector_target_info`; host protocol-mismatch tests. Physical-target check is PR9. | Complete         |
 | **Step 5: Target Hardware Integration**              | Verify framed transmission and crash capture across Teensy 4.1 hardware and QEMU ARM Cortex-M emulation.                                   | 2 weeks          |
 
 ---

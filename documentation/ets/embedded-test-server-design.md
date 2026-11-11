@@ -22,35 +22,35 @@ waiting for commands.
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Interactive Server Execution**: The target Server must run
+- **FR-1 - Interactive Server Execution**: The target Server must run
   persistently as an idle loop, listening for host commands and executing tests
   on command without restarting the device between test cases.
-- **FR-2 — Distributed Test Discovery**: The system must automatically collect
+- **FR-2 - Distributed Test Discovery**: The system must automatically collect
   and register test cases across multiple modules via linker metadata without a
   centralized runtime registry.
-- **FR-3 — Telemetry Stream**: The target must transmit execution status,
+- **FR-3 - Telemetry Stream**: The target must transmit execution status,
   assertions, performance metrics and debugging logs back to the host over the
   active transport interface.
-- **FR-4 — Crash Recovery**: On a test panic or hardware exception, the Server
+- **FR-4 - Crash Recovery**: On a test panic or hardware exception, the Server
   must capture diagnostic details (a "Firmware Black Box") and transmit them
   before initiating system recovery.
-- **FR-5 — Cooperative lockup recovery**: If a test stops responding, the target
+- **FR-5 - Cooperative lockup recovery**: If a test stops responding, the target
   services a cooperative reset request from the host. Hardware watchdog
   recovery is out of scope (§6.3).
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Real-Time Determinism**: Telemetry and control operations must
+- **NFR-1 - Real-Time Determinism**: Telemetry and control operations must
   maintain microsecond-level timing budgets so they do not induce jitter in
   the test under execution.
-- **NFR-2 — Timing-Critical Logging**: The logging system must format without
+- **NFR-2 - Timing-Critical Logging**: The logging system must format without
   blocking the CPU or performing expensive on-target string formatting during tests.
 
 #### 2.3 Constraints
 
-- **C-1 — Zero Dynamic Allocation**: The target Server must compile under
+- **C-1 - Zero Dynamic Allocation**: The target Server must compile under
   `#![no_std]` with strictly zero dynamic heap allocation.
-- **C-2 — Memory & Flash Efficiency**: The target Server (excluding tests) must
+- **C-2 - Memory & Flash Efficiency**: The target Server (excluding tests) must
   consume under 32 KB Flash and 8 KB RAM, with test suite descriptors residing
   in ROM.
 
@@ -397,11 +397,11 @@ statics, which are data.
 
 | Task / Feature                                                 | Description                                                                                                                                                                      | Estimated Effort |
 |:---------------------------------------------------------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|:-----------------|
-| **Step 1: Test Discovery (Linker)** — *Shipped*                | `.ets_test_suites` section discovery and linker `KEEP` directive, implemented in `control-rs-macros` and `control-rs-ets/build.rs`.                                              | Complete         |
-| **Step 2: Postcard Messaging & Sync-Byte Framing** — *Shipped* | Postcard message schemas and sync-byte + length + CRC-16 framing, implemented per the `HostComms` design.                                                                        | Complete         |
-| **Step 3: ETS & Driver Integration**                           | Implement target-side server loop with UART DMA / RTT drivers. Blocking-HAL vs. Embassy driver model undecided — no `embassy` dependency currently exists in the workspace (§8). | 3 days           |
+| **Step 1: Test Discovery (Linker)** - *Shipped*                | `.ets_test_suites` section discovery and linker `KEEP` directive, implemented in `control-rs-macros` and `control-rs-ets/build.rs`.                                              | Complete         |
+| **Step 2: Postcard Messaging & Sync-Byte Framing** - *Shipped* | Postcard message schemas and sync-byte + length + CRC-16 framing, implemented per the `HostComms` design.                                                                        | Complete         |
+| **Step 3: ETS & Driver Integration**                           | Implement target-side server loop with UART DMA / RTT drivers. Blocking-HAL vs. Embassy driver model undecided (no `embassy` dependency currently exists in the workspace, §8). | 3 days           |
 | **Step 4: Watchdog & Panic Recovery**                          | Integrate multiplexed virtual task watchdogs (custom or adopted, §8) and custom HardFault panic handler.                                                                         | 2 days           |
-| **Step 5: Host Orchestrator (`control-rs-ci`)** — *Shipped*    | `ets` gate binary: CLI parser, wire-discovery session and headless test driver using `control-rs-ets-host` (`ci-design.md` §4.9).                                                               | 3 days           |
+| **Step 5: Host Orchestrator (`control-rs-ci`)** - *Shipped*    | `ets` gate binary: CLI parser, wire-discovery session and headless test driver using `control-rs-ets-host` (`ci-design.md` §4.9).                                                               | 3 days           |
 
 ---
 
