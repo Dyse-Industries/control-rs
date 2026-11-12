@@ -1,30 +1,26 @@
-# Procedural Macros for Distributed Test Discovery (macros)
+# Procedural Macros for Distributed Test Discovery (Design Document)
 
-![Date Badge](https://img.shields.io/badge/Date-November_8,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_13,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
-![Design Status Badge](https://img.shields.io/badge/Design%20Status-Draft-orange)
+![Approval Badge](https://img.shields.io/badge/Approval-Stale-lightgrey)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-No_Plan-lightgrey)
+
+---
 
 ### 1. Introduction
 
 Bare-metal embedded systems lack traditional operating system loaders, making
 dynamic test discovery and runtime test registration difficult. Procedural
 macros provide a compile-time solution by automatically analyzing source code
-and generating the underlying test registry metadata and target runtime hooks.
+and generating the underlying test registry metadata.
 
 This design document establishes the architecture for `control-rs-macros`, a
-procedural macro library containing `#[ets_suite]`, `#[ets_setup]`,
-`ets_entrypoint!`, `ets_panic!`, and `ets_exception!`. `#[ets_suite]` enables
-developers to declare ETS tests and configurable parameters directly in their
-modules with zero boilerplate. Rather than requiring explicit per-item marker
-attributes on every declaration, `#[ets_suite]` operates under an
-inference-first contract: the suite contains what the user defines in the module
-(plus the ETS wrapping), promoting primitive `static` items into lock-free
-atomic settings and identifying zero-argument functions as test cases. It
-generates all registration hooks and places them in custom linker sections,
-permitting automated discovery without a centralized registry. `#[ets_setup]`
-(an attribute procedural macro) and its companion function-like procedural macros
-(`ets_entrypoint!`, `ets_panic!`, `ets_exception!`) generate the bare-metal `main`
-entrypoint, wire the server context, and register panic and hardware fault handlers.
+procedural macro library containing `#[ets_suite]`, `#[ets_setup]` and the
+`Packet` derive. These macros enable developers to declare
+ETS cases, settings and lifecycle tasks directly in their modules with zero
+boilerplate. The macro generates
+all registration hooks and places them in custom linker sections, permitting
+automated discovery without a centralized registry.
 
 ---
 
@@ -32,34 +28,44 @@ entrypoint, wire the server context, and register panic and hardware fault handl
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Distributed Module Annotation (#[ets_suite])**: Developers declare a suite by
-  tagging a module with `#[ets_suite]`, generating a `SuiteDescriptor` and registering it in `.ets_test_suites`.
-- **FR-2 — Inferred Test Case Identification**: The macro automatically identifies zero-argument
-  functions within the module and generates `ExecDescriptor` entries with doc-comment metadata.
-- **FR-4 — Static Parameter Promotion**: The macro identifies module `static` items of supported
-  primitive types (`bool`, `u8`, `u16`, `u32`, `u64`, `i8`, `i32`, `f32`), rewriting them into
-  `Atomic*Setting` wrappers registered in the suite's `settings` slice while passing `const` items and non-setting items through unchanged.
-- **FR-5 — Target Entrypoint and Fault Handler Generation (`#[ets_setup]`, `ets_entrypoint!`, `ets_panic!`, `ets_exception!`)**: The macro crate must provide `#[ets_setup]` and its companion macros (`ets_entrypoint!`, `ets_panic!`, `ets_exception!`) to generate the bare-metal `main` entrypoint, bind the `ETS_SERVER` atomic pointer, and register panic and hardware exception handlers that route diagnostics through `control-rs-ets::util`.
-- **FR-6 — Ignored Module Functions**: The macro excludes functions with a leading underscore
-  or parameters from test case generation, allowing internal helper functions within the module.
-- **FR-7 — Compile Error Reporting**: Invalid syntax, non-inline modules, and invalid `#[ets_setup]` signatures produce
-  spanned compiler errors pointing to the offending code without macro panics.
+- **FR-1 — Distributed Module Annotation**: Developers must declare a suite by
+  tagging a module with `#[ets_suite]`.
+- **FR-2 — Automatic Registration**: The macro must automatically identify
+  non-underscore-prefixed functions within the module and generate test
+  descriptors.
+- **FR-3 — Typed Setting Translation**: Every static declared inside the
+  `#[ets_suite]` module must be a `SettingCell<T>` with `T` one of `u8`,
+  `u16`, `u32`, `i32`, `f32` or `bool` and is translated into a setting
+  descriptor; any other static or type is a compile error.
+- **FR-4 — Entrypoint & Setup Generation**: The `#[ets_setup]` macro must
+  generate the `main()` entrypoint, call the user's hardware init code and
+  instantiate the execution context and accept an optional board binding.
+- **FR-5 — Custom Panic Redirection**: The macro-generated entrypoint must
+  register a custom panic handler that routes panics and exceptions into the
+  fault path.
+- **FR-6 — Lifecycle Task Expansion**: An `impl LifecycleTask for X` inside the
+  module must expand into a `TaskSlot<X>`, five monomorphic wrappers and an
+  executable descriptor; a second implementation in one suite is a compile error.
+- **FR-7 — Packet Derive**: `#[derive(Packet)]` must emit the packet info
+  and codec for a user type. Settings need no derive.
 
 #### 2.2 Non-Functional Requirements
 
 - **NFR-1 — Zero Static RAM at Idle**: Emitted test descriptors and registration
   tables reside entirely in read-only Flash/ROM (`.ets_test_suites`), consuming
   0 bytes of static RAM at idle.
-- **NFR-2 — Linker Retention Safety**: Generated descriptors survive aggressive
-  linker garbage collection (`--gc-sections`) via `KEEP` directives and link section attributes.
-- **NFR-3 — Rust 2024/2027 Compliance**: Generated structures eliminate
-  `static mut` usage in favor of type-safe atomic `Atomic*Setting` wrappers and `AtomicPtr`.
+- **NFR-2 — Linker Retention Safety**: Generated descriptors must survive
+  aggressive linker garbage collection (`--gc-sections`) in release builds.
+- **NFR-3 — Rust 2024/2027 Compliance**: Generated structures must eliminate
+  `static mut` usage in favor of interior-mutable cells.
 
 #### 2.3 Constraints
 
 - **C-1 — Strict `#![no_std]` and Zero Runtime Allocation**: Code emitted by the
-  macros compiles on bare-metal targets without standard library or dynamic heap allocator support.
-- **C-2 — Target Architecture Independence**: `#[ets_suite]` emits target-agnostic Rust code, while `ets_entrypoint!` and `ets_exception!` emit conditional bare-metal entry and trap bindings for ARM Cortex-M and RISC-V.
+  macros must compile on bare-metal targets without standard library or dynamic
+  heap allocator runtime support.
+- **C-2 — Target Independency**: The macros must emit target-agnostic Rust code
+  that delegates hardware specifics to the user-defined profiler.
 
 ---
 
@@ -68,7 +74,7 @@ entrypoint, wire the server context, and register panic and hardware fault handl
 The procedural macros are contained within the `control-rs-macros` library. This
 library depends on standard compiler crates (`proc-macro`, `syn`, `quote`) and
 operates as a compiler plugin. It interacts with other workspace crates to form
-the test registry and target runtime harness:
+the test registry:
 
 ```mermaid
 flowchart TD
@@ -77,8 +83,8 @@ flowchart TD
     end
 
     subgraph Target ["Target Codebase"]
-        UserCode["User Module (#[ets_suite]) + Setup (#[ets_setup])"]
-        ETS["control-rs-ets (SuiteDescriptor, Server, util)"]
+        UserCode["User Module + #[ets_suite]"]
+        ETS["control-rs-ets (SuiteDescriptor)"]
         LinkerScript["ets_suites.x (KEEP Section)"]
     end
 
@@ -91,74 +97,146 @@ flowchart TD
 
 ### 4. Architecture
 
-#### 4.1. `#[ets_suite]` Module Inference and Code Generation
+#### 4.1 `#[ets_suite]` Module Parsing and Code Generation
 
-Serves: FR-1, FR-2, FR-4, FR-6, FR-7, NFR-1, NFR-3, C-1, C-2
+When the compiler encounters `#[ets_suite]` on a module, the macro performs the
+following transformations:
 
-When the compiler encounters `#[ets_suite]` on an inline module, the macro operates on
-an inference contract: the generated suite contains what the user declared
-in the module, with wrapping for ETS runtime registration. Developers do not need
-to decorate items with specific markers; the macro infers semantics from item types
-and positions:
-
-1. **Test Case Inference**: The macro scans functions within the module. Every function
-   without a leading underscore and without parameters is recognized as an executable test case.
-   The macro wraps the function pointer into an `ExecDescriptor`, capturing the function
-   name and doc comments as the test description.
-2. **Ignored Helper Functions**: Functions prefixed with a leading underscore `_` or defining
-   parameters are excluded from test case generation and treated as internal helper routines.
-3. **Static Parameter Promotion**: The macro scans `static` items in the module
-   (for example, `pub static KP: f32 = 1.2;` or `pub static TIMEOUT_MS: u32 = 500;`).
-   Statics of supported primitive types (`bool`, `u8`, `u16`, `u32`, `u64`, `i8`, `i32`, `f32`)
-   are rewritten into `::control_rs_ets::settings::Atomic*Setting` statics (`AtomicBoolSetting`,
-   `AtomicU8Setting`, `AtomicU16Setting`, `AtomicU32Setting`, `AtomicU64Setting`,
-   `AtomicI8Setting`, `AtomicI32Setting`, `AtomicF32Setting`) and registered
-   in the suite's `SETTINGS` slice with their initial values and doc comments. `const` items
-   and non-primitive statics pass through unchanged.
-4. **Registry Pointer Emission**: The macro emits a static `SuiteDescriptor` that
-   aggregates the inferred `ExecDescriptor`s and `Setting` references, placing a
-   `&'static SuiteDescriptor` in the `.ets_test_suites` linker section (or `__DATA,__ets_suites` on Apple targets):
+1. **Case Identification**: It traverses the module's items, locating all
+   functions that are not underscore-prefixed. For each, it generates an
+   `ExecDescriptor` with the name, description, allowed mode `Atomic`, shared
+   no-op lifecycle pointers and the function pointer.
+2. **Settings Translation**: It traverses statics. Each must be a
+   `SettingCell<T>`; the macro emits a `SettingDescriptor` with the setting's
+   name, doc-comment description, `#[setting(min, max)]` bounds and
+   monomorphic `get` and `set` function pointers over a typed `Param`. `T` must
+   be `u8`, `u16`, `u32`, `i32`, `f32` or `bool`; any other type is a spanned
+   error. Any other static is rejected with a spanned error ("suite statics
+   must be `SettingCell<T>`"), which removes `static mut` from user code.
+3. **Lifecycle Task Expansion**: For `impl LifecycleTask for X` the macro emits
+   `static SLOT: TaskSlot<X>` and five monomorphic wrappers (`setup`, `step`,
+   `reset`, `teardown`, `safe_state`) that decode the input packet, call the
+   trait method on the slot and encode the output packet. The wrappers are the
+   only place typed code is erased to buffers. `LifecycleTask` has no default
+   bodies, so omitting a function is a rustc error; a second implementation in
+   one module is a macro error ("at most one lifecycle task per suite").
+4. **Registry Emission**: The macro emits a static `SuiteDescriptor` that
+   references the executables and settings. This descriptor is annotated with
+   the link section attribute to ensure it is placed in the test registry:
     ```rust
-    #[cfg_attr(not(target_vendor = "apple"), unsafe(link_section = ".ets_test_suites"))]
-    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__ets_suites"))]
+    #[unsafe(link_section = ".ets_test_suites")]
     #[used]
     pub static SUITE_DESCRIPTOR_PTR: &::control_rs_ets::SuiteDescriptor = &SUITE_DESCRIPTOR;
     ```
+   Tasks are reached through the suite descriptor, so there is one section.
+5. **Derives**: `#[derive(Packet)]` emits the Postcard codec and `PacketInfo`;
+   a raw packet is a hand-written `Packet` implementation.
 
-#### 4.2. Conformance to the Suites Section ABI
+#### 4.2 Linker Garbage Collection Mitigation
 
-Serves: FR-1, NFR-2
+A critical issue in bare-metal Rust is that LLD linker passes the
+`--gc-sections` flag by default. Because the application logic does not directly
+call the static `SuiteDescriptor` variables, the linker views them as dead code
+and strips them during compilation.
 
-The expansion of `#[ets_suite]` is equivalent to the hand-written suite form of
-`test-suite-design.md` §4.6. The section name, element type, linker fragment and
-retention strategy are owned by `test-suite-design.md` §4.1 and §4.2; the macro
-emits only the `#[used]` pointer static with `#[unsafe(link_section)]`. The
-attribute is unsafe because it "allows users to place data and code into
-sections of memory not expecting them" [3], which is why the macro never
-chooses a section name or element type of its own.
+To prevent this, the workspace employs a multi-tiered retention architecture:
 
-#### 4.3. Target Entrypoint and Fault Handler Procedural Macros (`#[ets_setup]`, `ets_entrypoint!`, `ets_panic!`, `ets_exception!`)
+1. **`#[used]`**: Generated static variables use attributes directing LLVM to
+   keep the symbol in the object file.
+2. **Linker Script KEEP Directive**: The `control-rs-ets` crate packages a
+   custom linker script snippet (`ets_suites.x`) that includes a `KEEP`
+   directive for the `.ets_test_suites` section:
+   ```ld
+   KEEP(*(.ets_test_suites))
+   ```
+3. **Build Script Linker Argument Injection**: Target binary examples (like QEMU
+   and Teensy 4) include a `build.rs` or `.cargo/config.toml` that injects the
+   script to the linker command line:
+   ```rust
+   println!("cargo:rustc-link-arg=-Tets_suites.x");
+   ```
+   This prevents end-users from needing to manually manage linker configuration
+   files.
 
-Serves: FR-5, FR-7, NFR-3, C-1, C-2
 
-To eliminate target startup and trap boilerplate on bare-metal builds (`#[cfg(target_os = "none")]`), `control-rs-macros` provides four procedural macros:
+The generated descriptors are placed by `#[link_section]`, which "specifies the
+section of the object file that a function or static's content will be placed
+into" (Rust Reference, 2026). The Reference also records that the attribute "is
+unsafe as it allows users to place data and code into sections of memory not
+expecting them, such as mutable data into read-only areas"
+(Rust Reference, 2026). That is the reason the section name, its linker-script
+entry and the descriptor type are owned by this crate together: the safety of
+the placement is a property of the three agreeing, and it is not something a
+user of `#[ets_suite]` can be asked to get right.
 
-1. **`#[ets_setup]`**: An attribute procedural macro applied to a hardware initialization function returning `control_rs_ets::server::Context<C, P>` (for example, `fn setup() -> Context<MyComms, CortexMProfiler>`). The macro extracts the transport type `C` and profiler type `P` from the return type, emits `static ETS_SERVER: core::sync::atomic::AtomicPtr<Server<'static, C, P>> = AtomicPtr::new(core::ptr::null_mut());`, and invokes `ets_entrypoint!(setup_fn)`, `ets_panic!()`, and `ets_exception!()`. If the annotated function does not return `Context<C, P>`, the macro emits a spanned `compile_error!`.
-2. **`ets_entrypoint!(setup_fn)`**: A function-like procedural macro generating the bare-metal `main() -> !` entrypoint (`#[cortex_m_rt::entry]` on ARM, `#[riscv_rt::entry]` on RISC-V). At startup, `main` declares the linker section boundary symbols `__ets_test_suites_start` and `__ets_test_suites_end`, reconstructs the suite slice via `control_rs_ets::util::get_suites`, calls `setup_fn()`, instantiates `Server::new(ctx, suites)`, stores `&mut server` into `ETS_SERVER` with `Ordering::Release`, executes `server.run()`, and terminates via `server.exit()`.
-3. **`ets_panic!()`**: A function-like procedural macro generating the bare-metal `#[panic_handler] fn panic(info: &core::panic::PanicInfo) -> !`. It formats the panic message into a 128-byte stack buffer using `control_rs_ets::util::FailureBufWriter`, loads the `ETS_SERVER` pointer with `Ordering::Acquire`, and delegates to `control_rs_ets::util::handle_failure` to transmit the failure frame and reset or halt the target.
-4. **`ets_exception!()`**: A function-like procedural macro generating bare-metal hardware fault handlers: `#[cortex_m_rt::exception] unsafe fn HardFault(ef: &cortex_m_rt::ExceptionFrame) -> !` on ARM (formatting `pc` and `lr` into a 64-byte stack buffer) and `#[unsafe(no_mangle)] unsafe fn ExceptionHandler(trap_frame: &riscv_rt::TrapFrame) -> !` on RISC-V (reading `mcause` and `mepc` CSRs into a 64-byte stack buffer). Both handlers load `ETS_SERVER` with `Ordering::Acquire` and delegate to `control_rs_ets::util::handle_exception`.
+#### 4.3 `#[ets_setup]` Entrypoint and Fault Entry
+
+The `#[ets_setup]` macro is applied to the user's hardware initialization
+function. It replaces the function with the primary entrypoint:
+
+1. **`main` Function Wrapper**: The macro emits the standard
+   `#[no_mangle] pub extern "C" fn main() -> !` entrypoint.
+2. **Setup Call**: It calls the user's setup function to initialize clock
+   registers, configure peripherals (UART, SPI, DMA, watchdog, timers and
+   interrupts) and return the execution `Context` with its `Link`, and
+   optionally a board binding with `feed`, `wait` and `releases` hooks. The user
+   starts any watchdog in setup; the executive only feeds it
+   (`ets-executive-design.md` §4.6). The macro emits no interrupt handler.
+3. **Context Registration**: It stores a pointer to the `Context<L, P>` in
+   `ETS_CONTEXT` for the fault reporter. The pointer is monomorphic in the
+   binary.
+4. **Fault Entry**: It registers the panic handler and the exception entry
+   (`ets_panic!` and `ets_exception!`). Both formats the message and location
+   into a fixed buffer and call the fault path:
+    ```rust
+    #[cfg(target_os = "none")]
+    #[panic_handler]
+    fn panic(info: &::core::panic::PanicInfo) -> ! {
+        // format message into a fixed buffer, then settle the run:
+        // mask interrupts, read and write the phase, call the active safe_state(),
+        // report if the comms lock is free, wait for TryReset, reset.
+        ::control_rs_ets::fault::on_panic(info)
+    }
+    ```
+   No `Drop` is relied on anywhere. This prevents the target from locking up
+   silently and ensures the host displays the failure or detects it as an
+   unreported fault.
 
 ---
 
 ### 5. Alternatives
 
-* **Constructor-based runtime registries (`inventory`, `ctor`)**: Rejected on
-  mechanism. `inventory` registers types from "any source file linked into your
-  application" with no central list [2], but relies on runtime initialization
-  functions similar to `__attribute__((constructor))` in C [2]. Its documented
-  platform support is restricted to hosted operating systems; bare-metal targets
-  are not supported.
-* **`linkme::DistributedSlice`**: Not adopted. `linkme` handles distributed slices [1], but on bare metal a custom `SECTIONS` script must still place the section explicitly, so `linkme` would add a proc-macro dependency without removing linker-script work.
+* **Manual Registration Array**: Developers could manually declare a global
+  array of function pointers. This is rejected due to high maintenance overhead,
+  boilerplate and the risk of developer error when adding new tests.
+* **`linkme::distributed_slice`**: Rejected, on ownership and dependency cost
+  rather than on capability. The mechanism is architecturally identical to the hand-rolled
+  section scheme: a distributed slice is "a collection of static elements that
+  are gathered into a contiguous section of the binary by the linker"
+  (linkme, 2026), whose elements "may be defined individually from anywhere in
+  the dependency graph of the final binary" (linkme, 2026), which is exactly
+  the property FR-2 needs. The crate describes itself as "safe cross-platform
+  linker shenanigans" (linkme, 2026). `linkme` 0.3.37 is `#![no_std]` and handles `target_os = "none"` through the ELF `__start_`/`__stop_` section symbols (source of `linkme-impl` `declaration.rs`), so neither `std` nor element homogeneity rules it out: the `.ets_test_suites` section already holds a homogeneous slice of `&'static SuiteDescriptor`. The hand-rolled
+  scheme is a linker fragment and two boundary symbols; adopting `linkme`
+  would add a proc-macro dependency and surrender project-owned control of the
+  `.ets_test_suites` section name and the `ets_suites.x` / `build.rs` linker
+  coordination, while a bare-metal `SECTIONS` script must place the section
+  either way.
+* **`inventory` (constructor-based registration)**: Rejected on mechanism.
+  `inventory` offers "typed distributed plugin registration" into which plugins
+  "can be registered from any source file linked into your application"
+  (inventory, 2026), and its registrations "all take effect simultaneously"
+  without any call from `main` (inventory, 2026). Taking effect without being
+  called from `main` is the property that makes it unsuitable here: it requires
+  a pre-main constructor mechanism supplied by a loader, and a bare-metal
+  target has no loader. The documented platform support extends to WebAssembly
+  targets (inventory, 2026) but says nothing about bare metal.
+* **Nightly `custom_test_frameworks`**: Rejected. This requires unstable
+  compiler flags and nightly toolchains, which violates the strict reliability
+  and safety-certification goals of `control-rs`.
+* **Standard `#[test]` Harness (libtest)**: Rejected. It depends on `std`
+  components like threads and dynamic memory, which are unavailable in
+  bare-metal targets.
 * **Global Compiler `-C link-dead-code` Flag**: Rejected. While it prevents test
   registry deletion, it also disables dead code elimination for the entire
   project, leading to bloated binaries that exceed the MCU's Flash capacity.
@@ -169,20 +247,40 @@ To eliminate target startup and trap boilerplate on bare-metal builds (`#[cfg(ta
 
 #### 6.1 Verification
 
-| Condition | Requirement | Method    | Target                                                                                                                | Criterion                                                                                                         |
-|:----------|:------------|:----------|:----------------------------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------|
-| VC-1.1    | FR-1        | `libtest` | `control_rs_macros::tests::generate_suite_descriptors_emits_four_items`, `control_rs_macros::tests::ets_suite_impl_expands_inline_module_and_rejects_external` | `#[ets_suite]` generates valid `SuiteDescriptor` and places pointer in `.ets_test_suites` section                  |
-| VC-2.1    | FR-2        | `libtest` | `control_rs_macros::tests::process_test_fn_skips_helpers_and_keeps_docs`, `control_rs_macros::tests::extract_doc_string_strips_and_truncates` | Zero-argument functions in the module are identified as test cases and populate `ExecDescriptor` fields with doc comments |
-| VC-4.1    | FR-4        | `libtest` | `control_rs_macros::tests::process_static_setting_rewrites_supported_types`                                           | Module `static` items of supported primitive types are rewritten into `Atomic*Setting` wrappers and registered in the suite's settings slice |
-| VC-4.2    | FR-4        | `libtest` | `control_rs_macros::tests::qualified_self_types_are_not_settings`, `control_rs_macros::tests::atomic_wrapper_names_cover_supported_types` | `const` items and non-setting types pass through unchanged without false setting registration |
-| VC-5.1    | FR-5        | `libtest` | `control_rs_macros::tests::ets_setup_and_helper_macros_expand`, `control_rs_macros::tests::extract_context_generics_parses_context_path` | `#[ets_setup]`, `ets_entrypoint!`, `ets_panic!`, and `ets_exception!` extract `Context<C, P>` generics and emit bare-metal entrypoint, panic, and exception handlers |
-| VC-6.1    | FR-6        | `libtest` | `control_rs_macros::tests::process_test_fn_skips_parameterized_helpers`                                                | Functions prefixed with an underscore or taking parameters are excluded from test case registration                |
-| VC-7.1    | FR-7        | `libtest` | `control_rs_macros::tests::ets_suite_impl_expands_inline_module_and_rejects_external`, `control_rs_macros::tests::ets_setup_and_helper_macros_expand` | Invalid syntax, non-inline module declarations, and invalid `#[ets_setup]` signatures produce `compile_error!` tokens pointing to the offending code |
-| VC-9.1    | NFR-1       | `libtest` | `control_rs_macros::tests::test_zero_static_ram_descriptors`                                                           | Generated descriptors reside entirely in read-only Flash, consuming zero bytes of static RAM at idle             |
-| VC-10.1   | NFR-2       | `gate`    | `build`                                                                                                               | Emitted descriptors survive `--gc-sections` under release profile linking                                         |
-| VC-11.1   | NFR-3       | `gate`    | `clippy`                                                                                                              | Generated macro code eliminates `static mut` usage across all emitted structures                                  |
-| VC-12.1   | C-1         | `gate`    | `clippy`                                                                                                              | Generated code compiles cleanly in `#![no_std]` bare-metal targets without heap allocation                        |
-| VC-13.1   | C-2         | `gate`    | `build`                                                                                                               | Generated code compiles across all supported target architectures                                                 |
+The implementation must produce evidence that an annotated module registers
+exactly the cases it declares, that malformed input is rejected at compile time
+with a diagnostic pointing at the offending span, that registration survives
+linker garbage collection, and that the generated code allocates nothing.
+
+| Condition | Requirement | Method | Target | Criterion |
+|:----------|:------------|:-------|:-------|:----------|
+| VC-1.1 | FR-1 | `trybuild` | pass cases for valid suite forms | Valid suite and case annotations compile |
+| VC-1.2 | FR-1 | `trybuild` | compile-fail cases for malformed suites | Each case yields a spanned `syn::Error`, not a proc-macro panic |
+| VC-2.1 | FR-2 | `libtest` | `control_rs_macros::tests::descriptor_set_matches_annotations` | Descriptor set recovered from a built ELF equals the annotations in source |
+| VC-3.1 | FR-3 | `trybuild` | compile-fail case for a non-`SettingCell` static in a suite | The diagnostic names the offending static |
+| VC-3.2 | FR-3 | `trybuild` | compile-fail case for a `SettingCell` of a non-primitive type | The diagnostic names the offending type |
+| VC-4.1 | FR-4 | `libtest` | `control_rs_macros::tests::setup_emits_entry_and_board_binding` | Expansion contains the entrypoint, the optional board binding and the fault entry, and no interrupt handler |
+| VC-5.1 | FR-5 | `libtest` | `control_rs_macros::tests::panic_redirects_to_fault_entry` | The generated panic handler enters the fault path |
+| VC-6.1 | FR-6 | `libtest` | `control_rs_macros::tests::lifecycle_impl_expands_to_slot_and_wrappers` | `impl LifecycleTask` expands to a `TaskSlot` and monomorphic wrappers |
+| VC-7.1 | FR-7 | `libtest` | `control_rs_macros::tests::packet_derive_emits_info_and_codec` | `#[derive(Packet)]` emits the expected `PacketInfo` and codec |
+| VC-21.1 | NFR-1 | Static analysis | section presence in the linked ELF | Descriptors reside in Flash; no static RAM at idle |
+| VC-22.1 | NFR-2 | Static analysis | section retention after `--gc-sections` | Every registered descriptor survives linking |
+| VC-23.1 | NFR-3 | Compile-time shape check | `cargo ci` builds with the 2024 edition lints denied | No `static mut` references or edition warnings in generated code |
+| VC-31.1 | C-1 | Static analysis | `cargo ci` (clippy stage); inspection | Generated code allocates nothing and uses no `std` |
+| VC-32.1 | C-2 | Compile-time shape check | target builds for every supported triple | Generated code compiles on each triple |
+
+Target: 85% line coverage of the macro crate's host-side logic, measured with
+`cargo coverage`.
+
+Excluded: generated code, which is verified by the behaviour of the ELF rather
+than by coverage of the generator; and `trybuild` fixtures, which are inputs.
+
+* **Hardware integration**: Compile the Teensy 4.1 board tests using the macros
+  and drive them through `control-rs-ets-host::Session`, confirming that
+  every suite is discovered and that settings can be modified at runtime.
+* **Third-party module**: Annotate a suite in a crate outside this workspace and
+  confirm it registers, which is the property distributed registration exists to
+  provide (linkme, 2026).
 
 #### 6.2 Acceptance
 
@@ -190,15 +288,33 @@ To eliminate target startup and trap boilerplate on bare-metal builds (`#[cfg(ta
 |:------|:-------|:--------|:------|
 | Registration completeness | The annotations in the source tree | Descriptors recovered from the ELF | Exact set equality, no duplicates, no omissions |
 | Retention under GC | Same ELF linked with `--gc-sections` | Descriptors present | Unchanged from the non-GC link |
-| Diagnostic quality | Invalid macro inputs in unit tests | Emitted `compile_error!` token stream | Contains descriptive message, spans the offending token, no panic text |
+| Diagnostic quality | Each compile-fail case | `trybuild` stderr | Matches the expected file, spans the offending token, no panic text |
 | Allocation freedom | Disassembly of a target build | Allocator symbols reachable from generated code | 0 |
+| Panic redirection | A deliberate panic on target | Path taken | The `#[ets_setup]` handler, not the default |
+| Settings translation | A suite declaring each supported setting type | Runtime type and bounds of each registered setting | Match the declaration |
+| Static rejection | A suite with a static that is not `SettingCell<T>` | `trybuild` outcome | Compile error spanning the static |
+| Lifecycle expansion | A suite with one `LifecycleTask` | Descriptor with five wrapper pointers and one slot | Present and callable |
+| One task per suite | A suite with two `LifecycleTask` implementations | `trybuild` outcome | Compile error spanning the second |
+| Missing lifecycle function | A `LifecycleTask` omitting one of five functions | Build outcome | rustc error, not a runtime failure |
 
 #### 6.3 Limits
 
-- Proc-macro hygiene against adversarial input. Compile-error tests cover
-  expected misuse, not deliberately hostile token streams.
+- `#[analysis_budget]` procedural macro: not specified. Its consumer,
+  `control-rs-static-analyzer`, does not exist (the static-analyzer design and its `analyze` gate were withdrawn on 2026-09-14).
+- `#[ets_setup]` panic diagnostics: Error reporting via spanned `syn::Error`
+  rather than macro panic is tracked as phase 2 hardening and is not verified in
+  current builds.
+- That the hand-rolled section scheme is more portable than `linkme`. Both
+  target bare metal; the §5 decision rests on ownership and dependency cost,
+  not on measured portability.
 - Linker behaviour outside LLD and GNU ld. The section and script coordination
   is exercised only with the linkers the matrix uses.
+- Proc-macro hygiene against adversarial input. Compile-fail cases cover
+  expected misuse, not deliberately hostile token streams.
+- Compile-time cost of the macros at large suite counts. No bound is stated and
+  none is measured.
+- Behaviour when two crates in one binary declare the same suite name.
+  Deduplication is unspecified.
 
 ### 7. Performance & Resource Considerations
 
@@ -212,29 +328,65 @@ To eliminate target startup and trap boilerplate on bare-metal builds (`#[cfg(ta
 
 ### 8. Risks & Open Questions
 
+* **Linker Target Differences**: Different targets (for example, MSP430 or custom
+  architectures) might require variations of the linker script arguments. The
+  build script must detect the target architecture and adapt the link flags
+  accordingly.
 * **Rust compiler updates**: Shifts in compiler syntax/AST structure in future
   Rust editions could disrupt the syn-based parser. Pinning dependencies in
-  Cargo.toml mitigates this.
+  Cargo.toml mitigates this, supplemented by periodic dependency-tree audits:
+  the workspace lockfile already carries syn 1.x (via TUI dependencies) and
+  syn 2.x side by side, so version fragmentation is a live condition rather
+  than a hypothetical.
+* **`#[ets_setup]` Error Diagnostics**: The return-type and generic-extraction
+  checks currently abort via `panic!`/`.expect()`, which surface as an opaque
+  "proc-macro panicked" diagnostic. They must be migrated to the
+  `syn::Error::new_spanned(...).to_compile_error()` pattern already used by
+  `#[ets_suite]`.
+* **Per-Test Opt-Out**: Test exclusion is limited to underscore-prefixed
+  function names. `defmt-test` and `embedded-test` demonstrate attribute-based
+  `#[ignore]`/`#[cfg]` opt-out in the same whole-module-rewrite macro shape;
+  open question whether to add an equivalent attribute to the functional
+  requirements.
+* **syn Feature Scope**: The `extra-traits` feature only adds Debug/Eq/Hash
+  impls that the transformation logic does not appear to use. A feature audit
+  should confirm whether it can be dropped to narrow the proc-macro2/syn API
+  surface.
 
 ---
 
 ### 9. Development Plan
 
+Phase 1 is implemented in `control-rs-macros/src/lib.rs`; discovery via
+`.ets_test_suites` is exercised by ETS (see
+`embedded-test-server-design.md`). Phase 2 covers remaining hardening.
+
 | Phase | Delivers | Requirements | Effort | Status |
-|:---|:---|:---|:---|:---|
-| 1. Parser Core | `syn` parser implementation for `#[ets_suite]` | FR-1 | 2 days | Shipped |
-| 2. Code Generation | AST templates for `SuiteDescriptor`, `ExecDescriptor`, and atomic wrappers | FR-1, FR-2, FR-6, NFR-1, NFR-3, C-1 | 2 days | Shipped |
-| 3. Section Emission | `#[used]` pointer static conforming to the suites section ABI | FR-1, NFR-2, C-2 | 1 day | Shipped |
-| 4. Static Settings, Entrypoint Macros & Diagnostics | Static parameter promotion, `#[ets_setup]`/`ets_entrypoint!`/`ets_panic!`/`ets_exception!`, and spanned diagnostics | FR-4, FR-5, FR-7 | 2 days | Shipped |
+|:------|:---------|:-------------|:-------|:-------|
+| 1. Parser, codegen, linker and panic handler | `#[ets_suite]` and `#[ets_setup]` parsing, `SuiteDescriptor` and setting descriptor codegen, `build.rs` and `ets_suites.x`, bare-metal panic handler | FR-1, FR-2, FR-5, NFR-1, NFR-2 | Shipped | Complete |
+| 2. Diagnostics and ergonomics hardening | Spanned `syn::Error` diagnostics for `#[ets_setup]`, `extra-traits` audit, per-test opt-out attribute evaluation | FR-1, NFR-3 | 1.0 day | Planned |
+| 3. Lifecycle and derives | `LifecycleTask` expansion, `SettingCell` translation with `#[setting]` bounds, the `Packet` derive and the board binding in `#[ets_setup]` | FR-3, FR-4, FR-6, FR-7 | 2.0 days | Planned |
 
 ---
 
 ### 10. Revision History
 
-| Revision | Date               | Author          | Description                                                                              |
-|:---------|:-------------------|:----------------|:-----------------------------------------------------------------------------------------|
-| 1.0      | August 29, 2026    | @MitchellDScott | Test registration and discovery macros; linker-section codegen and span diagnostics.     |
-| 2.0 | November 8, 2026 | @MitchellDScott, Claude Opus 5.5, Antigravity | Requirement traceability matrix, #[ets_suite] static setting promotion, ExecDescriptor codegen, #[ets_setup]/ets_entrypoint!/ets_panic!/ets_exception! target macros, and spanned diagnostics. Affects C-2, FR-2, FR-3, FR-4, FR-5, FR-7, FR-8. |
+| Revision | Date           | Author          | Description                                                                                                                   |
+|:---------|:---------------|:----------------|:------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | May 24, 2026   | @MitchellDScott | Initial specification for embedded test registration and discovery procedural macros.                                         |
+| 1.1      | July 18, 2026  | @MitchellDScott | Linker section codegen: added distributed slice linker-section generation and bare-metal panic redirection in `#[ets_setup]`. |
+| 1.2      | August 6, 2026 | @MitchellDScott | Tooling hardening: unified linker script name (`ets_suites.x`) and added compile-time AST span error diagnostics.             |
+| 1.3      | September 9, 2026 | @MitchellDScott | Packaging alignment: updated host validation reference to `control-rs-ets-host::ServerBridge`.                               |
+| 1.4 | September 9, 2026 | @MitchellDScott | Project split: relocated to `documentation/macros/` from the retired xtask project. |
+| 1.5      | September 9, 2026 | @MitchellDScott | Evidence pass: replaced the pre-evidence research file with a quotes-only pair, cited the `linkme` and `inventory` rejections and the `link_section` semantics, corrected the linkme rejection from a capability claim to an ownership one, restructured §6 per `vv-standards.md`. |
+| 1.6      | September 9, 2026 | @MitchellDScott | Structural hardening: numbered §2 subsections 2.1-2.3, fixed cross-reference to ../ets/embedded-test-server-design.md, recorded #[analysis_budget] deferral in §6.7, standardized reference ordering. |
+| 1.7      | September 9, 2026 | @MitchellDScott | Dropped the author-year / `[n]` mapping table. |
+| 1.8      | September 24, 2026 | @MitchellDScott | `linkme` rejection rests on ownership and dependency cost: 0.3.37 is `no_std` and supports `target_os = "none"`; re-evaluation closed. `#[analysis_budget]` dropped with the withdrawn static-analyzer. |
+| 2.0      | October 12, 2026 | @MitchellDScott | Aligned to the single-job executive: FR-3 changed (statics must be `SettingCell<T>`), FR-4 and FR-5 extended (watchdog binding, fault entry), FR-6 and FR-7 added (lifecycle expansion, derives), NFR-3 reworded. Demoted from Approved to Draft pending re-approval. |
+| 2.1      | October 12, 2026 | @MitchellDScott | `#[ets_setup]` takes a board binding (`feed`, `wait`, `releases`) and a `Link` instead of a watchdog handle with `start(period)`: FR-4 reworded. |
+| 2.2      | October 12, 2026 | @MitchellDScott | Settings are named primitives with `#[setting]` bounds: FR-3 restricted to primitive types; the schema derive is removed and FR-7 covers `#[derive(Packet)]` only. |
+| 2.3 | October 12, 2026 | @MitchellDScott | Development plan in the standard phase table. |
+| 2.4 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. Affects C-1, C-2, FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, NFR-1, NFR-2, NFR-3. |
 
 ---
 

@@ -346,7 +346,7 @@ board.
 Serves: FR-7, FR-8
 
 ```rust
-fn poll_command(&mut self) -> Result<Option<Command>, Self::Error> {
+    fn poll_command(&mut self) -> Result<Option<Command>, Self::Error> {
     // Non-blocking read and framing parsing logic
     Ok(None)
 }
@@ -359,8 +359,6 @@ fn send_telemetry(&mut self, telemetry: &Telemetry<'_>) -> Result<(), Self::Erro
 fn flush(&mut self) -> Result<(), Self::Error> {
     // Wait for DMA write to complete
     Ok(())
-}
-
 }
 
 ```
@@ -467,10 +465,10 @@ Target: 90% line coverage of the `comms` module, measured with
 
 ### 9. Development Plan
 
-| Phase | Delivers | Requirements | Effort | Status |
-|:---|:---|:---|:---|:---|
-| 1. Core Serialization & Framing | Postcard schemas, sync-header framing, and CRC-16 verification in `control-rs-ets::comms` | FR-1, FR-2, NFR-1, NFR-2, NFR-3, C-1, C-2, C-3 | 2 days | Shipped |
-| 2. Wire Contract & Golden Vectors | `PROTOCOL_VERSION`, `TargetInfo`, `TargetPanic`, and golden byte vectors | FR-4, FR-5, FR-6, FR-9 | 2 days | Shipped |
+| Phase                             | Delivers                                                                                  | Requirements                                   | Effort | Status  |
+|:----------------------------------|:------------------------------------------------------------------------------------------|:-----------------------------------------------|:-------|:--------|
+| 1. Core Serialization & Framing   | Postcard schemas, sync-header framing, and CRC-16 verification in `control-rs-ets::comms` | FR-1, FR-2, NFR-1, NFR-2, NFR-3, C-1, C-2, C-3 | 2 days | Shipped |
+| 2. Wire Contract & Golden Vectors | `PROTOCOL_VERSION`, `TargetInfo`, `TargetPanic`, and golden byte vectors                  | FR-4, FR-5, FR-6, FR-9                         | 2 days | Shipped |
 
 ---
 

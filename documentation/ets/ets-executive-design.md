@@ -1,53 +1,24 @@
 # ETS Executive (ets-executive)
 
-![Date Badge](https://img.shields.io/badge/Date-October_31,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-October_13,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
-![Design Status Badge](https://img.shields.io/badge/Design%20Status-Draft-orange)
+![Approval Badge](https://img.shields.io/badge/Approval-Stale-lightgrey)
+![Status Badge](https://img.shields.io/badge/Doc%20Status-No_Plan-lightgrey)
 
 ---
 
 ### 1. Introduction
 
-The Embedded Test Server (`embedded-test-server-design.md`) executes atomic test
-cases and continuous lifecycle tasks on a target microcontroller. Extending a
-single-peripheral request-response loop by branching inside the server couples
-every execution model to the command dispatcher and prevents companion
-peripherals from queuing work or observing live state. This design structures
-the target runtime as a single-job cyclic executive [1] (`ADR-0002`): a
-multi-peripheral `Server` with a static first-in, first-out (FIFO) `JobQueue`,
-one `Runner` parameterized by a static `Mode`, data-only flash descriptors and
-typed user contracts. Board resources (watchdog, timers, interrupts and sleep)
-stay in user code and reach the executive only through a `Board` binding whose
-hooks all have defaults. Hosted integration into a third-party real-time
-operating system (RTOS) and concurrent active jobs are out of scope.
+The Embedded Test Server (`embedded-test-server-design.md`) runs atomic cases inside a persistent target loop. Extending it with continuous tasks by adding branches to `Server` couples every execution model to the dispatcher. This design restructures the ETS as a single-job executive: one dispatcher, one runner parameterized by an execution mode, data-only descriptors and typed user contracts. The structure follows the cyclic-executive model of a predetermined ordering of processing events (Hood, 1986), restricted to one active job. Board resources (watchdog, timers, interrupts and sleep) stay in user code and reach the executive only through a board binding whose hooks all have defaults. Hosted integration into a third-party RTOS and concurrent jobs are out of scope.
 
 Primary usage scenarios:
 
-- **Kernel profiling**: A developer runs one case on target with interrupts
-  masked and reads cycles, wall-clock time and stack peak; failure is a panic, a
-  stack overflow or a budget overrun.
-- **Closed-loop simulation**: A developer runs a lifecycle task in lockstep
-  against a host plant model; failure is a mispaired step, a lost sample, a link
-  loss or numerical divergence.
-- **Free-running and periodic execution**: A developer runs a task at line rate
-  or on a fixed period and reads step and release timing; failure is release
-  jitter beyond the sample period or an overrun.
-- **Interrupt-driven execution**: A developer releases task steps from a board
-  timer or peripheral interrupt and lets the target sleep between releases;
-  failure is a missed release, a lost wake-up or a target that sleeps through a
-  stop command.
-- **Multi-peripheral and dual-endpoint operation**: A developer connects an
-  automated runner or terminal dashboard (`control-rs-tui`) on a binary USB CDC
-  endpoint while simultaneously inspecting suites, tuning parameters or queuing
-  jobs from a plain serial monitor (`minicom` or `screen`) on a second text USB
-  CDC or UART endpoint; failure is port contention, an unopened endpoint
-  blocking the active loop, or unsolicited discovery frames corrupting an active
-  session.
-- **Online parameter tuning**: A developer reads and changes named parameters
-  while idle or during a run; failure is a partially applied value, an
-  interrupted run or a value outside its bounds.
-- **Fault containment**: A run panics, faults or blocks; failure is an actuator
-  left energized, a fault left unreported or a target that never recovers.
+- **Kernel profiling**: A developer runs one case on target with interrupts masked and reads cycles, time and stack peak; failure is a panic, a stack overflow or a budget overrun.
+- **Closed-loop simulation**: A developer runs a lifecycle task in lockstep against a host plant model; failure is a mispaired step, a lost sample, a link loss or numerical divergence.
+- **Free-running and periodic execution**: A developer runs a task at line rate or on a fixed period and reads step and release timing; failure is jitter beyond the sample period or an overrun.
+- **Interrupt-driven execution**: A developer releases task steps from a board timer or peripheral interrupt and lets the target sleep between releases; failure is a missed release, a lost wake-up or a target that sleeps through a stop command.
+- **Online tuning**: A developer reads and changes named settings while idle or during a run; failure is a partially applied value, an interrupted run or a value outside its bounds.
+- **Fault containment**: A run panics, faults or blocks; failure is an actuator left energized, a fault left unreported or a target that never recovers.
 
 ---
 
@@ -55,123 +26,61 @@ Primary usage scenarios:
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Single execution contract**: Atomic cases and lifecycle tasks are
-  executables of one descriptor kind, discovered, listed and started through the
-  same commands. Separate descriptor or dispatcher paths would duplicate
-  discovery and fault handling.
-- **FR-2 — Execution modes**: An executable runs in one of the modes it
-  declares: `Atomic`, `Lockstep`, `FreeRunning`, `Periodic` or `Triggered`.
-  Commands requesting a mode outside the allowed mask of the executable are
-  rejected without starting a run.
-- **FR-3 — Typed lifecycle**: A lifecycle task supplies `setup`, `step`,
-  `reset`, `teardown` and a fault-path `safe_state`; omitting any one is a
-  compile error.
-- **FR-4 — Step-indexed data exchange**: Every task input and output carries the
-  run's step index, and `Lockstep` step `k` consumes only input `k`. Sequence
-  gaps terminate the run with an error verdict.
-- **FR-5 — Supervised runs**: A run ends with exactly one verdict from `Pass`,
-  `Fail`, `Error`, `Aborted`, `TimedOut`, `Bounded` or `Overrun`, and host stop,
-  heartbeat timeout and step bound are serviced while the run waits for input or
-  a release.
-- **FR-6 — Named parameters**: Suite parameters are named primitive values
-  (`u8`, `u16`, `u32`, `i32`, `f32`, `bool`) discoverable with value, type,
-  bounds, description, index and count [17], [18]; the host reads one by name or
-  index and writes one by name while idle or between steps of a run, and every
-  write is echoed and broadcast to attached peripherals.
-- **FR-7 — Fault settlement**: On a panic or exception the target drives the
-  active task to its safe state at most once and broadcasts the fault report
-  when the transport lock is free; otherwise the host detects the unreported
-  fault from its tracked device state.
-- **FR-8 — Release timing**: `Periodic` releases step `k` at `k·T` from the run
-  start [6], [7] and `Triggered` releases one step per event of the board
-  release source; both report minimum and maximum step duration and missed
-  releases, `Periodic` also reports release jitter [8], and a missed release
-  ends the run with `Overrun` [1], [10]; `Periodic` without a board release
-  source requires a profiler clock.
-- **FR-9 — Hang containment**: A step that does not return within the run
-  deadline ends in a target reset, through a board watchdog that the user starts
-  in `#[ets_setup]` and the executive feeds through the board binding [22]–[25]
-  or, without one, a host-triggered external reset.
-- **FR-10 — Board binding**: `#[ets_setup]` may supply a board binding with a
-  feed hook, a wait hook and a release source; each has a default, so a board
-  without a watchdog, a low-power wait or a release interrupt runs unchanged.
-- **FR-11 — Multi-peripheral command polling and FIFO job queueing**: The server
-  polls one or more `HostComms` peripherals, replies to discovery and parameter
-  reads only on the originating peripheral, queues `RunExecutable` requests
-  tagged with their originating peripheral index in a static FIFO `JobQueue`,
-  and routes `TaskSample` output to the job's originating peripheral while
-  broadcasting parameter writes, run state transitions, statistics, logs and
-  fault reports across all attached peripherals.
+- **FR-1 — Single execution contract**: Atomic cases and lifecycle tasks are executables of one descriptor kind, discovered, listed and started through the same commands.
+- **FR-2 — Execution modes**: An executable runs in one of the modes it declares: `Atomic`, `Lockstep`, `FreeRunning`, `Periodic` or `Triggered`.
+- **FR-3 — Typed lifecycle**: A lifecycle task supplies setup, step, reset, teardown and a fault-path safe state; omitting any one is a compile error.
+- **FR-4 — Step-indexed data exchange**: Every task input and output carries the run's step index, and lockstep step `k` consumes only input `k`.
+- **FR-5 — Supervised runs**: A run ends with exactly one verdict from `Pass`, `Fail`, `Error`, `Aborted`, `TimedOut`, `Bounded` or `Overrun`, and host stop, heartbeat timeout and step bound are serviced while the run waits for input or a release.
+- **FR-6 — Named settings**: Suite settings are named primitive parameters (`u8`, `u16`, `u32`, `i32`, `f32`, `bool`) discoverable with value, type, bounds, description, index and count; the host reads one by name or index and writes one by name, each write applies while idle or between steps of a run, and every write is echoed with the stored value.
+- **FR-7 — Fault settlement**: On a panic or exception the target drives the active task to its safe state at most once and reports the fault when the transport is free; otherwise the host detects the unreported fault from its tracked device state.
+- **FR-8 — Release timing**: `Periodic` releases step `k` at `k·T` from the run start and `Triggered` releases one step per event of the board release source; both report minimum and maximum step duration and missed releases, `Periodic` also reports release jitter, and a missed release ends the run with `Overrun`; `Periodic` without a board release source requires a profiler clock.
+- **FR-9 — Hang containment**: A step that does not return within the run deadline ends in a target reset, through a board watchdog that the user starts in `#[ets_setup]` and the executive feeds through the board binding or, without one, a host-triggered external reset, and the host reports the run as unresponsive.
+- **FR-10 — Board binding**: `#[ets_setup]` may supply a board binding with a feed hook, a wait hook and a release source; each has a default, so a board without a watchdog, a low-power wait or a release interrupt runs unchanged.
+- **FR-11 — Firmware-independent host**: Discovery, setting display and setting edits work from target-reported information alone; the host needs no copy of the firmware image or its debug information.
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Boundary overhead**: Step-boundary supervision, peripheral polling
-  and telemetry emission stay within the per-step dispatch budget of
-  `embedded-test-server-design.md` NFR-3.
+- **NFR-1 — Boundary overhead**: Executive overhead between two steps stays within `embedded-test-server-design.md` NFR-3.
+- **NFR-2 — Torn-read freedom (withdrawn)**: Withdrawn in revision 1.1; whole-value replacement at idle or a boundary is covered by FR-6.
 
 #### 2.3 Constraints
 
-- **C-1 — Inherited target environment**: Conforms to
-  `embedded-test-server-design.md` C-1 and C-2 (`#![no_std]`, zero dynamic heap
-  allocation, descriptors in ROM).
-- **C-2 — One active job**: At most one executable runs at a time; execution
-  requests arriving while a job is active or queued wait in `JobQueue` in FIFO
-  order.
-- **C-3 — Static dispatch**: Target-side executables, runners, peripheral sets
-  and board bindings use no `dyn` trait objects [2], [4].
-- **C-4 — Global state**: No reference to a `static mut` [5]; conforms to
-  `test-suite-design.md` C-3.
-- **C-5 — Exclusions**: Hosted integration into a third-party scheduler and
-  concurrent runs are out of scope [26].
-- **C-6 — Interrupt isolation**: Interrupt handlers have no access to task state
-  or parameter cells.
-- **C-7 — Peripheral-owned framing and bandwidth**: `HostComms` implementations
-  (`host-comm-design.md`) own wire framing, non-blocking port readiness and any
-  interrupt receive buffer [12]; the executive does not frame bytes or
-  rate-limit links.
-- **C-8 — User-owned target sizing**: Fitting the ETS to a constrained target
-  and selecting a peripheral topology and server binary rate matched to the
-  intended workload are the user's responsibility.
-- **C-9 — No executive interrupts**: The executive defines no interrupt handler,
-  vector or priority [20], [26], and masks interrupts only through the
-  `critical-section` implementation the binary selects [27].
-- **C-10 — Atomic-free build**: Executive and parameter state compile on targets
-  without atomic read-modify-write instructions and on targets without atomics
-  [29]–[32].
+- **C-1 — Inherited target environment**: Conforms to `embedded-test-server-design.md` C-1 and C-2.
+- **C-2 — One active job**: At most one executable runs at a time.
+- **C-3 — Static dispatch**: Target-side executables, runners, transports and board bindings use no trait objects.
+- **C-4 — Global state**: No reference to a `static mut`; conforms to `test-suite-design.md` C-3.
+- **C-5 — Exclusions**: Hosted integration into a third-party scheduler and concurrent runs are out of scope.
+- **C-6 — Interrupt isolation**: Interrupt handlers have no access to task state or settings.
+- **C-7 — Transport-owned bandwidth**: The link (`ets-link-design.md`) owns link bandwidth, framing and any receive queue; the executive and the host session do not budget the link.
+- **C-8 — User-owned target sizing**: Fitting the ETS to a constrained target and choosing a link fast enough for the intended rate are the user's responsibility.
+- **C-9 — No executive interrupts**: The executive defines no interrupt handler, vector or priority, and masks interrupts only through the critical-section implementation the binary selects.
+- **C-10 — Atomic-free build**: Executive and setting state compile on targets without atomic read-modify-write instructions and on targets without atomics.
 
 ---
 
 ### 3. Technical Overview
 
-The executive splits data from behavior across three target components:
-flash descriptors (`test-suite-design.md`, `macros-design.md`), a
-multi-peripheral `Server` with a static FIFO `JobQueue`, and a `Runner`
-parameterized by a static `Mode`. Typed contracts compile to monomorphic code at
-zero dynamic dispatch cost [2]; the linker-section function pointer is the only
-indirection. `Server` polls every attached `HostComms` peripheral (`PeripheralSet`),
-answers immediate queries on the asking peripheral, queues execution requests
-into `JobQueue` with the originating peripheral index (releasing the
-`poll_command` borrow immediately), and pops one `Job` at a time into `Runner`.
+The executive splits data from behavior. `#[ets_suite]` erases typed user code into descriptors in flash. The `Server` resolves a command to a descriptor and a mode and constructs a `Runner`. The runner owns the only execution loop and returns to the server when the run settles. Typed contracts compile to monomorphic code at no runtime cost (Klabnik and Nichols, 2026); the linker-section function pointer is the only indirection. The board binding is the only path from board resources into the executive, and user interrupts reach it only through state the user owns.
 
 ```mermaid
 flowchart LR
-    subgraph USER["Suite Module"]
-        C["#[case] fn"]
-        T["#[task] impl LifecycleTask"]
-        P["#[param] static"]
+    subgraph USER["Suite module"]
+        C["fn case()"]
+        T["impl LifecycleTask"]
+        P["static S: setting"]
     end
     MAC{{"#[ets_suite]"}}
     C --> MAC
     T --> MAC
     P --> MAC
-    MAC --> SD["SuiteDescriptor<br/>executables, params"]
-    SD --> SRV["Server&lt;L, P, B&gt;<br/>dispatcher + JobQueue"]
-    PER["PeripheralSet L<br/>1..N HostComms peripherals<br/>(Binary Frame / ASCII Line / Custom)"] <--> CTX["Context&lt;L, P&gt;<br/>peripherals, clock, CommsLock"]
+    MAC --> SD["SuiteDescriptor<br/>executables, settings"]
+    SD --> SRV["Server&lt;L, P, B&gt;<br/>dispatcher"]
+    LNK["Link (ets-link-design.md)<br/>whole messages, optional ISR queue"] --> CTX["Context&lt;L, P&gt;<br/>codec, clock, send"]
     SRV --> CTX
-    SRV -->|"pop Job(origin, mode)"| RUN["Runner&lt;L, P, B, M: Mode&gt;"]
+    SRV -->|"RunExecutable(mode)"| RUN["Runner&lt;L, P, B, M: Mode&gt;"]
     RUN --> CTX
     RUN -->|"fn pointers"| SD
-    subgraph BSP["Board Code (User-Owned)"]
+    subgraph BSP["Board code, user-owned"]
         ISR["User interrupts<br/>timer, peripheral, comms"] --> CNT["Release counter"]
         WDT["Board watchdog<br/>started in #[ets_setup]"]
     end
@@ -179,516 +88,129 @@ flowchart LR
     BND --> WDT
     BND --> CNT
     WDT -->|"no feed"| RST(["Target reset"])
-    FLT["Fault path<br/>Phase, ACTIVE"] -->|"safe_state"| SD
-    FLT -->|"broadcast if lock free"| CTX
+    FLT["Fault path<br/>phase, active item"] -->|"safe_state"| SD
+    FLT -->|"report if transport free"| CTX
 ```
+
+Sibling designs: `ets-link-design.md` (wire schema, transport and framing), `test-suite-design.md` (registration), `macros-design.md` (expansion), `cpu-profiler-design.md` (cycles and stack), `ets-host-design.md` (host session). Code lives in `control-rs-ets` (`server`, `exec`, `run`, `settings`, `board`, `fault`) and `control-rs-macros`.
 
 ---
 
 ### 4. Architecture
 
-The target executive lives in the `control-rs-ets` crate across
-`control-rs-ets/src/server.rs`, `control-rs-ets/src/run.rs`,
-`control-rs-ets/src/board.rs` and `control-rs-ets/src/fault.rs`. It builds on
-the descriptor, parameter and cell primitives in `control-rs-ets/src/exec.rs`,
-`control-rs-ets/src/params.rs` and `control-rs-ets/src/cell.rs`
-(`test-suite-design.md`, `macros-design.md`), the timing and stack profiler in
-`control-rs-ets/src/profiler.rs` (`cpu-profiler-design.md`), and the
-`HostComms` transport contract in `control-rs-ets/src/comms.rs`
-(`host-comm-design.md`). Host-side session management lives in
-`control-rs-ets-host` (`ets-host-design.md`).
-
 #### 4.1 Executable Descriptor and Typed Contract
 
-Serves: FR-1, FR-3, C-1, C-3, C-4
+One descriptor kind carries name, description, allowed modes, input and output packet info and five function pointers: `setup`, `step`, `reset`, `teardown` and `safe_state`. A plain case maps to a one-step executable whose other four pointers are shared no-ops and whose allowed mode is `Atomic`.
 
-One descriptor kind (`ExecDescriptor`, defined in `test-suite-design.md` §4.1)
-carries `name`, `description`, `allowed_modes`, `input` and `output`
-`PacketSchema` metadata, and five function pointers: `setup`, `step`, `reset`,
-`teardown` and `safe_state`. A plain `#[case]` function maps to a one-step
-executable whose other four pointers are shared no-ops and whose allowed mode
-mask is `ModeMask::ATOMIC`.
+`LifecycleTask` is the typed contract above the descriptor. `setup` returns `Self` and `teardown` consumes `self`, encoding run state in the type so no step can precede setup or follow teardown (Rust Embedded Working Group, 2026). `safe_state` is an associated function because the fault path cannot borrow the state a faulting step holds. The trait carries associated constants, so it is not dyn-compatible (Rust Project, 2026c); the macro erases it into monomorphic wrappers, consistent with C-3.
 
-`LifecycleTask` (`test-suite-design.md` §4.2) is the typed contract above the
-descriptor. `setup` returns `Result<Self, &'static str>` and `teardown` consumes
-`self`, encoding run state in the type system so no step can precede setup or
-follow teardown [3]. `safe_state` is an associated function (`fn safe_state()`)
-because the fault handler cannot borrow state held by an interrupted step.
-Because `LifecycleTask` carries associated constants and types, it is not
-`dyn`-compatible [4]; `#[ets_suite]` erases it into monomorphic wrapper
-functions backed by a static `TaskSlot<T>` (`StateCell`-guarded interior
-mutability without `static mut` references [5]), satisfying C-3 and C-4.
+Task state lives in one `TaskSlot<T>` per task: an interior-mutable static, as the 2024 edition requires instead of `static mut` (Rust Project, 2026a). C-2 and the run phase justify its `Sync` implementation.
 
-#### 4.2 Multi-Peripheral Server, PeripheralSet and FIFO JobQueue
+#### 4.2 Runner and Modes
 
-Serves: FR-1, FR-11, C-1, C-2, C-3, C-7
-
-```rust
-/// Static collection of one or more `HostComms` peripherals attached to `Server`.
-pub trait PeripheralSet {
-    /// Transport error type surfaced by the peripheral set.
-    type Error;
-
-    /// Number of attached peripherals.
-    fn count(&self) -> usize;
-
-    /// Polls peripheral `index` for the next incoming command.
-    fn poll_at(&mut self, index: usize) -> PollResult<Self::Error>;
-
-    /// Sends `telemetry` only to peripheral `index` (request-scoped replies and `TaskSample`).
-    fn send_at(
-        &mut self,
-        index: usize,
-        telemetry: &Telemetry<'_>,
-    ) -> SendResult<Self::Error>;
-
-    /// Broadcasts `telemetry` to every attached peripheral (state changes, stats, logs, faults).
-    fn broadcast(&mut self, telemetry: &Telemetry<'_>) -> SendResult<Self::Error>;
-
-    /// Flushes pending outbound bytes on peripheral `index`.
-    fn flush_at(&mut self, index: usize) -> SendResult<Self::Error>;
-
-    /// Flushes all attached peripherals.
-    fn flush_all(&mut self) -> SendResult<Self::Error>;
-
-    /// Closes all attached peripherals cleanly.
-    fn close_all(&mut self);
-
-    /// Closes all attached peripherals on failure.
-    fn close_all_on_failure(&mut self);
-}
-
-/// Default capacity of the static FIFO job queue.
-pub const MAX_QUEUED_JOBS: usize = 8;
-
-/// A validated execution request waiting in `JobQueue` or running in `Runner`.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Job {
-    pub exec: &'static ExecDescriptor,
-    pub item: u16,
-    pub max_steps: u64,
-    pub mode: ExecMode,
-    pub origin: usize,
-    pub params: ParamTable,
-    pub period_ns: u32,
-    pub suite: u16,
-}
-
-/// Fixed-capacity FIFO ring buffer of queued jobs across attached peripherals.
-pub struct JobQueue<const N: usize = MAX_QUEUED_JOBS> {
-    buf: [Option<Job>; N],
-    head: usize,
-    len: usize,
-}
-
-impl<const N: usize> JobQueue<N> {
-    #[must_use]
-    pub const fn new() -> Self;
-    #[must_use]
-    pub const fn is_empty(&self) -> bool;
-    #[must_use]
-    pub const fn is_full(&self) -> bool;
-    #[must_use]
-    pub const fn len(&self) -> usize;
-    pub fn push(&mut self, job: Job) -> bool;
-    pub fn pop(&mut self) -> Option<Job>;
-    pub fn clear(&mut self);
-}
-
-/// Non-blocking lock serializing access to `PeripheralSet` between the main loop and fault path.
-pub struct CommsLock {
-    locked: StateCell<bool>,
-}
-
-/// Outcome of a single telemetry send attempt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SendOutcome {
-    Sent,
-    Busy,
-    Dropped,
-}
-
-/// Execution context owning the peripheral set, `CommsLock` and `CPUProfiler`.
-pub struct Context<L, P> {
-    pub comms: L,
-    pub comms_lock: CommsLock,
-    pub cpu_utils: P,
-}
-
-/// Single-writer indicator tracking the active suite or item index for fault reporting.
-pub struct TestIndexIndicator {
-    state: StateCell<isize>,
-}
-
-pub static CURRENT_SUITE: TestIndexIndicator;
-pub static CURRENT_TEST: TestIndexIndicator;
-
-/// Target Embedded Test Server dispatcher.
-pub struct Server<'a, L, P, B = NoBoard> {
-    pub board: B,
-    pub context: Context<L, P>,
-    pub jobs: JobQueue,
-    pub suites: &'a [&'static SuiteDescriptor],
-}
-
-impl<'a, L: PeripheralSet, P: CPUProfiler, B: Board> Server<'a, L, P, B> {
-    #[must_use]
-    pub const fn new(
-        context: Context<L, P>,
-        suites: &'a [&'static SuiteDescriptor],
-    ) -> Self;
-
-    #[must_use]
-    pub const fn with_board(
-        context: Context<L, P>,
-        suites: &'a [&'static SuiteDescriptor],
-        board: B,
-    ) -> Self;
-
-    /// Polls all attached peripherals once, services immediate commands, and executes at most
-    /// one queued job from `JobQueue`.
-    pub fn poll(&mut self) -> Result<(), L::Error>;
-}
-```
-
-`PeripheralSet` is implemented for any single `C: HostComms` (`count() == 1`),
-for heterogeneous pairs `(A, B)` where `A: HostComms<Error = E>` and
-`B: HostComms<Error = E>` (`count() == 2`), and for homogeneous arrays
-`[C; N]` (`count() == N`). Every implementation compiles via static dispatch
-without `dyn` trait objects (C-3). Single-peripheral targets pass their
-`HostComms` driver directly to `Context::new(comms, cpu_utils)`, while
-dual-endpoint targets such as Teensy 4 pass `(cdc_binary, cdc_text)`.
-
-On each `Server::poll` pass:
-
-1. `Server` iterates `origin in 0..self.context.comms.count()` and calls
-   `poll_at(origin)` under `CommsLock`.
-2. **Request-scoped queries (`Command::ListSuites`, `Command::Param` read)** are
-   answered exclusively on `origin` via `send_at(origin, ...)`. Typing `list` in
-   a serial monitor on peripheral 1 does not inject unsolicited discovery frames
-   into an idle `Session` on peripheral 0.
-3. **Parameter writes (`Command::Param` write)** validate and update the target
-   `ParamEntry` in the suite's `ParamTable` and broadcast
-   `Telemetry::ParamValue` to all peripherals via `broadcast(...)` so companion
-   dashboards and monitors stay synchronized.
-4. **Execution requests (`Command::RunExecutable`)** validate the suite index,
-   item index, allowed mode mask and timing prerequisites, then construct a
-   `Copy` `Job` tagged with `origin` and push it into `self.jobs` (`JobQueue`).
-   Because `Job` holds only `'static` descriptor references and scalar fields,
-   the borrow of `self.context.comms` from `poll_at(origin)` ends immediately
-   before any job runs or emits telemetry. If `JobQueue` is full, `Server` emits
-   `Telemetry::Log` on `origin` and leaves existing queued jobs undisturbed.
-5. When no run is active, `Server` pops the oldest `Job` from `self.jobs` and
-   constructs `Runner<L, P, B, M>` for `job.mode`.
-
-#### 4.3 Runner, Execution Modes and Release Pacing
-
-Serves: FR-2, FR-4, FR-5, FR-8, NFR-1, C-2, C-3, C-5
-
-```rust
-/// How an execution mode releases task steps.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Pacing {
-    None,
-    Periodic,
-    Triggered,
-}
-
-/// Static compile-time contract for an execution mode.
-pub trait Mode {
-    const MODE: ExecMode;
-    const ONE_STEP: bool = false;
-    const NEEDS_INPUT: bool = false;
-    const PACING: Pacing = Pacing::None;
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Atomic;
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Lockstep;
-#[derive(Debug, Clone, Copy, Default)]
-pub struct FreeRunning;
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Periodic;
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Triggered;
-
-/// Executes a single `Job` in mode `M`.
-pub struct Runner<'a, L, P, B, M> {
-    board: &'a mut B,
-    context: &'a mut Context<L, P>,
-    jobs: &'a mut JobQueue,
-    job: Job,
-    mode: core::marker::PhantomData<M>,
-    suites: &'a [&'static SuiteDescriptor],
-}
-
-impl<'a, L: PeripheralSet, P: CPUProfiler, B: Board, M: Mode>
-    Runner<'a, L, P, B, M>
-{
-    pub fn run(
-        context: &'a mut Context<L, P>,
-        board: &'a mut B,
-        suites: &'a [&'static SuiteDescriptor],
-        jobs: &'a mut JobQueue,
-        job: Job,
-    ) -> Result<(), L::Error>;
-}
-```
-
-`Runner<L, P, B, M>` executes one `Job` to completion and returns control to
-`Server`. The server takes a single runtime `match` from `job.mode` to the
-monomorphic `Runner<..., M>` entry point once per job.
+`Runner<L, P, B, M: Mode>` executes one run. `Mode` supplies the per-mode decisions: step bound, input readiness, whether to poll the host between steps, entry and exit around a step (interrupt masking and stack painting for `Atomic`) and release timing for `Periodic` and `Triggered`. The server takes the one runtime branch, from the commanded mode to the mode type, once per run.
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Armed: ACTIVE set, Phase::Armed, broadcast ItemState::Running
-    Armed --> Ready: setup() Ok, release source armed
-    Armed --> Settling: setup() Err -> Verdict::Error
+    [*] --> Armed: active item set, phase Armed
+    Armed --> Ready: setup Ok, release source armed
+    Armed --> Settling: setup Err
     Ready --> Stepping: input ready and release due
-    Ready --> Waiting: awaiting Lockstep input or release
-    Waiting --> Boundary: board.wait() returns
-    Stepping --> Boundary: emit TaskSample k to job.origin
+    Ready --> Waiting: nothing runnable
+    Waiting --> Boundary: wait hook returns
+    Stepping --> Boundary: emit output k
     Stepping --> Settling: Pass / Fail / Error
-    Boundary --> Ready: no verdict, board.feed()
+    Boundary --> Ready: no verdict, feed
     Boundary --> Settling: Aborted / TimedOut / Bounded / Overrun
-    Settling --> [*]: disarm, teardown(), Phase::Done, broadcast RunStats + ItemState::Done
+    Settling --> [*]: release source disarmed, teardown, phase Done, report
 ```
 
-At each step boundary, `Runner` drains commands across all attached peripherals:
+The boundary drains received commands: input `k` is stored, a gap ends the run with `Error`, a heartbeat refreshes the deadline, a setting write for the running suite is applied then followed by `reset`, and stop yields `Aborted`. The first verdict wins.
 
-- On `job.origin`: `Command::TaskInput` stores input `k` (a sequence gap yields
-  `Verdict::Error` with `"input sequence gap"`), `Command::Heartbeat` refreshes
-  the link deadline, `Command::Param` reads or writes a parameter,
-  `Command::StopNow` ends the run with `Verdict::Aborted`, and
-  `Command::TryReset` invokes `CPUProfiler::reset()`.
-- On non-origin peripherals (`i != job.origin`): `Command::ListSuites` and
-  `Command::Param` reads reply on `i`, `Command::Param` writes apply at the step
-  boundary (calling `reset` once on the active task if the write targets the
-  running suite) and broadcast `Telemetry::ParamValue`, `Command::StopNow`
-  aborts the active run, and `Command::RunExecutable` enqueues the requested job
-  into `self.jobs` (`JobQueue`) for execution after the current run settles.
-- Outbound `Telemetry::TaskSample` frames are sent only to `job.origin` via
-  `send_at(job.origin, ...)`: in `Lockstep` mode the runner holds until the frame
-  is accepted, whereas in `FreeRunning`, `Periodic` and `Triggered` modes a busy
-  transport increments the dropped-sample counter and continues without blocking
-  the control loop (`host-comm-design.md` FR-7). Run lifecycle messages
-  (`Telemetry::ItemState`, `Telemetry::RunStats`, `Telemetry::Log`) broadcast to
-  all attached peripherals.
+`Periodic` and `Triggered` take releases from the release source (§4.6). `Periodic` releases step `k` at the absolute time `k·T` from the run start, as `xTaskDelayUntil` unblocks at an absolute time (FreeRTOS, 2024); a relative delay of `T` after each step would drift by the step duration (Embassy, 2026c). The gap between a release time and the actual step start is release jitter (Audsley et al., 1993). `Triggered` releases one step per event that the board release source reports and has no period, so it reports step duration and missed releases but no jitter.
 
-`Periodic` and `Triggered` take releases from `Board` (§4.6). `Periodic`
-releases step `k` at the absolute time $k \cdot T$ from the run start, matching
-`xTaskDelayUntil` [6]; a relative delay of $T$ after each step would drift by
-the step duration [7]. The difference between the scheduled release time and the
-actual step start is release jitter [8]. `Triggered` releases one step per
-event reported by `Board::releases` and has no nominal period, reporting step
-duration and missed releases without jitter. Without a board release source,
-`Periodic` derives release times from `CPUProfiler::get_nanos`
-(`cpu-profiler-design.md` FR-2); if `CPUProfiler::has_clock` is `false`, the
-server rejects the `Periodic` request before arming. At each boundary `Runner`
-reads the elapsed release count; a count above one indicates that a release
-passed while the step was executing, matching Linux `timerfd` expiration counts
-[9] and FreeRTOS late-release detection [6], and terminates the run with
-`Verdict::Overrun` [1], [10], [41].
+Without a board release source, `Periodic` takes release times from `CPUProfiler::get_nanos` (`cpu-profiler-design.md` FR-2), counted in 64-bit nanoseconds from the run start. A profiler that reports no clock, such as a mock that returns zero, cannot pace `Periodic` and the server rejects the run (§4.8). The profiler keeps `get_nanos` monotonic across hardware counter wrap, as it does for cycles (`cpu-profiler-design.md` FR-1) (assumption: the profiler implementations extend wrap handling to `get_nanos`; to verify per architecture).
 
-#### 4.4 Named Parameter Dictionary
+At each boundary the runner takes the number of releases since the previous boundary. A count above one means a release passed while the step ran: the same expiration count that a Linux `timerfd` read returns (Linux man-pages project, 2026) and that `xTaskDelayUntil` signals by not delaying (FreeRTOS, 2024). The run then ends with `Overrun` and reports the missed count. Terminating on the first overrun is one cyclic-executive policy (Hood, 1986) and the default of Simulink Real-Time, which halts on a CPU overload (MathWorks, 2026b). PLC periodic tasks instead flag the overrun and halt only at the watchdog limit (Schneider Electric, 2026); an overrun allowance remains an option (§8).
 
-Serves: FR-6, C-3, C-4, C-6
+#### 4.3 Receive Path
 
-Each `#[param]` static in an `#[ets_suite]` module expands to a `ParamEntry`
-collected in a flat `ParamTable` (`&'static [ParamEntry]`, defined in
-`test-suite-design.md` §4.3), free of `dyn` trait objects [4]. Every parameter
-stores its value in a `StateCell` (volatile load and store, no atomic
-read-modify-write) mutated only by `Server` while idle or by `Runner` at a step
-boundary when no user step is executing (C-2). Because `Cell` is not `Sync`
-[14], [16] and Rust requires static items to implement `Sync` [15], `StateCell`
-implements `Sync` under the single-writer executive invariant and C-6 interrupt
-isolation, avoiding seqlock reader retries [33] and `static mut` references [5].
+The executive receives whole messages through the `Link` (`ets-link-design.md`) at idle and at each boundary and owns no framing, no receive queue and no receive interrupt. A link that receives in an interrupt buffers messages in its own fixed-capacity queue, for example a single-producer single-consumer queue such as `heapless::spsc` (heapless, 2026), and the target may sleep between interrupts while the executive waits (Embassy, 2026a) through the wait hook (§4.6). That integration is board-specific and stays with the link (C-7). The queue never reaches task state or settings (C-6). A step that blocks stops all polling, so a link with a small hardware buffer loses data during a long step; this is a limitation of cooperative execution (§4.6).
 
-Parameters form a flat dictionary per suite modeled on the MAVLink parameter
-protocol [17], [18]. Discovery and `Command::Param` reads emit
-`Telemetry::ParamValue` carrying `suite`, `index`, `count`, `name`, `value`,
-`bounds` and `description`. `Command::Param` writes look up the parameter by
-name in `ParamTable`, validate the primitive variant (`u8`, `u16`, `u32`, `i32`,
-`f32`, `bool`) and optional bounds, update the `StateCell` when valid, and
-always echo the stored `Telemetry::ParamValue` so the caller can confirm the
-effective state [17]. If a valid write targets the currently running suite at a
-step boundary, `Runner` calls the task's `reset` hook once before the next step.
+#### 4.4 Settings
 
-#### 4.5 Fault Path and Safe-State Settlement
+Each `static` in a suite module is a setting. The macro emits a data descriptor per setting (name, description, type, bounds and `get`/`set` function pointers), replacing the trait-object settings slice, consistent with C-3 (Rust Project, 2026c).
 
-Serves: FR-7, C-4, C-10
+All settings share one storage rule: an interior-mutable cell written only by the server while idle or at a step boundary, when no executable code runs (C-2). Executable code reads a copy; interrupt handlers have no access (C-6). The server is the master loop and the only writer, so the cells need no atomics, locks or sequence counters. `SettingCell<T>` is a plain cell with the layout of `T`, as `Cell<T>` has the in-memory representation of its inner type (Rust Project, 2026h). A non-`mut` static must be `Sync` (Rust Project, 2026i) and `Cell` is not (Rust Project, 2026g), so `SettingCell` asserts `Sync` on the single-writer rule above. Each setting holds one primitive: `u8`, `u16`, `u32`, `i32`, `f32` or `bool`.
 
-```rust
-/// Run lifecycle phase inspected by the fault handler.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Phase {
-    Armed,
-    Done,
-    Idle,
-    TearingDown,
-}
+Settings form a dictionary in the style of the MAVLink parameter protocol, which exchanges configuration as named parameters (MAVLink, 2026a). Discovery emits one value message per setting carrying its name, type, value, bounds, index and the suite's setting count, which lets the host detect a missed entry, as MAVLink's value message does with its count and index (MAVLink, 2026b). The host reads one setting by name or by index (MAVLink, 2026b) and writes one by name with a typed value. The target looks the name up in the suite's descriptor table, checks the type and bounds, stores the value at idle or at a step boundary and echoes the stored value whether or not the write succeeded, following MAVLink's acknowledgement rule (MAVLink, 2026a).
 
-/// Outcome of calling `fault::settle()` from a panic or exception handler.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Settled {
-    FailedTeardown,
-    Nothing,
-    SafeState,
-}
+Values travel as typed primitives, so the target formats and parses no text and the host renders and edits each value from its type alone (FR-11). A write changes one setting; multiple writes that the boundary drains together apply in the same boundary (§4.2). The messages are specified in `ets-link-design.md` §4.8.
 
-#[must_use]
-pub fn phase() -> Phase;
-pub fn arm(exec: &'static ExecDescriptor);
-pub fn set_phase(phase: Phase);
-pub fn clear();
-pub fn settle() -> Settled;
-```
+#### 4.5 Fault Path
 
-Rust `#[panic_handler]` functions diverge (`-> !`) [19], so stack unwinding and
-`Drop` destructors never run on a target fault. The fault handler masks
-interrupts via `critical-section` [27] and calls `fault::settle()`:
+`#[panic_handler]` functions never return (Rust Project, 2026d), so no destructor runs on a fault and teardown cannot depend on `Drop`. The handler masks interrupts through the critical section and then reads and writes the phase with plain loads and stores (§4.9): from `Armed` it calls `safe_state` of the active item, from `TearingDown` it records a failed teardown without re-entry, from `Idle` or `Done` it does nothing.
 
-- From `Phase::Armed`: transitions to `Phase::TearingDown`, invokes the
-  `(exec.safe_state)()` function pointer of the active descriptor once,
-  transitions to `Phase::Done`, and returns `Settled::SafeState`.
-- From `Phase::TearingDown`: transitions directly to `Phase::Done` without
-  re-entering `safe_state` or `teardown` and returns `Settled::FailedTeardown`.
-- From `Phase::Idle` or `Phase::Done`: performs no action and returns
-  `Settled::Nothing`.
+If the transport lock is free, the fault is reported immediately with its location, message, fault status and active executable. Cortex-M exception entry stacks the faulting registers (cortex-m-rt, 2026), which the report includes. Otherwise nothing is sent. The host session tracks device state (idle, running a given item, resetting), so a target that goes silent or reboots during an active run is classified as an unreported fault or a comms failure by elimination, since every other failure reports something. Board-specific capture (retained RAM, fault registers beyond the common set, probes) is left to the implementors of ETS binaries.
 
-If `CommsLock::try_lock()` succeeds, the fault handler broadcasts
-`Telemetry::FaultReport` (including panic file, line, message, active suite/item
-indices from `CURRENT_SUITE`/`CURRENT_TEST`, and stacked Cortex-M exception
-registers [20] when applicable) across `PeripheralSet::broadcast`. If the lock
-is already held by an interrupted transmission, the handler skips transmission
-rather than deadlocking, and the host `Session` detects the unreported fault
-from its tracked run state (`ets-host-design.md`).
+#### 4.6 Board Integration and Blocking Steps
 
-#### 4.6 Board Binding, Hang Containment and Target Server Topologies
+The runner and the executive are cooperative: control returns to the server only at a step boundary, so a step or case that does not return blocks the executive, including stop, heartbeat and `TryReset`. `Atomic` also masks interrupts for the whole case. This is a contract on user code, stated in the `LifecycleTask` and case documentation: a step must return, and a case should be bounded.
 
-Serves: FR-8, FR-9, FR-10, FR-11, C-6, C-7, C-8, C-9
+Board resources are configured in user code. No portable watchdog or timer trait exists to bind to: embedded-hal 1.0 removed its watchdog and timer traits with no replacement (embedded-hal, 2024), and board HALs differ in shape. rp2040-hal starts and feeds its watchdog and can pause it under a debugger (rp2040-hal, 2026); embassy-stm32 creates, unleashes and pets an independent watchdog with no disable, and its window watchdog cannot be stopped without a reset (Embassy, 2026b). `#[ets_setup]` therefore returns the server with an optional board binding `B` of three hooks, each with a default:
 
-```rust
-/// Optional hooks connecting the executive to board watchdog, low-power sleep and release timers.
-pub trait Board {
-    /// Reloads the hardware watchdog started by user setup code.
-    fn feed(&mut self) {}
+| Hook | Called by the executive | Default | Typical board use |
+|:-----|:------------------------|:--------|:------------------|
+| `feed` | At idle, at each boundary and around each wait; never inside a step or an `Atomic` case | No-op | Reload the watchdog that setup started |
+| `wait` | When nothing is runnable: idle with no command, waiting for lockstep input or waiting for a release | Return immediately | Sleep until an interrupt (comms receive, release timer) |
+| `releases` | Armed with the period (`Periodic`) or without one (`Triggered`) at run start, read and cleared at each boundary, disarmed at settle | `Periodic` from `CPUProfiler::get_nanos` when the profiler has a clock; `Triggered` unsupported | Count of timer or peripheral events since the last read |
 
-    /// Waits until an interrupt or event may make work runnable.
-    fn wait(&mut self) {}
+**Watchdog-backed server.** The feed hook reloads a watchdog that setup already started; the executive never starts, configures or disables it, which fits both HAL shapes and watchdogs that cannot be stopped. The embedded-hal 0.2 `Watchdog` trait (embedded-hal, 2026) and both HAL shapes reduce to a closure over the board's feed call. The period is the user's choice: not shorter than the longest legitimate step or `Atomic` case, during which no feed occurs and not so long that a fault goes undetected (Tock Project, 2026). A step that blocks stops the feed and the hardware resets the target, which also covers a hang in `safe_state`.
 
-    /// Returns `true` when the board provides a hardware release counter.
-    fn has_release_source(&self) -> bool {
-        false
-    }
+**Interrupt-driven execution.** The executive owns no interrupt (C-9). The user binds vectors through the device runtime: `#[interrupt]` overrides a device handler (cortex-m-rt, 2026), and an RTIC task binds to a vector, where some devices fix priorities outside user code (RTIC, 2026). A release interrupt only increments a counter that the user owns; the `releases` hook reads and clears it in executive context, so no interrupt touches task state or settings (C-6). Mutual exclusion on the counter is the user's, typically through the `critical-section` implementation the binary selects (critical-section, 2026). A `wait` hook that sleeps must leave a wake source enabled: the comms receive interrupt while idle or waiting for input, and the release interrupt while waiting for a release.
 
-    /// Arms the hardware release source (`Some(period_ns)` for `Periodic`, `None` for `Triggered`).
-    fn arm(&mut self, _period_ns: Option<u32>) {}
+`Atomic` masks interrupts through `critical-section`, whose bare-metal single-core implementation disables interrupts on the current core (critical-section, 2026), so user interrupts are deferred for the whole case and neither `feed` nor `wait` runs.
 
-    /// Returns the number of release events since the last call and clears the counter.
-    fn releases(&mut self) -> u32 {
-        0
-    }
+Without a watchdog the executive cannot recover from a blocked step by itself. The host then sends `StopNow`, waits for `stop_timeout` and resets the target externally through its `HostLink` (power, reset line or debug probe); the cooperative `TryReset` cannot be serviced by a blocked target. In both cases the host records the run as `Unresponsive`. A PLC scan that exceeds its watchdog limit is likewise treated as a fault (Schneider Electric, 2026).
 
-    /// Disarms the hardware release source at run settlement.
-    fn disarm(&mut self) {}
-}
+#### 4.7 Wire Effects
 
-/// Default board binding with no watchdog, no sleep and no hardware release source.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct NoBoard;
-
-impl Board for NoBoard {}
-```
-
-`embedded-hal` 1.0 removed portable watchdog and timer traits [21], and silicon
-watchdog peripherals differ in start, feed and disable semantics [22]–[25].
-The user therefore initializes any hardware watchdog in `#[ets_setup]` and
-supplies `Board::feed`, which the executive calls at idle, at each step boundary
-and around `Board::wait`, but never inside a step or `Atomic` case. A step that
-stops responding stops feeding the watchdog and triggers a hardware reset (FR-9). User
-release interrupts increment a user-owned counter protected by
-`critical-section` [27]; `Board::releases` reads and clears that counter in
-executive context so no interrupt handler touches task slots or parameters (C-6,
-C-9) [20], [26].
-
-To support diverse rate and interface requirements on hardware (C-8, FR-11),
-`examples/teensy4` provides three reference server binaries built on the same
-`Server` and suites:
-
-1. **`teensy4_fast_cdc`**: Single high-speed binary USB CDC peripheral
-   (`FrameReader`/`FrameEncoder`) tuned for low-overhead `Lockstep`,
-   `FreeRunning` and `Periodic` HIL tasks.
-2. **`teensy4_text`**: Single USB CDC peripheral using `Command::from_str` and
-   `Telemetry::fmt` (`Display`) line I/O for standalone human interaction from
-   any serial terminal (`minicom`, `screen`, `tio`).
-3. **`teensy4_dual`**: Composite USB device (`UsbDeviceBuilder::composite_with_iads()`,
-   `EndpointMemory<2048>`) exposing two simultaneous USB CDC ports passed to
-   `Context::new((cdc_binary, cdc_text), profiler)`. Each CDC port gates
-   outbound writes on `dtr()` (Data Terminal Ready) plus a non-blocking write
-   budget so an unopened or paused terminal on one port drops frames for that
-   port without stalling the active port or the control loop.
-
-#### 4.7 Atomic-Free Targets
-
-Serves: C-10
-
-Executive fault-path state (`ACTIVE`, `PHASE`, `CURRENT_SUITE`, `CURRENT_TEST`,
-`CommsLock`) is mutated only in executive context or inside the fault handler
-after masking interrupts via `critical-section` [27], so it requires only load
-and store operations and never atomic compare-and-swap (CAS). Targets such as
-`thumbv6m-none-eabi` (ARMv6-M) provide atomic load/store without CAS [29], [30],
-while targets such as AVR lack atomic instructions entirely [32]. `StateCell<T>`
-uses plain volatile loads and stores inside a `UnsafeCell<T>` [14]–[16] paired
-with `core::sync::atomic::compiler_fence(Ordering::SeqCst)` around phase
-transitions, avoiding unsound single-core polyfills [31].
+`StartTask` merges into `RunExecutable { suite, item, mode, max_steps, period_ns }`; `period_ns` is ignored for `Triggered`. Case and task state messages merge into one item-state message, and metric and task statistics merge into one run-statistics message that carries the missed-release count. `TargetInfo` reports whether the board binding provides a release source, so the host offers `Triggered` only when it does. Payload encoding is declared once per executable at discovery. A raw encoding reinterprets bytes in place and fails on misaligned or wrong-length buffers (bytemuck, 2026), so raw packets decode by copy. Framing belongs to the link (`ets-link-design.md`). The link, which knows the real rate of its USB, UART, I2C, SPI or CAN transport, reports busy; the server then holds commands and lockstep samples and drops free-running samples, visible as gaps in `seq`. Setting messages form a dictionary: `GetSetting` reads by name or index, `SetSetting` writes by name with a typed `Param`, and `SettingInfo` carries index, count and bounds (§4.4). The item-state message ends a run with `Done` carrying one verdict of FR-5. Higher rates come from a smaller ETS on a lower-overhead link, which is the user's sizing decision (C-8). That holding commands and lockstep samples and dropping free-running samples keeps a run within its step budget is an assumption to confirm on hardware.
 
 #### 4.8 Error Handling
 
-Serves: FR-2, FR-5, FR-6, FR-8, FR-11
+Run errors are verdicts, not Rust errors: `Error` carries a static message from setup, reset, teardown, decode or sequence checks. Server-side rejections (unknown item, disallowed mode, `Triggered` without a board release source, `Periodic` with neither a release source nor a profiler clock, setting write with an unknown name, a mismatched type or an out-of-bounds value) are error logs and leave the executive idle. Setting writes return `SettingError::{Unknown, TypeMismatch, OutOfBounds}` and are always echoed (§4.4). A hang produces no target verdict; the host records `Unresponsive` (§4.6).
 
-Run-time task failures are reported as `Verdict::Error` with a `'static str`
-message (from `LifecycleTask::setup`, `reset`, `teardown`, packet decoding or
-input sequence checks) inside `Telemetry::ItemState`. Dispatcher-level command
-rejections (unknown suite or item index, mode outside `allowed_modes`,
-`Triggered` when `!board.has_release_source()`, `Periodic` when neither
-`board.has_release_source()` nor `cpu_utils.has_clock()` holds, or a full
-`JobQueue`) emit `Telemetry::Log` on the originating peripheral and leave the
-server state unchanged. Parameter writes (`ParamTable::set`) return
-`Result<ParamValue, ParamError>` (`ParamError::{Unknown, TypeMismatch, OutOfBounds}`)
-and always echo the stored value. Transport failures from `PeripheralSet`
-propagate as `Result<(), L::Error>` from `Server::poll` and `Runner::run`.
+#### 4.9 Atomic-Free Targets
 
-#### 4.9 Dependencies
+Executive state is the run phase, the active item and the current item index. Every write happens in executive context, and the fault path reads and writes it only after masking interrupts (§4.5), so the state needs plain loads and stores and no compare-and-swap. ARMv6-M and ARMv8-M baseline provide atomic load and store but no compare-and-swap (Rust Project, 2026e). Where `target_has_atomic` reports the width (Rust Project, 2026e), the state uses atomic load and store. Elsewhere it compiles to a plain cell of the raw primitive with the same layout (Rust Project, 2026h), as an atomic integer already has the size and bit validity of its integer (Rust Project, 2026f). On these targets the executive places a compiler fence (`core::sync::atomic::compiler_fence`) after each phase write and around the step call, so the compiler cannot move a phase write across the call into or out of the fault path. Settings use plain cells on every target (§4.4).
 
-Serves: C-1, C-9, C-10
-
-`control-rs-ets` depends only on `no_std`-compatible crates already in the
-workspace (`serde`, `postcard`, `crc`, `heapless` [12], and architecture-gated
-`cortex-m` / `riscv`), adding zero new third-party dependencies.
+A compare-and-swap polyfill is not used: the single-core mode of portable-atomic is unsound on multi-core parts (portable-atomic, 2026), and the executive needs no read-modify-write. The executive builds for these targets; whether a given part fits remains the user's sizing decision (C-8). AVR, one such target, is Tier 3 and needs `avr-gcc` (Rust Project, 2026j).
 
 ---
 
 ### 5. Alternatives
 
-| Alternative | Rejected Because |
-|:------------|:-----------------|
-| Separate case and task runners | Duplicates arming, reporting and fault settlement; violates FR-1 [1]. |
-| Single-peripheral `Server` or external `DualComms` wrapper | Cannot queue jobs across peripherals or route `TaskSample` to the originating endpoint while broadcasting state updates; violates FR-11. |
-| `&mut [&mut dyn HostComms]` peripheral slice | Introduces fat-pointer vtable indirection in target code; violates C-3 [4]. |
-| Byte-slice `Link` / `ByteStream` / `StreamLink` layer | Duplicates framing already provided by `HostComms` (`FrameReader`/`FrameEncoder` and `FromStr`/`Display`); violates C-7. |
-| Run loop inside macro-generated trampoline | Forces flash descriptors to name the transport and board types; violates C-3 [4]. |
-| `Drop` guard for task teardown | Panic handlers never return, so destructors do not run on a fault; violates FR-7 [19]. |
-| Raw pointer writes into a borrowed settings struct | Aliases a live reference; violates C-4 [5]. |
-| Field-addressed parameter groups with seqlock storage | Seqlock readers retry around concurrent writers [13], [33], whereas the executive is the sole writer at idle or step boundaries. |
-| Target-side JSON or dynamic schema reflection for parameters | Requires `serde-json-core` [34] or `postcard-schema` / `postcard-dyn` [35] flash and stack overhead when six primitive variants suffice. |
-| Preemptive scheduler with concurrent jobs | Outside C-2 and C-5; production firmware owns preemption [26]. |
-| Executive-owned receive interrupt and queue | Couples board-specific ISR vectors into `Server` [12], [13]; violates C-7 and C-9. |
-| Executive-owned watchdog trait with `start(period)` | Board watchdogs differ in start, feed and disable semantics and some cannot be stopped [21]–[25]; a `Board::feed` hook covers all of them. |
-| Relative delay of $T$ between periodic steps | Drifts by the step execution duration; violates FR-8 [7]. |
-| Compare-and-swap polyfill for executive state | Single-core polyfills are unsound on multi-core parts [31]; executive state needs only load, store and compiler fences. |
-| Zero-copy raw payload cast | Fails on misaligned frame buffers [28]. |
+| Alternative | Rejected Because | Reference |
+|:------------|:-----------------|:----------|
+| Separate case and task runners | Duplicates arming, reporting and fault settlement; violates FR-1 | (Hood, 1986) |
+| Run loop inside the macro-generated trampoline | Forces the descriptor to name the transport; violates C-3 | (Rust Project, 2026c) |
+| `Drop` guard for teardown | Panic handlers never return, so destructors do not run on a fault; violates FR-7 | (Rust Project, 2026d) |
+| Raw pointer writes into a borrowed settings struct | Aliasing a live reference; violates C-4 | (Rust Project, 2026a) |
+| Field-addressed parameter groups with seqlock storage | Readers retry around concurrent writers; the server is the only writer, so plain cells suffice | (Linux Kernel Documentation, 2026) |
+| Target-side text settings | The target formats and parses text, including floats | (serde-json-core, 2026) |
+| Struct-valued settings with a reported schema | Needs a schema format, its flash cost and host-side decoding of the schema | (postcard-schema, 2026) |
+| Preemptive scheduler with concurrent jobs | Outside C-2 and C-5; production firmware owns preemption | (RTIC, 2026) |
+| Executive-owned receive interrupt and queue | Adds board-specific interrupt integration to the server; the link can already buffer in its own interrupt | (heapless, 2026) |
+| Cooperative `TryReset` as the only hang recovery | A blocked step cannot service it; violates FR-9 | (embedded-hal, 2026) |
+| Executive-owned watchdog binding with `start(period)` | Board watchdogs differ in start, feed and disable shape and some cannot be stopped; the feed hook alone covers all of them | (rp2040-hal, 2026; Embassy, 2026b) |
+| embedded-hal traits for the board hooks | 1.0 has no watchdog or timer traits and 0.2 ties the executive to a legacy API; a closure binds any HAL version | (embedded-hal, 2024) |
+| Executive-defined release interrupt or handler API | Vector binding and priorities belong to the device runtime or the user; violates C-9 | (cortex-m-rt, 2026; RTIC, 2026) |
+| Relative delay of `T` between steps | Drifts by the step duration; violates FR-8 | (Embassy, 2026c) |
+| Compare-and-swap polyfill for executive state | Single-core polyfill is unsound on multi-core parts; the state needs only load and store | (portable-atomic, 2026) |
+| Retained-RAM fault record in the executive | Needs board-specific linker and reset support; host state tracking detects the same silent failures | (cortex-m-rt, 2026) |
+| Executive-side link rate limiting | The executive does not know the link rate; violates C-7 | (Embassy, 2026a) |
+| Zero-copy raw payload cast | Fails on misaligned frame buffers | (bytemuck, 2026) |
 
 ---
 
@@ -698,100 +220,84 @@ workspace (`serde`, `postcard`, `crc`, `heapless` [12], and architecture-gated
 
 | Condition | Requirement | Method | Target | Criterion |
 |:----------|:------------|:-------|:-------|:----------|
-| VC-1.1 | FR-1 | `libtest` | `control_rs_ets::server::tests::atomic_run_reports_state_and_stats` | A case and a task in one suite start through `RunExecutable` and report through the same state message; FR-1 holds iff all conditions hold. |
-| VC-1.2 | FR-1 | `libtest` | `control_rs_macros::tests::generate_suite_descriptors_emits_wrappers_and_registry` | A plain `#[case]` function expands to an `ExecDescriptor` whose allowed mode mask is `ModeMask::ATOMIC`. |
-| VC-2.1 | FR-2 | `libtest` | `control_rs_ets::server::tests::requests_the_server_cannot_serve_are_answered_with_a_log` | A mode outside the allowed mask of the descriptor is rejected with an error log and the executive stays idle; FR-2 holds iff all conditions hold. |
-| VC-2.2 | FR-2 | `libtest` | `control_rs_ets::run::tests::atomic_runs_one_step_masked` | `Atomic` runs exactly one step between interrupt mask and unmask. |
-| VC-2.3 | FR-2 | `libtest` | `control_rs_ets::run::tests::triggered_runs_one_step_per_release` | With a mock release source, `Triggered` runs exactly one step per reported release. |
-| VC-3.1 | FR-3 | `libtest` | `control_rs_macros::tests::missing_lifecycle_fn_fails_to_compile` | Omitting any of the five `LifecycleTask` functions fails compilation; FR-3 holds iff all conditions hold. |
-| VC-4.1 | FR-4 | `libtest` | `control_rs_ets::run::tests::lockstep_waits_for_input_k` | `Lockstep` step `k` runs only after input `k`, every output carries `seq = k`, and an input sequence gap ends the run with `Verdict::Error`; FR-4 holds iff all conditions hold. |
-| VC-5.1 | FR-5 | `libtest` | `control_rs_ets::run::tests::free_running_is_bounded_and_the_first_verdict_wins` | Each verdict source ends the run with that verdict and a subsequent source does not overwrite it; FR-5 holds iff all conditions hold. |
-| VC-5.2 | FR-5 | `libtest` | `control_rs_ets::run::tests::stop_and_timeout_while_waiting` | `StopNow` and heartbeat timeout terminate a run while waiting for lockstep input or a release. |
-| VC-6.1 | FR-6 | `libtest` | `control_rs_ets::server::tests::param_table_get_set_echo` | In-bounds parameter writes store, out-of-bounds writes fail, and both echo and broadcast the stored `ParamValue`; FR-6 holds iff all conditions hold. |
-| VC-6.2 | FR-6 | `libtest` | `control_rs_ets::params::tests::a_table_is_addressed_by_position` | Reading a parameter by name and by index returns the same entry, and an unknown name or type mismatch leaves all entries unchanged. |
-| VC-6.3 | FR-6 | `libtest` | `control_rs_ets::run::tests::a_parameter_write_during_a_run_is_followed_by_one_reset` | A valid parameter write for the running suite at a step boundary invokes `reset` once before the next step. |
-| VC-7.1 | FR-7 | `libtest` | `control_rs_ets::fault::tests::phase_transition_calls_safe_state_once` | `fault::settle()` invokes `safe_state` once from `Phase::Armed` and never from `Phase::TearingDown`, `Phase::Idle` or `Phase::Done`; FR-7 holds iff all conditions hold. |
-| VC-8.1 | FR-8 | `libtest` | `control_rs_ets::run::tests::release_count_above_one_is_overrun` | A step boundary that observes more than one elapsed release ends the run with `Verdict::Overrun` and reports the missed count in both `Periodic` and `Triggered`; FR-8 holds iff all conditions hold. |
-| VC-8.2 | FR-8 | `libtest` | `control_rs_ets::run::tests::periodic_release_is_absolute` | `Periodic` schedules release times at $k \cdot T$ from run start regardless of step duration below $T$. |
-| VC-8.3 | FR-8 | `libtest` | `control_rs_ets::server::tests::periodic_without_clock_or_source_is_rejected` | `Periodic` is rejected when `CPUProfiler::has_clock` is `false` and `Board::has_release_source` is `false`. |
-| VC-8.4 | FR-8 | `libtest` | `control_rs_ets::run::tests::periodic_release_jitter_bounded` | Reported release jitter on Teensy 4.1 equals measured step start minus $k \cdot T$ within one clock tick. |
-| VC-9.1 | FR-9 | `libtest` | `control_rs_ets::run::tests::feed_at_boundaries_and_wait_only_when_nothing_is_runnable` | `Board::feed` is called at idle, at each step boundary and around each `Board::wait`, and never inside a step or `Atomic` case; FR-9 holds iff all conditions hold. |
-| VC-9.2 | FR-9 | `gate` | `clippy` | Documentation states that user setup starts the watchdog, the executive only feeds it, and hung steps without a watchdog require a host reset. |
-| VC-10.1 | FR-10 | `libtest` | `control_rs_ets::server::tests::default_binding_runs_all_but_triggered` | With `NoBoard` every mode except `Triggered` runs and `Triggered` is rejected; FR-10 holds iff all conditions hold. |
-| VC-10.2 | FR-10 | `libtest` | `control_rs_ets::run::tests::feed_at_boundaries_and_wait_only_when_nothing_is_runnable` | `Board::wait` is called only when idle, waiting for lockstep input or waiting for a release. |
-| VC-11.1 | FR-11 | `libtest` | `control_rs_ets::server::tests::multi_peripheral_job_queue_and_routing` | Queries reply only on the asking peripheral, `RunExecutable` requests from multiple peripherals execute in FIFO order via `JobQueue`, `TaskSample` routes only to `job.origin`, and parameter updates and run state transitions broadcast to all peripherals; FR-11 holds iff all conditions hold. |
-| VC-12.1 | NFR-1 | `libtest` | `control_rs_ets::run::tests::step_boundary_dispatch_overhead_bounded` | Step-boundary supervision and peripheral polling overhead stay within the configured real-time timing budget. |
-| VC-13.1 | C-1 | `gate` | `clippy` | `control-rs-ets` builds `#![no_std]` with zero allocator symbols and fits within the flash and RAM bounds. |
-| VC-14.1 | C-2 | `libtest` | `control_rs_ets::server::tests::multi_peripheral_job_queue_and_routing` | A `RunExecutable` command arriving during an active run is queued in `JobQueue` rather than starting a second concurrent runner. |
-| VC-15.1 | C-3 | `gate` | `clippy` | Zero `dyn` trait objects appear in `control-rs-ets` target modules. |
-| VC-16.1 | C-4 | `gate` | `clippy` | Zero `static mut` references appear in `control-rs-ets` or macro expansion output. |
-| VC-17.1 | C-5 | `gate` | `deny` | No RTOS scheduler integration or concurrent-job API exists in `control-rs-ets`. |
-| VC-18.1 | C-6 | `gate` | `clippy` | No interrupt handler in `control-rs-ets` or macro output accesses a `TaskSlot` or `ParamEntry`. |
-| VC-19.1 | C-7 | `gate` | `clippy` | `server.rs` and `run.rs` contain no byte-level framing, receive ISR queue or link rate limiter. |
-| VC-20.1 | C-8 | `gate` | `clippy` | Documentation assigns target sizing and server binary selection (`teensy4_fast_cdc`, `teensy4_text`, `teensy4_dual`) to the user. |
-| VC-21.1 | C-9 | `gate` | `clippy` | No `#[interrupt]` handler, vector entry or priority configuration appears in `control-rs-ets` library code; interrupt masking uses only `critical-section`. |
-| VC-22.1 | C-10 | `gate` | `build` | `control-rs-ets` cross-compiles for `thumbv6m-none-eabi` without a compare-and-swap polyfill dependency; C-10 holds iff all conditions hold. |
-| VC-22.2 | C-10 | `libtest` | `control_rs_ets::fault::tests::phase_transition_calls_safe_state_once` | Fault-path `Phase` transitions use `StateCell` loads, stores and compiler fences without atomic read-modify-write instructions. |
+| VC-1.1 | FR-1 | `libtest` | `control_rs_ets::server::tests::case_and_task_share_run_command` | A case and a task in one suite start through `RunExecutable` and report through the same state message; FR-1 holds iff all conditions hold |
+| VC-1.2 | FR-1 | `libtest` | `control_rs_macros::tests::case_expands_to_atomic_executable` | A plain `fn()` expands to a descriptor whose allowed modes are exactly `Atomic` |
+| VC-2.1 | FR-2 | `libtest` | `control_rs_ets::server::tests::disallowed_mode_is_rejected` | A mode outside the descriptor's allowed set is rejected and the executive stays idle; FR-2 holds iff all conditions hold |
+| VC-2.2 | FR-2 | `libtest` | `control_rs_ets::run::tests::atomic_runs_one_step_masked` | `Atomic` runs exactly one step between mask and unmask |
+| VC-2.3 | FR-2 | `libtest` | `control_rs_ets::run::tests::triggered_runs_one_step_per_release` | With a fake release source, `Triggered` runs exactly one step per reported release |
+| VC-3.1 | FR-3 | `libtest` | `control_rs_macros::tests::missing_lifecycle_fn_fails_to_compile` | Each of the five omitted functions produces a compile error |
+| VC-4.1 | FR-4 | `libtest` | `control_rs_ets::run::tests::lockstep_waits_for_input_k` | Lockstep step `k` runs only after input `k` and a gap yields `Error`; FR-4 holds iff all conditions hold |
+| VC-4.2 | FR-4 | `libtest` | `control_rs_ets::run::tests::output_seq_equals_step` | Every emitted output carries `seq = k` |
+| VC-5.1 | FR-5 | `libtest` | `control_rs_ets::run::tests::verdicts_first_wins` | Each verdict source ends the run with that verdict and a later source does not overwrite it; FR-5 holds iff all conditions hold |
+| VC-5.2 | FR-5 | `libtest` | `control_rs_ets::run::tests::stop_and_timeout_while_waiting` | Stop and heartbeat timeout end a run that is waiting for lockstep input or for a release |
+| VC-6.1 | FR-6 | `libtest` | `control_rs_ets::settings::tests::scalar_bounds_and_echo` | In-bounds scalar writes store, out-of-bounds writes fail, and both echo the stored value; FR-6 holds iff all conditions hold |
+| VC-6.2 | FR-6 | `libtest` | `control_rs_ets::settings::tests::lookup_by_name_and_index` | A read by name and a read by index return the same entry, and an unknown name or a type mismatch leaves every setting unchanged and is echoed |
+| VC-6.3 | FR-6 | `libtest` | `control_rs_ets::run::tests::setting_write_calls_reset` | A write for the running suite at a boundary is followed by one `reset` |
+| VC-6.4 | FR-6 | `libtest` | `control_rs_ets_host::settings::tests::count_and_index_detect_missing_entry` | Discovery with one dropped value message is detected from index and count, and the host recovers the entry by index |
+| VC-7.1 | FR-7 | `libtest` | `control_rs_ets::fault::tests::phase_transition_calls_safe_state_once` | `safe_state` runs once from `Armed` and never from `TearingDown`, `Idle` or `Done`; FR-7 holds iff all conditions hold |
+| VC-7.2 | FR-7 | `libtest` | `control_rs_ets_host::session::tests::silent_reset_during_run_is_unreported_fault` | A target that goes silent or reboots during an active run is recorded as an unreported fault against that item |
+| VC-8.1 | FR-8 | `libtest` | `control_rs_ets::run::tests::periodic_overrun_verdict` | A step longer than its period ends the run with `Overrun`; FR-8 holds iff all conditions hold |
+| VC-8.2 | FR-8 | `analysis` | — | Reported release jitter on Teensy 4.1 equals measured start time minus `k·T` from DWT samples |
+| VC-8.3 | FR-8 | `libtest` | `control_rs_ets::run::tests::release_count_above_one_is_overrun` | A boundary that takes more than one release ends the run with `Overrun` and reports the missed count, in both `Periodic` and `Triggered` |
+| VC-8.4 | FR-8 | `libtest` | `control_rs_ets::run::tests::periodic_release_is_absolute` | Release times are `k·T` from the run start for any step duration below `T` |
+| VC-8.5 | FR-8 | `libtest` | `control_rs_ets::server::tests::periodic_without_clock_or_source_is_rejected` | `Periodic` is rejected when the profiler reports no clock and the board binding has no release source |
+| VC-9.1 | NFR-1 | `analysis` | — | DWT-measured boundary cost on Teensy 4.1 stays within `embedded-test-server-design.md` NFR-3 |
+| VC-11.1 | C-1 | `inspection` | — | The crate builds `no_std` with no allocator and fits the inherited flash and RAM bounds |
+| VC-12.1 | C-2 | `libtest` | `control_rs_ets::server::tests::second_run_rejected` | A run command while a run is active is rejected |
+| VC-13.1 | C-3 | `inspection` | — | No `dyn` appears in `control-rs-ets` target code |
+| VC-14.1 | C-4 | `inspection` | — | No `static mut` reference appears in the crate or macro output |
+| VC-15.1 | C-5 | `review` | — | No hosted-integration or concurrent-run API exists |
+| VC-16.1 | C-6 | `inspection` | — | No interrupt handler in the crate or macro output references a task slot or setting cell |
+| VC-17.1 | FR-9 | `libtest` | `control_rs_ets::board::tests::feed_at_idle_boundary_and_wait_only` | The feed hook is called at idle, at each boundary and around each wait, and never during a step or an `Atomic` case; FR-9 holds iff all conditions hold |
+| VC-17.2 | FR-9 | `libtest` | `control_rs_ets_host::session::tests::blocked_step_resets_externally_and_reports_unresponsive` | With no watchdog, a run that ignores `StopNow` is reset through the `HostLink` after `stop_timeout` and recorded as `Unresponsive` |
+| VC-17.3 | FR-9 | `inspection` | — | The documentation states that setup starts the watchdog, that the executive only feeds it and the no-watchdog behavior |
+| VC-18.1 | C-7 | `inspection` | — | No receive interrupt, receive queue or link rate limiter exists in the executive code |
+| VC-19.1 | C-8 | `review` | — | The documentation assigns target sizing and link selection to the user |
+| VC-20.1 | FR-10 | `libtest` | `control_rs_ets::board::tests::default_binding_runs_all_but_triggered` | With the default binding every mode except `Triggered` runs, and `Triggered` is rejected; FR-10 holds iff all conditions hold |
+| VC-20.2 | FR-10 | `libtest` | `control_rs_ets::board::tests::wait_called_only_when_nothing_runnable` | The wait hook is called when idle, when waiting for lockstep input and when waiting for a release, and at no other point |
+| VC-20.3 | FR-10 | `analysis` | — | A Teensy 4.1 `Triggered` run released by a board timer interrupt with a sleeping wait hook reports the commanded step count and no missed release |
+| VC-21.1 | C-9 | `inspection` | — | No interrupt handler, vector entry or priority setting appears in the crate or macro output; masking uses only `critical-section` |
+| VC-22.1 | C-10 | `compile` | `cargo ci` cross builds for `thumbv6m-none-eabi` and a target without atomics | `control-rs-ets` builds with no compare-and-swap polyfill dependency |
+| VC-22.2 | C-10 | `analysis` | — | A panic forced inside a step on a target without atomics runs `safe_state` exactly once |
+| VC-23.1 | FR-11 | `libtest` | `control_rs_ets_host::session::tests::discovery_and_setting_edit_without_elf` | A session with no firmware image discovers every suite and setting, renders each setting and writes an edited value; FR-11 holds iff all conditions hold |
 
-Coverage: 90% line coverage of `control-rs-ets` (`server`, `run`, `params`,
-`board` and `fault`), measured with `cargo coverage`. Excluded:
-architecture-specific fault register capture and inline assembly interrupt
-masking.
+Coverage: 90% line coverage of `control-rs-ets` `server`, `run`, `settings`, `board` and `fault`, measured with `cargo coverage`. Excluded: architecture-specific fault entry and interrupt masking.
 
 #### 6.2 Acceptance
 
 | Claim | Oracle | Measure | Bound |
 |:------|:-------|:--------|:------|
-| Unified executive for cases and tasks | Mixed suite on QEMU and Teensy 4.1 | Runs requiring a separate dispatcher or runner | 0 |
-| Multi-peripheral FIFO queueing and routing | 2-peripheral `(BinaryComms, TextComms)` server | Unsolicited discovery/sample leaks onto idle peripheral | 0 |
-| Periodic release accuracy | 1 kHz `Periodic` run on Teensy 4.1 with DWT samples | Reported release jitter vs. measured step start minus $k \cdot T$ | Within 1 clock tick |
-| Overrun detection | Step exceeding its nominal period $T$ | Verdict and missed-release count | `Verdict::Overrun`, count $\ge 1$ |
-| Fault settlement | Panic injected during an armed task step | `safe_state` executions before reset | Exactly 1 |
-| Atomic-free build | Cross-compilation for `thumbv6m-none-eabi` | CAS polyfill dependencies | 0 |
+| One executive for cases and tasks | Mixed suite on QEMU and Teensy 4.1 | Runs that need a separate runner or dispatcher arm | 0 |
+| Periodic release | 1 kHz `Periodic` run on Teensy 4.1 with DWT samples | Reported release jitter against measured start minus `k·T` | Equal within one clock tick |
+| Overrun detection | Step that sleeps past its period | Verdict and missed-release count | `Overrun`, count of at least 1 |
+| Interrupt-driven release | `Triggered` run released by a board timer interrupt with a sleeping wait hook | Steps run against releases delivered | Equal, no missed release |
+| Hang containment | Step that never returns, with and without a fed watchdog | Target reset and host record | Reset and `Unresponsive` in both cases |
+| Fault settlement | Panic injected during a task step | `safe_state` executions before reset | Exactly 1 |
+| Atomic-free build | `thumbv6m-none-eabi` and a target without atomics | Build result | Builds with no compare-and-swap polyfill |
 
 #### 6.3 Limits
 
-QEMU runs verify functional execution and protocol sequencing, not physical
-real-time timing: Cortex-M SysTick and RISC-V machine timers in QEMU are driven
-by `QEMU_CLOCK_VIRTUAL` instruction counting [36]–[40]. Real-time periodic
-release jitter and USB CDC `dtr()` non-blocking write behavior are verified on
-physical Teensy 4.1 hardware. Interrupt isolation (C-6, C-9) is verified by
-inspection of `control-rs-ets`; user interrupt handlers and release counters in
-board binaries are user-owned.
+QEMU runs verify computation, not physical timing. On the CI machines the Cortex-M SysTick runs on a ptimer driven by `QEMU_CLOCK_VIRTUAL` (QEMU Project, 2026b; QEMU Project, 2026c) and the RISC-V machine timer reads the same clock (QEMU Project, 2026d). Instruction counting derives that clock from executed instructions without modeling instruction timing (QEMU Project, 2026e) and correlates it with real time only approximately (QEMU Project, 2026a). `Periodic` and timer-released `Triggered` runs therefore execute on QEMU and are verified there in virtual time; real-time release is verified on hardware only. Watchdog behavior is verified by libtest against a fake board binding and on hardware, not on QEMU. Interrupt isolation (C-6, C-9) is checked by inspection of ETS code only; user interrupt handlers and release counters are not analyzed. A blocked step on a target without a watchdog is recovered only by the host's external reset, whose mechanism depends on the board and link. A sleeping wait hook with no enabled wake source stops responding until a watchdog or host reset.
 
 ---
 
 ### 7. Performance & Resource Considerations
 
-`control-rs-ets` is `#![no_std]` with zero heap allocation (C-1). Descriptors
-and parameter metadata live in flash; mutable runtime state consists of
-`JobQueue` (`8 * size_of::<Option<Job>>()` bytes), one `TaskSlot<T>` per task,
-one `StateCell` per parameter, and a single stack-allocated `Runner` frame with
-one `MAX_PACKET_SIZE` input buffer during an active run. `PeripheralSet` and
-`Board` are monomorphic generic parameters (C-3) whose default hooks inline to
-no-ops. `Atomic` cases add two cycle-counter reads and one stack high-water scan
-per run; streaming task modes add two clock reads per step and accumulate
-running `min`, `max`, `sum` and `count` statistics in constant memory.
+The crate is `no_std` with zero heap; descriptors live in flash and run state in one `RunState` plus one input buffer. The executive adds no receive queue; a link-side queue is sized by the link. The board binding is a monomorphic type parameter, and the default hooks are empty or clock-based functions (assumption: the defaults inline to no code beyond the clock read). `Atomic` adds two cycle reads and a stack scan per run; streaming modes add two clock reads per step and keep min, max, count and total instead of per-step samples, and `Periodic` and `Triggered` add one release read per boundary. On targets without atomics, executive state is a plain cell and costs no extra instruction. A setting write costs one decode, one name lookup in the suite's table and one bounds check; a read costs one copy. Names, descriptions and bounds live in flash.
 
 ---
 
 ### 8. Risks & Open Questions
 
-- **Blocking user code (FR-9, §4.6)**: A step that never returns blocks
-  cooperative polling, `StopNow` and `TryReset`. Recovery requires a user-started
-  hardware watchdog fed via `Board::feed` or an external host reset.
-- **Overrun allowance (FR-8)**: The executive terminates on the first missed
-  release [1], [10]. Simulink Real-Time supports a configurable overload count
-  before halting [41]; adding an overrun allowance to `RunExecutable` remains a
-  future candidate if hardware noise triggers false overruns.
-- **Unopened composite USB CDC endpoints (§4.6)**: On a composite USB device
-  such as `teensy4_dual`, the host operating system configures the USB device as
-  soon as the cable is attached even when only one serial port is open in an
-  application. `teensy4_dual` must gate writes per port on `dtr()` and return
-  `SendOutcome::Dropped` on `UsbError::WouldBlock` so an unopened companion port
-  never stalls the active endpoint.
-- **Small-target footprint (C-8)**: Placing descriptor tables in Harvard
-  program memory (`progmem`) on 8-bit AVR targets [32] remains unresearched.
+- **Blocking user code (FR-9, §4.6)**: A step that blocks defeats stop, heartbeat and `TryReset`. A fed watchdog or the host's external reset is the only recovery, and a mis-sized watchdog period either resets healthy long cases or hides a hang. No lint can detect blocking; the contract is documented.
+- **Overrun policy (FR-8)**: Terminate on the first missed release is chosen. Simulink Real-Time allows a configured number of overloads before halting and ignores overloads for a startup duration (MathWorks, 2026a); an allowance field in `RunExecutable` is the candidate extension.
+- **Wake sources (FR-10)**: A sleeping wait hook depends on the user leaving the right interrupt enabled. The executive cannot check it; a missing wake source turns a wait into a hang (§6.3).
+- **Release counter (C-6, C-9)**: The counter shared between a user interrupt and the `releases` hook is user code. A torn or lost update shows as a missed or extra release; documentation must state the exclusion rule.
+- **Phase ordering on atomic-free targets (C-10)**: Compiler fences order the plain-cell phase writes on a single core (§4.9); VC-22.2 checks the fault path on a target without atomics.
+- **Multi-setting consistency (FR-6)**: A write changes one setting. Writes that arrive between two boundaries apply together, but a group of related settings is not guaranteed to change in the same boundary when the link splits the group across a boundary.
+- **Unreported fault detection (FR-7)**: The host infers faults from session state. Its classification of silence versus a comms failure, and fault report content and symbolication, belong to `ets-host-design.md` and the `ets-fault-diagnostics` research.
+- **Small-target footprint (C-8)**: No flash or RAM budget is set for 8-bit or Cortex-M0 class parts. Placing descriptors in AVR program memory is unresearched.
+- **Wire break**: Merged messages, the setting dictionary, `ItemState::Done`, the `Triggered` mode, the release-source flag and the missed-release count change the schema once, as revision 2 in `ets-link-design.md` §4.8.
 
 ---
 
@@ -799,10 +305,10 @@ running `min`, `max`, `sum` and `count` statistics in constant memory.
 
 | Phase | Delivers | Requirements | Effort | Status |
 |:------|:---------|:-------------|:-------|:-------|
-| 1. Executive core & `JobQueue` | `PeripheralSet`, `JobQueue`, `Context`, `Server` dispatcher and `Runner` with `Atomic` mode | FR-1, FR-2, FR-11, C-1, C-2, C-3, C-7 | 3 days | Planned |
-| 2. Named parameter dictionary | `ParamTable` lookup, bounds checking, `StateCell` storage, origin echo and multi-peripheral broadcast | FR-6, C-4, C-6 | 2 days | Planned |
-| 3. Lifecycle task modes | `Lockstep`, `FreeRunning`, `Periodic` and `Triggered` runners, step-boundary supervision and multi-peripheral polling | FR-3, FR-4, FR-5, FR-8, NFR-1, C-5 | 4 days | Planned |
-| 4. Board binding, fault path & target binaries | `Board` trait, `fault::settle` atomic-free phase machine, QEMU suite updates, and `teensy4_fast_cdc`, `teensy4_text` and `teensy4_dual` servers | FR-7, FR-9, FR-10, C-8, C-9, C-10 | 4 days | Planned |
+| 1. Executive core | `Server` dispatcher, `Context`, `Runner` with `Atomic`, unified descriptor, existing cases migrated | FR-1, FR-2, C-1, C-2, C-3 | 4 days | Planned |
+| 2. Settings | Setting descriptors without `dyn`, named primitive settings, read by name or index, write by name | FR-6, FR-11, C-4, C-6, C-7 | 3 days | Planned |
+| 3. Lifecycle modes | `LifecycleTask`, `TaskSlot`, `Lockstep` and `FreeRunning` (`Periodic` and `Triggered` follow in phase 4), boundary supervision, wire revision | FR-3, FR-4, FR-5 | 5 days | Planned |
+| 4. Board integration, fault and timing | Board binding (`feed`, `wait`, `releases`), `Periodic` and `Triggered`, phase-based fault path with atomic-free state, host unreported-fault detection, hardware timing analysis | FR-7, FR-8, FR-9, FR-10, NFR-1, C-5, C-8, C-9, C-10 | 6 days | Planned |
 
 ---
 
@@ -810,8 +316,18 @@ running `min`, `max`, `sum` and `count` statistics in constant memory.
 
 | Revision | Date | Author | Description |
 |:---------|:-----|:-------|:------------|
-| 1.0 | October 12, 2026 | @MitchellDScott | Initial design document: single-job executive, unified `Runner`, `Mode` types, `ParamTable`, `Board` binding and phase-based `fault::settle`. |
-| 2.0 | October 31, 2026 | @MitchellDScott | Replaced single-link `Context` with multi-peripheral `PeripheralSet` and static FIFO `JobQueue` (FR-11); aligned transport boundary to `HostComms` (`host-comm-design.md`); added Teensy 4 multi-server topologies (`teensy4_fast_cdc`, `teensy4_text`, `teensy4_dual`) and §4 component traceability. Affects FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-10, FR-11, NFR-1, C-1, C-2, C-3, C-4, C-5, C-6, C-7, C-8, C-9, C-10. |
+| 1.0 | October 12, 2026 | @MitchellDScott | Initial design document: FR-1 to FR-8, NFR-1, NFR-2, C-1 to C-5. |
+| 1.1 | October 12, 2026 | @MitchellDScott | Replaced parameter groups with typed settings and target-reported schemas: FR-6 changed, NFR-2 withdrawn, C-6 added. |
+| 1.2 | October 12, 2026 | @MitchellDScott | Removed the executive-owned receive queue and retained-RAM record: FR-7 changed. Added watchdog binding and blocking-step handling: FR-9 added. Added transport-owned bandwidth and user-owned sizing: C-7 and C-8 added. |
+| 1.3 | October 12, 2026 | @MitchellDScott | Replaced the watchdog binding with a board binding (feed, wait, release source): FR-9 changed, FR-10 added. Added `Triggered` mode and missed-release counting: FR-2, FR-5 and FR-8 changed. Added executive interrupt exclusion and atomic-free build: C-3 changed, C-9 and C-10 added. |
+| 1.4 | October 12, 2026 | @MitchellDScott | Replaced `HostComms` with the message `Link` of `ets-link-design.md`: C-7 changed; `Context<L, P>`. |
+| 1.5 | October 12, 2026 | @MitchellDScott | Named `CPUProfiler::get_nanos` as the default `Periodic` clock and rejected `Periodic` without a clock or release source: FR-8 changed. Added §6.2 Acceptance. |
+| 1.6 | October 12, 2026 | @MitchellDScott | Added FR-11: the host operates from target-reported discovery without the firmware image. |
+| 1.7 | October 12, 2026 | @MitchellDScott | Settings are named primitive parameters in a dictionary: FR-6 changed; text and struct settings rejected. |
+| 1.8 | October 12, 2026 | @MitchellDScott | Phase writes on atomic-free targets are ordered by compiler fences: §4.9 changed, VC-22.2 added. |
+| 1.9 | October 12, 2026 | @MitchellDScott | Wire effects and error handling aligned to the setting dictionary and `ItemState::Done`. |
+| 1.10 | October 12, 2026 | @MitchellDScott | `RunExecutable` carries `period_ns`; FR-11 in the development plan; the host resets through `HostLink`. |
+| 1.11 | October 13, 2026 | Claude Sonnet 5.5 | Header migrated to the Approval and Doc Status badge grammar; Approval set to Stale pending re-review. Affects C-1, C-2, C-3, C-4, C-5, C-6, C-7, C-8, C-9, C-10, FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-10, FR-11, NFR-1, NFR-2. |
 
 ---
 
@@ -841,7 +357,7 @@ running `min`, `max`, `sum` and `count` statistics in constant memory.
 
 [12] heapless, *heapless::spsc*: fixed-capacity SPSC lock-free queue (Version 0.9.3). [Online]. Available: https://docs.rs/heapless/0.9.3/heapless/spsc/index.html. Accessed: Oct. 12, 2026.
 
-[13] H.-J. Boehm, "Can Seqlocks Get Along With Programming Language Memory Models?," HP Laboratories, Tech. Rep. HPL-2012-68, 2012. [Online]. Available: https://www.hpl.hp.com/techreports/2012/HPL-2012-68.pdf. Accessed: Oct. 12, 2026.
+[13] Embassy project, *embassy-executor*: async executor for embedded devices. [Online]. Available: https://docs.embassy.dev/embassy-executor/git/cortex-m/index.html. Accessed: Oct. 12, 2026.
 
 [14] The Rust Project, "Struct core::cell::Cell," *The Rust Core Library*. [Online]. Available: https://doc.rust-lang.org/core/cell/struct.Cell.html. Accessed: Oct. 12, 2026.
 
