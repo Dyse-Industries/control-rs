@@ -9,7 +9,6 @@
     clippy::approx_constant
 )]
 
-#[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod state_space_test_suite {
     use crate::assert_almost_eq;
     use crate::math::storage::DenseStorage;

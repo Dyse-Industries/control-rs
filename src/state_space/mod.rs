@@ -45,9 +45,9 @@
     clippy::too_many_arguments
 )]
 
-#[cfg(any(test, feature = "ets"))]
+#[cfg(test)]
 /// State-space module unit tests.
-pub mod tests;
+mod tests;
 
 use crate::math::LinAlgResult;
 use crate::math::num_traits::{Float, Scalar};

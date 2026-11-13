@@ -6,8 +6,7 @@
 //! `num-traits-design.md`'s **FR-3**, see `num_trait_tests.rs` for the
 //! primary `Scalar` coverage.
 
-#[cfg_attr(not(test), control_rs_macros::ets_suite)]
-/// Unit and ETS test suite for complex number operations.
+/// Unit test suite for complex number operations.
 pub mod complex_num_test_suite {
     use crate::{
         assert_almost_eq,

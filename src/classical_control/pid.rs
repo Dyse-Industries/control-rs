@@ -12,10 +12,9 @@ use super::{ClassicalError, TfResult};
 use crate::math::num_traits::Float;
 use crate::math::num_types::{Const, Dim};
 
-#[cfg(any(test, feature = "ets"))]
-#[cfg_attr(not(test), control_rs_macros::ets_suite)]
-/// Unit and ETS test suite for the discrete PID controller.
-pub mod tests {
+#[cfg(test)]
+/// Unit tests for the discrete PID controller.
+mod tests {
     use super::*;
     use crate::math::num_traits::Trig;
 

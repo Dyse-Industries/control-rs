@@ -21,7 +21,6 @@
 //! fallback tests exercise implementation details of the `Trig`/`Float`
 //! traits rather than a separately numbered requirement.
 
-#[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod num_trait_test_suite {
     use crate::assert_almost_eq;
     use crate::math::CartesianQuadrant2D;
@@ -660,7 +659,7 @@ pub mod num_trait_test_suite {
     /// `AdditiveGroup`/`Signed` being withheld from these same types is a
     /// negative compile-time property, verified separately by the
     /// `compile_fail` doctest on `num_traits`'s module documentation
-    /// (this suite lives behind `#[cfg(any(test, feature = "ets"))]`,
+    /// (this suite lives behind `#[cfg(test)]`,
     /// which `rustdoc` doctest extraction does not set).
     fn test_num_trait_unsigned_integer_markers() {
         fn assert_is_unsigned_integer<

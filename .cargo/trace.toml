@@ -19,6 +19,8 @@ retired = [
     "requirement-traceability#VC-7.2",
     "requirement-traceability#NFR-2",
     "requirement-traceability#VC-12.1",
+    "classical-control#C-6",
+    "classical-control#VC-26.1",
 ]
 
 [doc_status]

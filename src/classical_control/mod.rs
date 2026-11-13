@@ -127,10 +127,3 @@ impl From<RootError> for ClassicalError {
         Self::Root(e)
     }
 }
-
-/// Force-linked ETS suite descriptors of the realization and PID tests.
-#[cfg(all(feature = "ets", not(test)))]
-pub mod suites {
-    pub use super::pid::tests::SUITE_DESCRIPTOR_PTR as pid;
-    pub use super::realization::tests::SUITE_DESCRIPTOR_PTR as realization;
-}

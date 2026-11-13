@@ -1,7 +1,6 @@
 //! Fixed-point number mathematical ETS and unit test suite.
 
-#[cfg_attr(not(test), control_rs_macros::ets_suite)]
-/// Unit and ETS test suite for fixed-point number operations.
+/// Unit test suite for fixed-point number operations.
 pub mod fixed_num_test_suite {
     use crate::math::{
         ArithmeticError,
@@ -562,8 +561,8 @@ pub mod fixed_num_test_suite {
 }
 
 // Property-based coverage of product exactness and rescale round-tripping
-// (§6.1 items 3 and 4 of `fixed-num-design.md`). Kept outside the
-// `#[ets_suite]`-wrapped module: `proptest` is a host-only dev-dependency.
+// (§6.1 items 3 and 4 of `fixed-num-design.md`). Kept separate from unit
+// tests: `proptest` is a host-only dev-dependency.
 #[cfg(test)]
 mod fixed_num_property_tests {
     use crate::math::fixed_num::Fixed;
