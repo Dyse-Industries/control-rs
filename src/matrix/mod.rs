@@ -706,7 +706,7 @@ where
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Transposition (Owned only: every design-doc example uses plain owned
+// Transposition (Owned only, every design-doc example uses plain owned
 // matrices; a fully storage-generic version needs a `Transposed<O>` layout
 // marker not otherwise motivated by current call sites).
 ////////////////////////////////////////////////////////////////////////////////

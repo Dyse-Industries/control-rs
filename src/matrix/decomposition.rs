@@ -80,7 +80,7 @@ where
 ///
 /// Half the arithmetic of `LU` and no pivoting, at the cost of requiring
 /// square roots per diagonal entry and being restricted to positive-definite
-/// input (`matrix-design.md` §5.5); `LDL^T` is the default symmetric solver
+/// input (`matrix-design.md` §5.5). `LDL^T` is the default symmetric solver
 /// for that reason; this is available when a caller already knows `A` is
 /// positive definite.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,8 +94,8 @@ where
 /// `QR` factorization via Householder reflections (`A = Q * R`), restricted
 /// to square matrices.
 ///
-/// Numerically stable even for rank-deficient or ill-conditioned `A`:
-/// unlike `LU`/`LDL^T`, decomposition itself never fails
+/// Numerically stable even for rank-deficient or ill-conditioned `A`.
+/// Unlike `LU`/`LDL^T`, decomposition itself never fails
 /// (`matrix-design.md` §5.5); only `solve_mut` can fail, if `R` turns out
 /// singular.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
