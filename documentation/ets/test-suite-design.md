@@ -100,7 +100,7 @@ flowchart TD
 
 #### 4.1. Linker-Based Distributed Test Discovery
 
-Instead of building a dynamic test registry at runtime, the framework utilizes a
+Instead of building a dynamic test registry at runtime, the framework uses a
 linker-based distributed slice mechanism. Procedural macros generate one
 `SuiteDescriptor` static per suite and place a `&'static SuiteDescriptor`
 pointer to it (`SUITE_DESCRIPTOR_PTR`) in a custom ELF memory section named
@@ -427,7 +427,7 @@ descriptor statics, which are data.
 ### 7. Performance & Resource Considerations
 
 * **ROM/RAM Overhead**: To operate within the 32 KB Flash and 8 KB RAM budget,
-  the target Server utilizes zero heap allocations and avoids unnecessary string
+  the target Server uses zero heap allocations and avoids unnecessary string
   formatting on-device. All descriptors reside strictly in Flash.
 * **Atomic Ordering**: Setting telemetry uses `Ordering::Relaxed` to bypass
   ARM memory barrier instructions (`DMB`/`DSB`), which can take multiple

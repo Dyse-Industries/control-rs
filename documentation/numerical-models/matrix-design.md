@@ -555,7 +555,7 @@ where
 ##### 4.7.2. Linear System Solving via Decompositions
 
 Decomposition objects expose specialized linear solver methods ($A x = b$)
-utilizing forward and backward substitution over factor matrices:
+using forward and backward substitution over factor matrices:
 
 ```rust
 impl<T, const D: usize> LuDecomposition<T, D>

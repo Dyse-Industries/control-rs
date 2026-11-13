@@ -644,7 +644,7 @@ stagnation for degenerate matrices. A closed-form quadratic solver:
 - **Memory Footprint**: Owning `ArrayPolynomial<T, N>` occupies
   exactly $N \times \text{size\_of}(T)$ bytes on stack without heap overhead.
 - **Horner FLOP Count**: `evaluate` executes in exactly $N-1$ additions
-  and $N-1$ multiplications (utilizing hardware FMA instructions on ARM
+  and $N-1$ multiplications (using hardware FMA instructions on ARM
   Cortex-M4/M7).
 - **Zero-Copy Views**: `PolynomialView` and `PolynomialViewMut` occupy only 2
   pointer words plus stride metadata, avoiding buffer copying.

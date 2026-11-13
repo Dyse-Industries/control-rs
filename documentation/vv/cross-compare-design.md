@@ -498,7 +498,7 @@ To balance thread dispatch latency against SIMD memory throughput:
   sequentially on the caller thread, avoiding thread scheduling overhead.
 - **Cache-Conscious Partitioning**: For $N \ge 65,536$, data is partitioned into $P = \min(\text{threads}, \lceil N / 65536 \rceil)$
   disjoint contiguous chunks that fit comfortably into L2/L3 CPU cache lines.
-- **HDF5 Storage Alignment**: When datasets utilize HDF5 chunked storage layouts (Folk et al., 2011),
+- **HDF5 Storage Alignment**: When datasets use HDF5 chunked storage layouts (Folk et al., 2011),
   chunk sizes naturally align with container boundaries to maximize sequential I/O throughput.
 
 ##### Zero-Dependency Concurrency via `std::thread::scope`
