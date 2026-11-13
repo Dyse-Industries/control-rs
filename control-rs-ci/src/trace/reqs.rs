@@ -291,6 +291,7 @@ impl DocStatusConfig {
 
 impl DocStatusRules {
     /// The status of the document whose text is `source`, if it has one.
+    #[must_use]
     pub fn status(&self, source: &str) -> Option<String> {
         self.status
             .captures(source)
@@ -299,11 +300,13 @@ impl DocStatusRules {
     }
 
     /// Whether a `doc-status` condition passes on `status`.
+    #[must_use]
     pub fn passes(&self, status: &str) -> bool {
         self.pass.contains(status)
     }
 
     /// Whether a `doc-status` condition passes with a warning on `status`.
+    #[must_use]
     pub fn warns(&self, status: &str) -> bool {
         self.warn.contains(status)
     }

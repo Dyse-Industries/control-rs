@@ -102,16 +102,16 @@ pub trait FFT<T: 'static + Clone + Float + Neg<Output = T> + Default> {
                         let even = ptr.add(even_idx).read();
                         let odd = ptr.add(odd_idx).read();
 
-                        let twiddled_odd = w.saturating_mul(&odd.clone());
+                        let twiddled_odd = w.saturating_mul(&odd);
 
                         ptr.add(even_idx)
-                            .write(even.saturating_add(&twiddled_odd.clone()));
+                            .write(even.saturating_add(&twiddled_odd));
                         ptr.add(odd_idx)
-                            .write(even.saturating_sub(&twiddled_odd.clone()));
+                            .write(even.saturating_sub(&twiddled_odd));
                     }
 
                     // Update twiddle factor for the next element in the group
-                    w = w.saturating_mul(&w_step.clone());
+                    w = w.saturating_mul(&w_step);
                 }
             }
             stage_len = step;

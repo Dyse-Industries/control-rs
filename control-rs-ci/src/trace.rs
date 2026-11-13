@@ -243,7 +243,6 @@ pub fn print_defects(defects: &[Defect]) {
 
 /// Prints the defects and returns the exit code: a failure when any exists.
 /// `what` names the defects in the summary line.
-#[must_use]
 pub fn finish(defects: &[Defect], what: &str) -> ExitCode {
     print_defects(defects);
     if defects.is_empty() {

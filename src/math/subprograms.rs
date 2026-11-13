@@ -1101,8 +1101,8 @@ impl<T: Scalar, X: DenseStorageMut<T>, Y: DenseStorageMut<T>>
                     let yv = y.get_unchecked(r, col).clone();
                     let new_x = c_s
                         .clone()
-                        .saturating_mul(&xv.clone())
-                        .saturating_add(&s.saturating_mul(&yv.clone()));
+                        .saturating_mul(&xv)
+                        .saturating_add(&s.saturating_mul(&yv));
                     let new_y = c_s
                         .clone()
                         .saturating_mul(&yv)
@@ -3478,7 +3478,7 @@ where
                 return Err(LinAlgError::NotPositiveDefinite);
             }
             let l_jj_re = a_jj_re.saturating_sub(&sum2).sqrt();
-            let l_jj = T::from_real(l_jj_re.clone());
+            let l_jj = T::from_real(l_jj_re);
             unsafe {
                 a.set_unchecked(j, j, l_jj.clone());
             }
@@ -4087,13 +4087,10 @@ where
             } else {
                 norm
             };
-            let beta = T::from_real(beta_re.clone());
+            let beta = T::from_real(beta_re);
 
-            let v0 = alpha.saturating_sub(&beta.clone());
-            tau[k] = beta
-                .clone()
-                .saturating_sub(&alpha)
-                .saturating_div(&beta.clone());
+            let v0 = alpha.saturating_sub(&beta);
+            tau[k] = beta.clone().saturating_sub(&alpha).saturating_div(&beta);
             unsafe {
                 a.set_unchecked(k, k, beta);
             }
@@ -4174,7 +4171,7 @@ fn qr_apply_left_k<T, A, C>(
         let scalar = tau_k.saturating_mul(&dot);
         let c_kj = unsafe { c.get_unchecked(k, j).clone() };
         unsafe {
-            c.set_unchecked(k, j, c_kj.saturating_sub(&scalar.clone()));
+            c.set_unchecked(k, j, c_kj.saturating_sub(&scalar));
         }
         for i in k.saturating_add(1)..m {
             let v_i = unsafe { a.get_unchecked(i, k).clone() };
@@ -4216,7 +4213,7 @@ fn qr_apply_right_k<T, A, C>(
         let scalar = tau_k.saturating_mul(&dot);
         let c_ik = unsafe { c.get_unchecked(i, k).clone() };
         unsafe {
-            c.set_unchecked(i, k, c_ik.saturating_sub(&scalar.clone()));
+            c.set_unchecked(i, k, c_ik.saturating_sub(&scalar));
         }
         for j in k.saturating_add(1)..n {
             let v_j = unsafe { a.get_unchecked(j, k).clone() };
@@ -4560,8 +4557,8 @@ fn syev_apply_offdiag<T, A>(
             let a_kq = uplo_entry(a, k, q, uplo);
             let new_kp = c_val
                 .clone()
-                .saturating_mul(&a_kp.clone())
-                .saturating_sub(&s_val.saturating_mul(&a_kq.clone()));
+                .saturating_mul(&a_kp)
+                .saturating_sub(&s_val.saturating_mul(&a_kq));
             let new_kq = s_val
                 .clone()
                 .saturating_mul(&a_kp)
@@ -4625,8 +4622,8 @@ fn syev_apply_vectors<T: Scalar>(
         let v_kq = work[k.saturating_mul(n).saturating_add(q)].clone();
         work[k.saturating_mul(n).saturating_add(p)] = c_val
             .clone()
-            .saturating_mul(&v_kp.clone())
-            .saturating_sub(&s_val.saturating_mul(&v_kq.clone()));
+            .saturating_mul(&v_kp)
+            .saturating_sub(&s_val.saturating_mul(&v_kq));
         work[k.saturating_mul(n).saturating_add(q)] = s_val
             .clone()
             .saturating_mul(&v_kp)
@@ -4724,8 +4721,8 @@ fn heev_apply_offdiag<T, A>(
             // a'_*p = c a_*p − s̄ a_*q,  a'_*q = s a_*p + c a_*q.
             let new_kp = c
                 .clone()
-                .saturating_mul(&a_kp.clone())
-                .saturating_sub(&s_conj.saturating_mul(&a_kq.clone()));
+                .saturating_mul(&a_kp)
+                .saturating_sub(&s_conj.saturating_mul(&a_kq));
             let new_kq = s
                 .clone()
                 .saturating_mul(&a_kp)
@@ -4820,8 +4817,8 @@ fn heev_apply_vectors<T: Scalar>(
         let v_kq = work[k.saturating_mul(n).saturating_add(q)].clone();
         work[k.saturating_mul(n).saturating_add(p)] = c
             .clone()
-            .saturating_mul(&v_kp.clone())
-            .saturating_sub(&s_conj.saturating_mul(&v_kq.clone()));
+            .saturating_mul(&v_kp)
+            .saturating_sub(&s_conj.saturating_mul(&v_kq));
         work[k.saturating_mul(n).saturating_add(q)] = s
             .clone()
             .saturating_mul(&v_kp)

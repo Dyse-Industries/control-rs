@@ -263,7 +263,7 @@ impl CompareConfigFile {
         for suite_rel_path in &all_suite_refs {
             let child_suite_dir = base_dir.join(suite_rel_path);
             let child_config_path = if child_suite_dir.is_file() {
-                child_suite_dir.clone()
+                child_suite_dir
             } else if child_suite_dir.join("compare.toml").exists() {
                 child_suite_dir.join("compare.toml")
             } else {

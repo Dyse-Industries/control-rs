@@ -37,7 +37,7 @@ module-item-order-groupings = [
     ["PascalCase", ["ty_alias", "enum", "struct", "union", "trait", "trait_alias"]],
     ["macros", ["macro"]],
     ["impls", ["impl"]],
-    ["lower_snake_case", ["fn"]]
+    ["lower_snake_case", ["fn", "test_binder_constraints"]]
 ]
 
 # 2. Scope of ordering
