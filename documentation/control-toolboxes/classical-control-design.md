@@ -81,7 +81,7 @@ Primary usage scenarios:
   `TransferFunction`, returns the net number of encirclements of $-1$ by the
   Nyquist contour, indenting around open-loop poles on the imaginary axis.
   The count and the pole count $P$ do not depend on where the samples fall:
-  every near-axis pole is indented whether or not a sample lies within the
+  every near-axis pole is indented whether a sample lies within the
   indentation radius, and a contour that passes through $-1$ at a sample or
   between two samples returns `ContourThroughCriticalPoint`. A numerator
   or denominator padded with trailing zero coefficients is read by its

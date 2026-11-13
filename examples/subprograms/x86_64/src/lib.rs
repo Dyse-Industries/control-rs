@@ -1,7 +1,7 @@
 //! x86_64 hardware-accelerated subprograms example crate.
 //!
-//! Provides [`Avx2Blas`] utilizing AVX2+FMA vector intrinsics, and conditionally
-//! [`CblasBlas`] utilizing Netlib CBLAS via `-lcblas -lblas`.
+//! Provides [`Avx2Blas`] using AVX2+FMA vector intrinsics, and conditionally
+//! [`CblasBlas`] using Netlib CBLAS via `-lcblas -lblas`.
 //!
 //! Copy this package into firmware rather than depending on it from `control-rs`.
 //! Operator instructions: `README.md` in this directory.
