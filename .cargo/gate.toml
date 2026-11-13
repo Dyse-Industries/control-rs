@@ -64,7 +64,7 @@ post = [
 [execution.groups]
 build_test = ["build", "test"]
 miri = ["miri"]
-lint = ["fmt", "clippy", "allow-audit", "doc", "vale", "trace-reqs"]
+lint = ["fmt", "clippy", "allow-audit", "doc", "vale-vocab", "vale", "trace-reqs"]
 audit = ["deny", "deny-duplicates", "semver", "geiger"]
 valgrind = ["valgrind"]
 verify = ["cross-compare"]
@@ -202,12 +202,25 @@ args = ["check-release", "--baseline-rev", "origin/main"]
 timeout_secs = 1200
 description = "Verifies public API stability against baseline ref"
 
+# One canonical form (byte order, no duplicates) keeps additions on separate
+# branches from landing on the same lines.
+[vale-vocab]
+mode = "fail"
+command = "sort"
+args = ["-c", "-u", ".vale/styles/config/vocabularies/ControlRs/accept.txt"]
+env = { LC_ALL = "C" }
+diff-trigger = [".vale/"]
+timeout_secs = 30
+description = "Checks that the Vale vocabulary is sorted in byte order with no duplicate entries"
+
 [vale]
 mode = "fail"
 command = "vale"
 args = [
     "--config=.vale.ini",
     "--output=line",
+    "README.md",
+    "CONTRIBUTING.md",
     "documentation",
     "src",
     "control-rs-ets",
@@ -221,7 +234,7 @@ args = [
     "examples",
     "--glob=!**/target/**",
 ]
-diff-trigger = ["documentation/", ".vale.ini", ".vale/", "src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-tui/", "control-rs-verification/"]
+diff-trigger = ["README.md", "CONTRIBUTING.md", "documentation/", ".vale.ini", ".vale/", "src/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-tui/", "control-rs-verification/"]
 timeout_secs = 300
 description = "Lints documentation and doc comments for prose style conformity"
 
