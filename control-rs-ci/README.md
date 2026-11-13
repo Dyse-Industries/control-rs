@@ -37,7 +37,7 @@ Required tools per gate: [Development Guide](../documentation/development-guide.
 
 `cargo trace` runs `trace-reqs` then `trace` as gates, so the check always
 reads a fresh `reqs.jsonl`. Configuration is
-[`.cargo/trace/trace.toml`](../.cargo/trace/trace.toml);
+[`.cargo/trace.toml`](../.cargo/trace.toml);
 the rules are in the
 [design](../documentation/vv/requirement-traceability-design.md).
 

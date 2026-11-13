@@ -44,7 +44,7 @@ Documents are grouped by project directory and indexed below.
 
 Requirements (`FR-n`, `NFR-n`, `C-n`) and their verification conditions
 (`VC-x.y` rows) are machine-read. For every document listed in
-[`.cargo/trace/trace.toml`](../.cargo/trace/trace.toml), `cargo trace-reqs`
+[`.cargo/trace.toml`](../.cargo/trace.toml), `cargo trace-reqs`
 checks the IDs and `cargo trace-check` links each condition to the test or
 proof result that discharges it
 ([Requirement Traceability Infrastructure](vv/requirement-traceability-design.md#author-workflow)).

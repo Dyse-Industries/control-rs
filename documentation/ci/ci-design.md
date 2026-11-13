@@ -1027,7 +1027,7 @@ full history so the merge-base resolves.
   from `gate.toml`'s default `target` group in favor of `virtual-ets`.
 - **Deferred Technical Debt** (recorded 2026-09-27 review, not resolved here):
     - `ci-design.md` keeps numbered `§` headings and the pre-`VC` §6 layout, and
-      is not in `.cargo/trace/trace.toml` `files`, so no CI requirement is
+      is not in `.cargo/trace.toml` `files`, so no CI requirement is
       traced.
       Closed by the design-template corpus migration.
     - Workflow (roadmap PR10): the report job rebuilds `cargo doc`, duplicating
