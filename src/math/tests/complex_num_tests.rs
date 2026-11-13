@@ -23,7 +23,7 @@ pub mod complex_num_test_suite {
     };
     use core::mem;
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies the saturating contract on `Complex<T>`: operators equal the
     /// named saturating methods, and integer components clamp at their bounds.
     fn test_complex_saturating_arithmetic() {
@@ -48,7 +48,7 @@ pub mod complex_num_test_suite {
         assert_eq!(q, Complex::new(0, 0));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies basic addition, subtraction, multiplication and division on complex floats.
     fn test_complex_basic_arithmetic() {
         let z1 = Complex64::new(1.0, 2.0);
@@ -71,7 +71,7 @@ pub mod complex_num_test_suite {
         assert_almost_eq!(div.im, 2.0 / 25.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies wrapping arithmetic operations on complex integers.
     fn test_complex_wrapping_arithmetic() {
         let z1 = Complex::<u8>::new(250, 10);
@@ -92,7 +92,7 @@ pub mod complex_num_test_suite {
         assert_eq!(w_mul.im, 0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies try (fallible) addition, subtraction, multiplication and division.
     fn test_complex_fallible_try_arithmetic() {
         let z1 = Complex::<u8>::new(200, 10);
@@ -122,7 +122,7 @@ pub mod complex_num_test_suite {
         assert_eq!(Complex::<i8>::ONE.neg(), Complex::new(-1, 0));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies `TrySub` and identity constants for complex numbers.
     fn test_complex_fallible_sub_and_identities() {
         let a = Complex::new(5.0, 3.0);
@@ -133,7 +133,7 @@ pub mod complex_num_test_suite {
         let _ = Complex::<f64>::ONE;
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies square root calculations for complex edge cases (for example, zero, negative real parts).
     fn test_complex_square_root_edge_cases() {
         // Covers self.is_zero() early return
@@ -149,7 +149,7 @@ pub mod complex_num_test_suite {
         let _ = neg_both.sqrt();
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies complex power calculations for special exponents (for example, zero, one).
     fn test_complex_power_edge_cases() {
         let zero = Complex::<f64>::zero();
@@ -161,7 +161,7 @@ pub mod complex_num_test_suite {
         assert_eq!(one.pow(&two), one);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies that complex epsilon scales appropriately with internal numeric precision.
     fn test_complex_epsilon_precision() {
         let eps = Complex::<f32>::epsilon();
@@ -169,7 +169,7 @@ pub mod complex_num_test_suite {
         assert_almost_eq!(eps.im, 0.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies addition commutativity of complex numbers.
     fn test_complex_addition_commutativity() {
         let z1 = Complex64::new(1.2, 3.4);
@@ -178,7 +178,7 @@ pub mod complex_num_test_suite {
         assert_almost_eq!((z1 + z2).im, (z2 + z1).im);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies multiplication commutativity of complex numbers.
     fn test_complex_multiplication_commutativity() {
         let z1 = Complex64::new(1.2, 3.4);
@@ -187,7 +187,7 @@ pub mod complex_num_test_suite {
         assert_almost_eq!((z1 * z2).im, (z2 * z1).im);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies distributive property of complex numbers: z1 * (z2 + z3) == z1 * z2 + z1 * z3.
     fn test_complex_distributivity() {
         let z1 = Complex64::new(1.0, 2.0);
@@ -199,7 +199,7 @@ pub mod complex_num_test_suite {
         assert_almost_eq!(left.im, right.im);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies additive and multiplicative identities of complex numbers.
     fn test_complex_additive_and_multiplicative_identities() {
         let z = Complex64::new(4.2, -1.1);
@@ -212,7 +212,7 @@ pub mod complex_num_test_suite {
         assert_almost_eq!((z * one).im, z.im);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies construction of complex numbers using standard constructors.
     fn test_complex_construction() {
         let z = Complex32::new(1.0, 2.0);
@@ -220,7 +220,7 @@ pub mod complex_num_test_suite {
         assert_almost_eq!(z.im, 2.0_f32);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies construction of complex numbers from a real component.
     fn test_complex_construction_from_real() {
         let z = Complex32::from_real(5.0);
@@ -228,7 +228,7 @@ pub mod complex_num_test_suite {
         assert_almost_eq!(z.im, 0.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies construction of complex numbers from an imaginary component.
     fn test_complex_construction_from_imag() {
         let z = Complex32::from_imag(5.0);
@@ -236,7 +236,7 @@ pub mod complex_num_test_suite {
         assert_almost_eq!(z.im, 5.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies polar-coordinate creation of complex numbers.
     fn test_complex_construction_from_polar() {
         let r = 2.0_f32;
@@ -247,7 +247,7 @@ pub mod complex_num_test_suite {
         assert_almost_eq!(z.im, expected, 1e-5_f32);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies round-trip polar form conversion (polar -> cartesian -> polar).
     fn test_complex_polar_form_roundtrip() {
         let z = Complex64::new(3.0, 4.0);
@@ -258,7 +258,7 @@ pub mod complex_num_test_suite {
         assert_almost_eq!(z.im, z_reconstructed.im);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies complex conjugate operations.
     fn test_complex_conjugate() {
         let z = Complex64::new(3.0, 4.0).conj();
@@ -277,14 +277,14 @@ pub mod complex_num_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies complex magnitude (absolute value/hypot) calculation.
     fn test_complex_magnitude() {
         let z = Complex64::new(3.0, 4.0);
         assert_almost_eq!(z.magnitude(), 5.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies complex argument (phase angle) calculation across all 4 quadrants.
     fn test_complex_argument_phase() {
         let z1 = Complex64::new(1.0, 1.0);
@@ -303,7 +303,7 @@ pub mod complex_num_test_suite {
         assert_almost_eq!(q4.arg(), -f64::PI / 4.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies calculation of DSP twiddle factors using exponential functions.
     fn test_complex_twiddle_factors() {
         let n = 4.0;
@@ -321,14 +321,14 @@ pub mod complex_num_test_suite {
         assert_almost_eq!(twiddle2.im, 0.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies the ABI size and alignment requirements for the complex float type.
     fn test_complex_ffi_size_and_alignment() {
         assert_eq!(size_of::<Complex64>(), 16);
         assert_eq!(align_of::<Complex64>(), 8);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies binary memory representation of complex numbers using unsafe transmute.
     fn test_complex_ffi_memory_representation() {
         let z = Complex64::new(f64::PI, -2.71);
@@ -338,7 +338,7 @@ pub mod complex_num_test_suite {
         assert_almost_eq!(array[1], -2.71);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies propagation of NaN values through complex addition.
     fn test_complex_nan_propagation() {
         let z1 = Complex64::new(1.0, 2.0);
@@ -348,7 +348,7 @@ pub mod complex_num_test_suite {
         assert!(result.re.is_nan());
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies that extreme magnitude calculations involving infinity do not overflow to NaN.
     fn test_complex_infinity_magnitude() {
         let z = Complex64::new(f64::INFINITY, 5.0);
@@ -358,7 +358,7 @@ pub mod complex_num_test_suite {
         assert!(z2.magnitude().is_infinite());
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies complex square root calculation handles the branch cut correctly.
     fn test_complex_square_root_branch_cut() {
         // sqrt(-4) should be 2i, correctly handling the sign of 0.0
@@ -379,7 +379,7 @@ pub mod complex_num_test_suite {
         assert_almost_eq!(sqrt_mixed.im, 1.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies that division by complex zero results in NaN for both components.
     fn test_complex_division_by_zero() {
         let z = Complex64::new(1.0, 2.0);
@@ -395,7 +395,7 @@ pub mod complex_num_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies complex exponential calculations (for example, Euler's identity).
     fn test_complex_exponential() {
         // e^(i * PI) = -1
@@ -405,7 +405,7 @@ pub mod complex_num_test_suite {
         assert_almost_eq!(result.im, 0.0, 1e-5_f32);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies complex natural and base-10 logarithm calculations.
     fn test_complex_natural_logarithm() {
         // ln(-1) = i * PI
@@ -419,7 +419,7 @@ pub mod complex_num_test_suite {
         assert_almost_eq!(log10_real.im, 0.0, 1e-12_f64);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies complex trigonometric functions (sin, cos, tan).
     fn test_complex_trigonometric_functions() {
         // sin(0) = 0
@@ -437,7 +437,7 @@ pub mod complex_num_test_suite {
         assert_almost_eq!(tan_z.im, 0.0, 1e-12_f64);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies complex inverse trigonometric functions (asin, acos, atan).
     fn test_complex_inverse_trigonometric_functions() {
         let z = Complex64::new(0.5, 0.5);
@@ -458,7 +458,7 @@ pub mod complex_num_test_suite {
         assert_almost_eq!(tan_atan.im, z.im, 1e-12_f64);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies other signed and fallible operations for full branch coverage.
     fn test_complex_uncovered_signed_and_fallible_methods() {
         let z1 = Complex::<f64>::new(-3.0, -4.0);

@@ -137,7 +137,7 @@ pub mod subprogram_test_suite {
 
     // --- Fuzzing Tests ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Fuzzes GEMM with randomized inputs to verify that symmetric input topologies preserve symmetry in output.
     fn test_subprograms_fuzz_symmetric_gemm_topology() {
         let mut rng = _rand_lcg(1234);
@@ -166,7 +166,7 @@ pub mod subprogram_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Fuzzes GEMV to verify distributive property: M(v1 + v2) == Mv1 + Mv2.
     fn test_subprograms_fuzz_distributive_gemv_bounds() {
         let mut rng = _rand_lcg(5678);
@@ -214,7 +214,7 @@ pub mod subprogram_test_suite {
 
     // --- Level 1 Subprograms ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies AXPY vector scaling and addition (y = a * x + y) on f32.
     fn test_subprograms_level1_axpy_f32() {
         let x = ArrayStorage::<f32, 3, 1>::from_array([[1.0, 2.0, 3.0]]);
@@ -225,7 +225,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(unsafe { *y.get_unchecked(2, 0) }, 12.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies AXPY vector scaling and addition (y = a * x + y) on f64.
     fn test_subprograms_level1_axpy_f64() {
         let x = ArrayStorage::<f64, 3, 1>::from_array([[1.0, 2.0, 3.0]]);
@@ -236,7 +236,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(unsafe { *y.get_unchecked(2, 0) }, 12.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies SCAL vector scaling in place (x = a * x) on f32.
     fn test_subprograms_level1_scal_f32() {
         let mut x = ArrayStorage::<f32, 3, 1>::from_array([[1.0, 2.0, 3.0]]);
@@ -246,7 +246,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(unsafe { *x.get_unchecked(2, 0) }, 6.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies RealScal on complex vectors.
     fn test_subprograms_level1_real_scal() {
         let mut x = ArrayStorage::<Complex32, 2, 1>::from_array([[
@@ -260,7 +260,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(unsafe { x.get_unchecked(1, 0).im }, 8.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies DOT product calculation on f32 vectors.
     fn test_subprograms_level1_dot_f32() {
         let x = ArrayStorage::<f32, 3, 1>::from_array([[1.0, 2.0, 3.0]]);
@@ -269,7 +269,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(result, 32.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies NRM2 Euclidean norm calculation on f32 vectors.
     fn test_subprograms_level1_nrm2_f32() {
         let x = ArrayStorage::<f32, 2, 1>::from_array([[3.0, 4.0]]);
@@ -277,7 +277,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(result, 5.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies IAMAX index calculation for maximum absolute value on f32 vectors.
     fn test_subprograms_level1_iamax_f32() {
         let x = ArrayStorage::<f32, 3, 1>::from_array([[1.0, -5.0, 3.0]]);
@@ -285,7 +285,7 @@ pub mod subprogram_test_suite {
         assert_eq!(result, 1);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies Dotc (conjugated dot product), Asum, Swap, and Rot kernels.
     fn test_subprograms_level1_additional_kernels() {
         let x = ArrayStorage::<Complex32, 2, 1>::from_array([[
@@ -329,7 +329,7 @@ pub mod subprogram_test_suite {
 
     // --- Level 2 Subprograms ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies GEMV matrix-vector multiplication (y = alpha * A * x + beta * y) on f32.
     fn test_subprograms_level2_gemv_f32() {
         let a = ArrayStorage::<f32, 2, 2>::from_array([[1.0, 3.0], [2.0, 4.0]]);
@@ -340,7 +340,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(unsafe { *y.get_unchecked(1, 0) }, 7.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies GEMV with NaN-safe beta = 0 scaling (C-3).
     fn test_subprograms_level2_gemv_nan_safe_beta_zero() {
         let a = ArrayStorage::<f32, 2, 2>::from_array([[1.0, 3.0], [2.0, 4.0]]);
@@ -352,7 +352,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(unsafe { *y.get_unchecked(1, 0) }, 7.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies Hemv with NaN-safe beta = 0 scaling (C-3, §6.1.2).
     fn test_subprograms_level2_hemv_nan_safe_beta_zero() {
         let a = ArrayStorage::<Complex64, 2, 2>::from_array([
@@ -383,7 +383,7 @@ pub mod subprogram_test_suite {
         assert!(y.get(1, 0).unwrap().im.is_finite());
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies Spmv with NaN-safe beta = 0 scaling (C-3, §6.1.2).
     fn test_subprograms_packed_spmv_nan_safe_beta_zero() {
         let ap = SymmetricPackedStorage::<f32, 2, 3>::new(
@@ -398,7 +398,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(*y.get(1, 0).unwrap(), 4.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
     /// Verifies Geru, Gerc, Symv, Hemv, Syr, Syr2, Her, Her2, Trmv, and Trsv Level 2 kernels.
     fn test_subprograms_level2_additional_kernels() {
@@ -526,7 +526,7 @@ pub mod subprogram_test_suite {
 
     // --- Packed BLAS ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies Spmv, Hpmv, Spr, Spr2, Hpr, Hpr2, Tpmv, and Tpsv packed operations.
     fn test_subprograms_packed_blas() {
         let ap = SymmetricPackedStorage::<f32, 2, 3>::new(
@@ -595,7 +595,7 @@ pub mod subprogram_test_suite {
 
     // --- Level 3 Subprograms ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies GEMM matrix-matrix multiplication (C = alpha * A * B + beta * C) on f32.
     fn test_subprograms_level3_gemm_f32() {
         let a = ArrayStorage::<f32, 2, 2>::from_array([[1.0, 3.0], [2.0, 4.0]]);
@@ -616,7 +616,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(unsafe { *c.get_unchecked(1, 1) }, 4.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies GEMM with NaN-safe beta = 0 scaling (C-3).
     fn test_subprograms_level3_gemm_nan_safe_beta_zero() {
         let a = ArrayStorage::<f32, 2, 2>::from_array([[1.0, 3.0], [2.0, 4.0]]);
@@ -640,7 +640,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(unsafe { *c.get_unchecked(1, 1) }, 4.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies Syrk, Syr2k, and Symm Level 3 kernels.
     fn test_subprograms_level3_syrk_syr2k_symm() {
         let a = ArrayStorage::<f32, 2, 2>::from_array([[1.0, 3.0], [2.0, 4.0]]);
@@ -683,7 +683,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(unsafe { *sym_c.get_unchecked(0, 1) }, 1.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies Trmm and Trsm Level 3 triangular kernels.
     fn test_subprograms_level3_trmm_trsm() {
         let tri =
@@ -745,7 +745,7 @@ pub mod subprogram_test_suite {
 
     // --- Sparse BLAS ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies Csrmv, Csrmm, and SpDotu/SpDotc/SpAxpy kernels.
     fn test_subprograms_sparse_blas() {
         let mut coo = ArrayCooStorage::<f32, 2, 2, 4>::new();
@@ -777,7 +777,7 @@ pub mod subprogram_test_suite {
 
     // --- LAPACK Direct Solvers & Factorizations ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies Cholesky factorization (Potrf), solver (Potrs), and failure on non-positive definite matrix.
     fn test_subprograms_lapack_potrf_potrs() {
         // A = [[4, 2], [2, 2]], SPD.
@@ -810,7 +810,7 @@ pub mod subprogram_test_suite {
         assert_eq!(err_c, Err(LinAlgError::NotPositiveDefinite));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies Packed Cholesky factorization (Pptrf) and solver (Pptrs).
     fn test_subprograms_lapack_pptrf_pptrs() {
         let mut ap = SymmetricPackedStorage::<f64, 2, 3>::new(
@@ -846,7 +846,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(unsafe { *b_u.get_unchecked(1, 0) }, 2.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies LU factorization (Getrf) and solver (Getrs).
     fn test_subprograms_lapack_getrf_getrs() {
         let mut a =
@@ -882,7 +882,7 @@ pub mod subprogram_test_suite {
         assert_eq!(err_getrs, Err(LinAlgError::WorkspaceTooSmall));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies QR factorization (Geqrf) and Ormqr/Unmqr application.
     fn test_subprograms_lapack_geqrf_ormqr() {
         let mut a =
@@ -908,7 +908,7 @@ pub mod subprogram_test_suite {
         assert!(matches!(err, Err(LinAlgError::WorkspaceTooSmall)));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// `her2k` reads `k` from the columns of a non-transposed operand.
     fn test_subprograms_her2k_non_square_operand() {
         // A and B are 2 x 3; C = A B^T + B A^T is 2 x 2.
@@ -937,7 +937,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(*c.get(1, 1).unwrap(), 10.0, 1e-12);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// `syr2k` reads `k` from the columns of a non-transposed operand.
     fn test_subprograms_syr2k_non_square_operand() {
         // A and B are 2 x 3; C = A B^T + B A^T is 2 x 2.
@@ -966,7 +966,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(*c.get(1, 1).unwrap(), 10.0, 1e-12);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Workspace arguments may be larger than required and are rejected only
     /// when smaller.
     fn test_subprograms_workspace_size_boundaries() {
@@ -1031,7 +1031,7 @@ pub mod subprogram_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// The eigensolver reads only the stored triangle, and a small rotation
     /// keeps each eigenvalue near the diagonal entry it came from.
     fn test_subprograms_syev_triangle_and_rotation_branch() {
@@ -1080,7 +1080,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(w[1], 2.0 + root, 1e-9);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies real symmetric Jacobi eigensolver (Syev).
     fn test_subprograms_lapack_syev() {
         let mut a =
@@ -1110,7 +1110,7 @@ pub mod subprogram_test_suite {
         assert!(matches!(err, Err(LinAlgError::WorkspaceTooSmall)));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies complex Hermitian Jacobi eigensolver (Heev).
     fn test_subprograms_lapack_heev() {
         let mut a = ArrayStorage::<Complex64, 2, 2>::from_array([
@@ -1132,7 +1132,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(w[0] * w[1], 3.0, 1e-10);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     #[allow(clippy::too_many_lines)]
     /// Verifies that Syev and Heev return Err(LinAlgError::MaxIterationsReached) on non-converging state.
     fn test_subprograms_syev_heev_max_iterations_reached() {
@@ -1232,7 +1232,7 @@ pub mod subprogram_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     #[allow(clippy::too_many_lines)]
     /// Verifies WorkspaceTooSmall errors for LAPACK routines Geqrf, Ormqr, Unmqr, Syev, and Heev.
     fn test_subprograms_lapack_workspace_too_small() {
@@ -1317,7 +1317,7 @@ pub mod subprogram_test_suite {
         assert_eq!(err_heev, Err(LinAlgError::WorkspaceTooSmall));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     #[allow(clippy::too_many_lines)]
     /// Verifies Level 2 complex Hermitian updates (Hemv, Her, Her2) and algebraic invariants.
     fn test_subprograms_level2_and_complex_invariants() {
@@ -1484,7 +1484,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(y_1x1.get(0, 0).unwrap().im, expected_1x1.im);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies bit-exact execution of integer Level 1, 2, 3 BLAS over u8, u16, u32, i32.
     fn test_subprograms_integer_blas_bit_exact() {
         type Q8 = crate::math::fixed_num::Fixed<i16, 8>;
@@ -1551,7 +1551,7 @@ pub mod subprogram_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies analytical backward error and residual bounds scaled by N * EPS * ||A|| * ||x||.
     fn test_subprograms_residual_bounds_gemv_gemm() {
         let a = ArrayStorage::<f64, 3, 3>::from_array([
@@ -1595,7 +1595,7 @@ pub mod subprogram_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     #[allow(clippy::too_many_lines)]
     /// GEMM residual `‖C_comp − C_exact‖_∞ ≤ N·EPS·‖A‖_∞‖B‖_∞` with no floor.
     fn test_subprograms_residual_bounds_gemm() {
@@ -1643,7 +1643,7 @@ pub mod subprogram_test_suite {
         assert!(_residual_inf_f64(&c_inexact, &c_ref) <= bound);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies POTRF reconstruction residual against a Higham-style bound.
     fn test_subprograms_residual_bounds_potrf() {
         let a = ArrayStorage::<f64, 3, 3>::from_array([
@@ -1685,7 +1685,7 @@ pub mod subprogram_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     #[allow(clippy::too_many_lines)]
     /// QR residual `‖A − QR‖_∞` and orthogonality `‖QᵀQ − I‖_∞` without a floor.
     fn test_subprograms_residual_bounds_geqrf() {
@@ -1753,7 +1753,7 @@ pub mod subprogram_test_suite {
         assert!(_residual_inf_f64(&qtq, &ident) <= n * f64::EPSILON);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     #[allow(clippy::too_many_lines)]
     /// LU residual `‖PA − LU‖_∞` without a floor.
     fn test_subprograms_residual_bounds_getrf() {
@@ -1803,7 +1803,7 @@ pub mod subprogram_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     #[allow(clippy::too_many_lines)]
     /// Symmetric eigen residual `‖AV − VΛ‖_∞` and `‖VᵀV − I‖_∞`.
     fn test_subprograms_residual_bounds_syev() {
@@ -1856,7 +1856,7 @@ pub mod subprogram_test_suite {
         assert!(_residual_inf_f64(&vtv, &ident) <= n * f64::EPSILON);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     #[allow(clippy::too_many_lines)]
     /// Hermitian eigen residual `‖AU − UΛ‖_∞` and `‖UᴴU − I‖_∞`.
     fn test_subprograms_residual_bounds_heev() {
@@ -1913,7 +1913,7 @@ pub mod subprogram_test_suite {
         assert!(_residual_inf_c64(&uhu, &ident) <= n * f64::EPSILON);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     #[allow(clippy::too_many_lines)]
     /// 3×3 Hermitian Heev: eigenvalues and `‖AU − UΛ‖_∞` (catches `s`/`s̄` swap).
     ///
@@ -2001,7 +2001,7 @@ pub mod subprogram_test_suite {
         assert!(_residual_inf_c64(&uhu, &ident) <= n * f64::EPSILON * 10.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     #[allow(clippy::too_many_lines)]
     /// `Unmqr` `Side::Right` residual `C ← C Q` against formed `Q`.
     fn test_subprograms_residual_bounds_unmqr_right() {
@@ -2059,7 +2059,7 @@ pub mod subprogram_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     #[allow(clippy::too_many_lines)]
     /// Verifies mathematical equivalence between packed, sparse, and dense operations.
     fn test_subprograms_packed_sparse_dense_equivalence() {
@@ -2234,7 +2234,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(dot_c_dense.im, dot_c_sparse.im);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies negative increment execution on reversed StorageView for Axpy.
     fn test_subprograms_negative_increment_reversed_views() {
         let x_data = [1.0f64, 2.0, 3.0];
@@ -2299,7 +2299,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(yg_rev_data[1], 3.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Kernel smoke: `Syrk` then `Potrf` on a 2×2 SPD Gram matrix.
     /// Not a §6.2 Val-1 discharge (10k-step covariance is deferred).
     fn test_subprograms_syrk_potrf_kernel_smoke() {
@@ -2329,7 +2329,7 @@ pub mod subprogram_test_suite {
         assert!(DefaultBlas::potrf(UpLo::Lower, &mut l).is_ok());
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Kernel smoke: `Csrmv` on a small lower-bidiagonal CSR operand.
     /// Not a §6.2 Val-2 discharge (Cortex-M7 timing is deferred).
     fn test_subprograms_csrmv_kernel_smoke() {
@@ -2347,7 +2347,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(x_pred.as_slice()[1], -0.8 * 1.0 + 1.0 * 0.5, 1e-10);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Kernel smoke: `Herk` then `Heev` on a 2×2 Gram matrix.
     /// Not a §6.2 Val-3 discharge (MATLAB/SciPy spectra are deferred).
     fn test_subprograms_herk_heev_kernel_smoke() {
@@ -2373,7 +2373,7 @@ pub mod subprogram_test_suite {
         assert!(w[1] >= w[0]);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Kernel smoke: `Scal` then `Axpy` on a length-4 state.
     /// Not a §6.2 Val-4 discharge (O(N) scaling is deferred).
     fn test_subprograms_scal_axpy_kernel_smoke() {
@@ -2390,7 +2390,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(modal_state.as_slice()[3], 4.0 * 0.95 + 0.4, 1e-10);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Kernel smoke: `Gemv` with a row-major gain and column-major residual.
     /// Not a §6.2 Val-5 discharge (observer workflow is deferred).
     fn test_subprograms_gemv_mixed_layout_kernel_smoke() {
@@ -2409,7 +2409,7 @@ pub mod subprogram_test_suite {
         assert_eq!(correction.as_slice(), &[0.5, 0.5]);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     #[allow(clippy::too_many_lines)]
     fn test_subprograms_verification_oracles() {
         let ha = ArrayStorage::<Complex64, 2, 2>::from_array([
@@ -2567,7 +2567,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(*t9.get(0, 0).unwrap(), 1.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     #[allow(clippy::too_many_lines, clippy::float_cmp)]
     fn test_subprograms_untaken_trans_uplo_side_diag_arms() {
         let a_c = ArrayStorage::<Complex64, 2, 2>::from_array([
@@ -3116,7 +3116,7 @@ pub mod subprogram_test_suite {
         .unwrap();
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     #[allow(clippy::too_many_lines)]
     fn test_herk_unmqr_trans_distinct_from_conjtrans() {
         // HERK: Trans must preserve a real Hermitian diagonal (coerced to AᴴA).

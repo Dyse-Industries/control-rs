@@ -1,5 +1,65 @@
 //! Fixed-point number mathematical ETS and unit test suite.
 
+// Property-based coverage of product exactness and rescale round-tripping
+// (§6.1 items 3 and 4 of `fixed-num-design.md`). Kept separate from unit
+// tests: `proptest` is a host-only dev-dependency.
+mod fixed_num_property_tests {
+    use crate::math::fixed_num::Fixed;
+    use crate::math::ops::SaturatingMul;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Exact product rescale test (§6.1 item 3 of fixed-num-design.md):
+        /// For random raw pairs, the widening multiplication result equals
+        /// the reference product rounded to the grid with round-ties-to-even,
+        /// error bounded by DELTA / 2.0.
+        #[test]
+        fn prop_widening_product_exactness(
+            raw_a in -16384i16..=16383i16,
+            raw_b in -16384i16..=16383i16,
+        ) {
+            type Q14 = Fixed<i16, 14>;
+            let a = Q14::from_bits(raw_a);
+            let b = Q14::from_bits(raw_b);
+            let prod = a.saturating_mul(&b);
+            let ref_prod = a.to_num() * b.to_num();
+            let delta = 1.0 / f64::from(1u32 << 14);
+            let half_delta = delta / 2.0 + 1e-12;
+
+            if ref_prod <= f64::from(i16::MAX) * delta && ref_prod >= f64::from(i16::MIN) * delta {
+                let diff = (prod.to_num() - ref_prod).abs();
+                prop_assert!(diff <= half_delta);
+            }
+        }
+
+        /// Rescale round-trip test (§6.1 item 4 of fixed-num-design.md):
+        /// Rescaling from q to r and back is the identity when r >= q,
+        /// and within DELTA/2 when r < q.
+        #[test]
+        fn prop_rescale_round_trip(
+            raw in -4096i16..=4095i16,
+        ) {
+            type Q12 = Fixed<i16, 12>;
+            type Q14 = Fixed<i16, 14>;
+            type Q10 = Fixed<i16, 10>;
+
+            let val_q12 = Q12::from_bits(raw);
+
+            // r >= q: Upscaling to Q14 and back to Q12 is exact identity
+            let up_q14: Q14 = val_q12.rescale();
+            let back_q12: Q12 = up_q14.rescale();
+            prop_assert_eq!(back_q12, val_q12);
+
+            // r < q: Downscaling to Q10 and back to Q12 is within DELTA/2 of Q10
+            let down_q10: Q10 = val_q12.rescale();
+            let back_from_down: Q12 = down_q10.rescale();
+            let delta_q10 = 1.0 / f64::from(1u32 << 10);
+            let diff = (back_from_down.to_num() - val_q12.to_num()).abs();
+            prop_assert!(diff <= delta_q10 / 2.0 + 1e-12);
+        }
+    }
+}
+
 /// Unit test suite for fixed-point number operations.
 pub mod fixed_num_test_suite {
     use crate::math::{
@@ -36,7 +96,7 @@ pub mod fixed_num_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies single-word memory footprint and alignment across all supported primitives (NFR-1).
     fn test_memory_footprint_and_alignment() {
         assert_eq!(size_of::<Q7>(), size_of::<i8>());
@@ -64,7 +124,7 @@ pub mod fixed_num_test_suite {
         assert_eq!(align_of::<UQ63>(), align_of::<u64>());
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies associated constants and bit-level constructors (FR-1, FR-2).
     fn test_constants_and_constructors() {
         type Q14 = Fixed<i16, 14>;
@@ -91,7 +151,7 @@ pub mod fixed_num_test_suite {
         assert_eq!(max.to_bits(), i16::MAX);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies basic addition, subtraction, and negation with saturation (FR-3).
     fn test_addition_subtraction_negation_saturating() {
         type Q14 = Fixed<i16, 14>;
@@ -123,7 +183,7 @@ pub mod fixed_num_test_suite {
         assert_eq!(neg_min, Q14::MAX);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies widening multiplication with exact intermediate and convergent rounding (FR-4).
     fn test_widening_multiplication() {
         type Q14 = Fixed<i16, 14>;
@@ -144,7 +204,7 @@ pub mod fixed_num_test_suite {
         assert_eq!(big_prod, Q14::MAX);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies explicit scale conversion and rescaling round-trips (FR-5).
     fn test_scale_rescaling() {
         type Q14 = Fixed<i16, 14>;
@@ -163,7 +223,7 @@ pub mod fixed_num_test_suite {
         assert_eq!(sat_q14, Q14::MAX);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies fallible arithmetic operations return overflow error at bounds.
     fn test_fallible_try_operations() {
         type Q14 = Fixed<i16, 14>;
@@ -198,7 +258,7 @@ pub mod fixed_num_test_suite {
         assert_eq!(big_a.try_mul(&big_b), Err(ArithmeticError::Overflow));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies numeric trait participation (Zero, One, Conjugate, Scalar, Signed, `AdditiveGroup`, `SaturatingInteger`).
     fn test_numeric_trait_hierarchy() {
         type Q13 = Fixed<i16, 13>;
@@ -230,7 +290,7 @@ pub mod fixed_num_test_suite {
         assert_eq!(val.saturating_mul(&val), Q13::from_num(0.25));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies unsigned fixed-point representations.
     fn test_unsigned_fixed_point() {
         use crate::math::num_traits::Unsigned;
@@ -270,7 +330,7 @@ pub mod fixed_num_test_suite {
         assert!((rescaled.to_num() - 1.5).abs() < 1e-2);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Signed product tie (raw product −3, `SHIFT = 1`) rounds to −2
     /// (ties-to-even), not −1 (§6.1 item 5 of `fixed-num-design.md`).
     fn test_signed_product_tie_rounds_to_even() {
@@ -280,7 +340,7 @@ pub mod fixed_num_test_suite {
         assert_eq!((a * b).to_bits(), -2);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies $Q$-scale division: exact quotients, the ties-to-even rounding
     /// shared with `Mul` (FR-4), saturation at division by zero and overflow
     /// (FR-3) and the `TryDiv` error split.
@@ -336,7 +396,7 @@ pub mod fixed_num_test_suite {
         assert_eq!(acc.to_bits(), Q8::from_num(1.5).to_bits());
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies unsigned $Q$-scale division saturates to `MAX` on division by
     /// zero and overflow, and that `0 / 0 = 0` (FR-3).
     fn test_unsigned_division_saturating() {
@@ -356,7 +416,7 @@ pub mod fixed_num_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies gate separation between `OneRepresentable` and `TwoRepresentable` markers (§6.1.5).
     fn test_gate_separation_boundary_pin() {
         type Q14 = Fixed<i16, 14>;
@@ -382,7 +442,7 @@ pub mod fixed_num_test_suite {
         // Note: assert_sat_int::<Q14>() and assert_two_rep::<Q14>() fail compile-time trait bound
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_fixed_display_assign_and_rescale() {
         use core::fmt::Write;
         type Q1 = Fixed<i16, 1>;
@@ -437,7 +497,7 @@ pub mod fixed_num_test_suite {
         assert_eq!(u_max.try_mul(&u_max), Err(ArithmeticError::Overflow));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_scale_to_f64_factor_boundary_shifts() {
         type Q62 = Fixed<i64, 62>;
         type Q63 = Fixed<i64, 63>;
@@ -530,7 +590,7 @@ pub mod fixed_num_test_suite {
         raws
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies five-term `MulAcc` chains round once with ties to even and
     /// saturate only at the output (`fixed-num-design.md` FR-8, VC-14.1).
     fn test_mac_chain_single_rounding() {
@@ -557,66 +617,5 @@ pub mod fixed_num_test_suite {
             big,
         );
         assert_eq!(Fixed::<i8, 7>::from_acc(acc).to_bits(), 126);
-    }
-}
-
-// Property-based coverage of product exactness and rescale round-tripping
-// (§6.1 items 3 and 4 of `fixed-num-design.md`). Kept separate from unit
-// tests: `proptest` is a host-only dev-dependency.
-#[cfg(test)]
-mod fixed_num_property_tests {
-    use crate::math::fixed_num::Fixed;
-    use crate::math::ops::SaturatingMul;
-    use proptest::prelude::*;
-
-    proptest! {
-        /// Exact product rescale test (§6.1 item 3 of fixed-num-design.md):
-        /// For random raw pairs, the widening multiplication result equals
-        /// the reference product rounded to the grid with round-ties-to-even,
-        /// error bounded by DELTA / 2.0.
-        #[test]
-        fn prop_widening_product_exactness(
-            raw_a in -16384i16..=16383i16,
-            raw_b in -16384i16..=16383i16,
-        ) {
-            type Q14 = Fixed<i16, 14>;
-            let a = Q14::from_bits(raw_a);
-            let b = Q14::from_bits(raw_b);
-            let prod = a.saturating_mul(&b);
-            let ref_prod = a.to_num() * b.to_num();
-            let delta = 1.0 / f64::from(1u32 << 14);
-            let half_delta = delta / 2.0 + 1e-12;
-
-            if ref_prod <= f64::from(i16::MAX) * delta && ref_prod >= f64::from(i16::MIN) * delta {
-                let diff = (prod.to_num() - ref_prod).abs();
-                prop_assert!(diff <= half_delta);
-            }
-        }
-
-        /// Rescale round-trip test (§6.1 item 4 of fixed-num-design.md):
-        /// Rescaling from q to r and back is the identity when r >= q,
-        /// and within DELTA/2 when r < q.
-        #[test]
-        fn prop_rescale_round_trip(
-            raw in -4096i16..=4095i16,
-        ) {
-            type Q12 = Fixed<i16, 12>;
-            type Q14 = Fixed<i16, 14>;
-            type Q10 = Fixed<i16, 10>;
-
-            let val_q12 = Q12::from_bits(raw);
-
-            // r >= q: Upscaling to Q14 and back to Q12 is exact identity
-            let up_q14: Q14 = val_q12.rescale();
-            let back_q12: Q12 = up_q14.rescale();
-            prop_assert_eq!(back_q12, val_q12);
-
-            // r < q: Downscaling to Q10 and back to Q12 is within DELTA/2 of Q10
-            let down_q10: Q10 = val_q12.rescale();
-            let back_from_down: Q12 = down_q10.rescale();
-            let delta_q10 = 1.0 / f64::from(1u32 << 10);
-            let diff = (back_from_down.to_num() - val_q12.to_num()).abs();
-            prop_assert!(diff <= delta_q10 / 2.0 + 1e-12);
-        }
     }
 }

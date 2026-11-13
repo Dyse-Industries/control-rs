@@ -19,7 +19,7 @@ pub mod polynomial_test_suite {
     };
     use core::convert::TryFrom;
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_polynomial_evaluation() {
         // p(x) = 1 + 2x + 3x^2
         let p = ArrayPolynomial::<f64, 3>::from_coefficients([1.0, 2.0, 3.0]);
@@ -46,7 +46,7 @@ pub mod polynomial_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Horner backward error $\lvert p(x)-\hat p(x)\rvert \le \gamma_{2n}\tilde p(\lvert x\rvert)$
     /// (`polynomial-design.md` §6.3).
     fn test_horner_backward_error() {
@@ -68,7 +68,7 @@ pub mod polynomial_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_polynomial_complex_evaluation() {
         // p(x) = 1 + x^2 (roots at +/- j)
         let p = ArrayPolynomial::<f64, 3>::from_coefficients([1.0, 0.0, 1.0]);
@@ -78,7 +78,7 @@ pub mod polynomial_test_suite {
         assert_almost_eq!(res.im, 0.0, 1e-12);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_polynomial_arithmetic() {
         // p1(x) = 1 + 2x + 3x^2
         let p1 = ArrayPolynomial::<f64, 3>::from_coefficients([1.0, 2.0, 3.0]);
@@ -95,7 +95,7 @@ pub mod polynomial_test_suite {
         assert_eq!(neg.as_slice(), &[-1.0, -2.0, -3.0]);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_polynomial_derivative() {
         // p(x) = 5 + 3x + 4x^2 + 2x^3 -> p'(x) = 3 + 8x + 6x^2
         let p =
@@ -106,7 +106,7 @@ pub mod polynomial_test_suite {
         assert_eq!(dp.get(2), Some(&6.0));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_polynomial_integral() {
         // p(x) = 3 + 8x + 6x^2 -> \int p(x) dx with c0 = 5 -> 5 + 3x + 4x^2 + 2x^3
         let p =
@@ -118,7 +118,7 @@ pub mod polynomial_test_suite {
         assert_almost_eq!(integ.get(3).copied().unwrap(), 2.0, 1e-12);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_polynomial_multiplication() {
         // (1 + 2x) * (3 + 4x) = 3 + 10x + 8x^2
         let p1 = ArrayPolynomial::<f64, 2>::from_coefficients([1.0, 2.0]);
@@ -129,7 +129,7 @@ pub mod polynomial_test_suite {
         assert_eq!(conv.as_slice(), prod.as_slice());
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_polynomial_div_rem() {
         // (3 + 10x + 8x^2) / (1 + 2x) = (3 + 4x) rem 0
         let num =
@@ -151,7 +151,7 @@ pub mod polynomial_test_suite {
         let pr = ArrayPolynomial::<f64, 3>::from_roots([2.0, 3.0, 0.0]);
         assert_eq!(pr.to_coefficients(), [6.0, -5.0, 1.0]);
         let pr0 = ArrayPolynomial::<f64, 0>::from_roots([]);
-        assert_eq!(pr0.to_coefficients(), []);
+        assert_eq!(pr0.to_coefficients(), [0.0f64; 0]);
         let pr1 = ArrayPolynomial::<f64, 1>::from_roots([0.0]);
         assert_eq!(pr1.to_coefficients(), [1.0]);
 
@@ -199,7 +199,7 @@ pub mod polynomial_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_companion_matrix() {
         // Monic polynomial: p(x) = -6 - 5x + x^2  (roots: 6 and -1)
         let p = ArrayPolynomial::<f64, 3>::from_coefficients([-6.0, -5.0, 1.0]);
@@ -239,7 +239,7 @@ pub mod polynomial_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_cubic_quintic_bilinear() {
         let cubic = ArrayPolynomial::<f64, 4>::cubic(0.0, 1.0, 0.0, 0.0);
         assert_almost_eq!(cubic.evaluate(0.0), 0.0, 1e-12);
@@ -267,7 +267,7 @@ pub mod polynomial_test_suite {
         assert_almost_eq!(z.get(1).copied().unwrap(), 2.0, 1e-12);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_polynomial_constructors_and_storage() {
         let c = ArrayPolynomial::<f64, 1>::constant(4.0);
         assert_almost_eq!(c.evaluate(99.0), 4.0, 1e-12);
@@ -291,7 +291,7 @@ pub mod polynomial_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_polynomial_view() {
         let mut p =
             ArrayPolynomial::<f64, 3>::from_coefficients([1.0, 2.0, 3.0]);
@@ -308,7 +308,7 @@ pub mod polynomial_test_suite {
         assert_almost_eq!(p.evaluate(2.0), 20.0, 1e-12);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_quadratic_roots() {
         let order_pair = |a: f64, b: f64| -> (f64, f64) {
             if a <= b { (a, b) } else { (b, a) }
@@ -359,7 +359,7 @@ pub mod polynomial_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_quadratic_cancellation() {
         let order_pair = |a: f64, b: f64| -> (f64, f64) {
             if a <= b { (a, b) } else { (b, a) }
@@ -389,7 +389,7 @@ pub mod polynomial_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_generic_roots() {
         use crate::polynomial::RootError;
 

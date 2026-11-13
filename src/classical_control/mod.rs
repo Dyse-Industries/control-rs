@@ -49,6 +49,9 @@ pub mod response;
 pub mod routh;
 pub mod step;
 
+#[cfg(test)]
+mod tests;
+
 /// Canonical type-level encoding of `Const<N>`.
 pub(crate) type TypeNum<const N: usize> = <Const<N> as Dim>::TypeNum;
 

@@ -17,7 +17,7 @@ pub mod tensor_test_suite {
         TensorLayout,
     };
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_tensor_indexing_and_storage() {
         let t = ArrayTensor::<f32, 2, 3>::from_raw([
             [1.0, 2.0],
@@ -45,7 +45,7 @@ pub mod tensor_test_suite {
         assert_eq!(buf_mut.as_mut_slice().len(), 6);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_tensor_layout_shape_boundaries() {
         // Shape1D boundary
         assert_eq!(Shape1D::<4>::flat_offset(&[0]), Some(0));
@@ -85,7 +85,7 @@ pub mod tensor_test_suite {
         assert_eq!(Shape4D::<2, 3, 4, 5>::flat_offset(&[1, 2, 3]), None);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Interpolation on multi-cell axes with an off-centre fraction: a
     /// swapped corner weight or a stuck cell index changes the result.
     fn test_tensor_interpolation_multi_cell_axis() {
@@ -107,7 +107,7 @@ pub mod tensor_test_suite {
         assert_almost_eq!(plane.interpolate(&[0.25, 0.25]), 2.75, 1e-12);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Shape sizes are the products of their dimensions.
     fn test_tensor_shape_sizes() {
         assert_eq!(Shape1D::<5>::SIZE, 5);
@@ -116,7 +116,7 @@ pub mod tensor_test_suite {
         assert_eq!(Shape4D::<2, 3, 4, 5>::SIZE, 120);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// The provided `FlatBuffer` methods agree with the slice accessors.
     fn test_flat_buffer_provided_methods() {
         struct Buf<const N: usize>([f64; N]);
@@ -144,7 +144,7 @@ pub mod tensor_test_suite {
         assert_eq!(FlatBufferMut::as_mut_ptr(&mut full), expected);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_tensor_grid_interpolation() {
         // 2D grid: f(x, y) = [[0, 2], [4, 6]]
         let grid = ArrayTensor::<f32, 2, 2>::from_raw([[0.0, 4.0], [2.0, 6.0]]);
@@ -159,7 +159,7 @@ pub mod tensor_test_suite {
         assert_almost_eq!(grid.interpolate(&[1.0, 1.0]), 6.0, 1e-6);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_quantized_scalar_operations() {
         // Q7 format: 1.0 = 128 (overflows i8, so 0.5 = 64, 0.25 = 32)
         type Q7 = Quantized<i8, 7>;
@@ -178,7 +178,7 @@ pub mod tensor_test_suite {
         assert_almost_eq!(prod.dequantize(), 0.125, 0.01);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_activations() {
         let relu = Relu;
         assert_eq!(relu.apply(3.5f32), 3.5f32);
@@ -204,7 +204,7 @@ pub mod tensor_test_suite {
         assert_almost_eq!(steps.apply(3.0f32), 40.0f32, 1e-6);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_tensor_contract() {
         use crate::matrix::Owned;
         let a = ArrayTensor::<f64, 2, 3>::from_fn(|idx| {
@@ -242,7 +242,7 @@ pub mod tensor_test_suite {
         assert_almost_eq!(scaled.get(&[1, 0]).copied().unwrap(), 6.0, 1e-12);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_shape4d_and_view() {
         use crate::tensor::{ArrayTensor4D, Shape4D, TensorLayout};
         assert_eq!(Shape4D::<1, 2, 2, 2>::SIZE, 8);
@@ -262,7 +262,7 @@ pub mod tensor_test_suite {
         assert_eq!(m.get(0, 0), Some(&9.0));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     #[allow(clippy::too_many_lines, clippy::cognitive_complexity)]
     fn test_tensor_shape_interpolate_and_table_edges() {
         use crate::tensor::{
@@ -355,7 +355,7 @@ pub mod tensor_test_suite {
         assert_eq!(FlatBufferMut::as_mut_slice(&mut fvm).len(), 4);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_quantization_roundtrip_half_lsb() {
         type Q7 = Quantized<i8, 7>;
         let step = 1.0 / 128.0;
@@ -382,7 +382,7 @@ pub mod tensor_test_suite {
         assert!(max_err <= half);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_quantization_monotonicity() {
         type Q7 = Quantized<i8, 7>;
         let pairs = [
@@ -405,7 +405,7 @@ pub mod tensor_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_tensor_permute_square_matrix() {
         let square =
             ArrayTensor::<f32, 2, 2>::from_raw([[1.0, 2.0], [3.0, 4.0]]);
@@ -425,7 +425,7 @@ pub mod tensor_test_suite {
         assert_eq!(tr.get(&[1, 1]), Some(&4.0));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_tensor_permute_rectangular_matrix() {
         // Rectangular matrix transpose permutation [1, 0]
         let rect = ArrayTensor::<f32, 2, 3>::from_raw([
@@ -442,7 +442,7 @@ pub mod tensor_test_suite {
         assert_eq!(rect_tr.get(&[2, 1]), Some(&6.0));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_axes2d_conversions_and_helpers() {
         assert_eq!(Axes2D::try_from([0, 1]), Ok(Axes2D::Identity));
         assert_eq!(Axes2D::try_from([1, 0]), Ok(Axes2D::Transpose));
@@ -476,7 +476,6 @@ pub mod tensor_test_suite {
     }
 }
 
-#[cfg(test)]
 mod tensor_property_tests {
     use crate::tensor::Quantized;
     use proptest::prelude::*;

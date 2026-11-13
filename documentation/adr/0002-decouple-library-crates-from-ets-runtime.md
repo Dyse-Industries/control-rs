@@ -54,6 +54,8 @@ submodules from `control-rs-ets` and `control-rs-macros`:
   eliminating macro compilation overhead for downstream library consumers.
 - Good: Host unit tests are isolated from embedded target dispatch mechanics and
   linker sections.
+- Good: The core library unit tests are set up as basic cargo tests, no more
+  conditional compilation noise or procedural macro clutter.
 - Good: On-target test harnesses construct tests against the public API of
   `control-rs` rather than coupling to internal module layouts.
 - Bad: On-target firmware images cannot include core library tests, those

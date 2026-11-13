@@ -28,6 +28,117 @@
     clippy::similar_names
 )]
 
+// Property-based coverage of `ArrayStorage`/`StaticStorageView` index-mapping
+// invariants (FR-1 of `storage-trait-design.md`, §6.1 item 2). Kept separate
+// from unit tests: `proptest` is a host-only dev-dependency.
+mod storage_property_tests {
+    use crate::math::num_types::Const;
+    use crate::math::storage::{
+        ArrayCooStorage, ArrayCscStorage, ArrayCsrStorage, ArrayStorage,
+        ColMajor, DenseStorage, PackedStorage, SparseStorage,
+        StaticStorageView, StorageInit, SymmetricPackedStorage, ToCscStorage,
+        ToCsrStorage, UpLo,
+    };
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Every logical `(i, j)` in a 3x4 `ArrayStorage` reads back the
+        /// value it was constructed with and `offset()` matches the
+        /// column-major formula exactly (implying, over the full `i, j`
+        /// range, that the index mapping is injective).
+        #[test]
+        fn prop_array_storage_round_trips_every_index(
+            vals in proptest::collection::vec(any::<i32>(), 12),
+        ) {
+            let storage: ArrayStorage<i32, 3, 4> =
+                StorageInit::<i32, Const<3>, Const<4>>::from_fn(|i, j| vals[j.saturating_mul(3).saturating_add(i)]);
+
+            for j in 0..4 {
+                for i in 0..3 {
+                    prop_assert_eq!(
+                        storage.get(i, j),
+                        Some(&vals[j.saturating_mul(3).saturating_add(i)])
+                    );
+                    prop_assert_eq!(storage.offset(i, j), j.saturating_mul(3).saturating_add(i) as isize);
+                }
+            }
+            prop_assert_eq!(storage.get(3, 0), None);
+            prop_assert_eq!(storage.get(0, 4), None);
+        }
+
+        /// `StaticStorageView` over an arbitrary slice reproduces the same
+        /// column-major index mapping as `ArrayStorage` for the same data.
+        #[test]
+        fn prop_storage_view_matches_array_storage(
+            vals in proptest::collection::vec(any::<i32>(), 6),
+        ) {
+            let array: ArrayStorage<i32, 2, 3> =
+                StorageInit::<i32, Const<2>, Const<3>>::from_fn(|i, j| vals[j.saturating_mul(2).saturating_add(i)]);
+            let view: StaticStorageView<'_, i32, Const<2>, Const<3>, ColMajor> =
+                StaticStorageView::new(&vals).unwrap();
+
+            for j in 0..3 {
+                for i in 0..2 {
+                    prop_assert_eq!(
+                        array.get(i, j),
+                        view.get(i, j)
+                    );
+                }
+            }
+        }
+
+        /// Upper packed index `i + j(j+1)/2` round-trips `value` for every
+        /// stored triangle slot, and `packed_index` is `None` on the
+        /// unstored triangle and out of bounds.
+        #[test]
+        fn prop_symmetric_packed_upper_index_map(
+            vals in proptest::collection::vec(any::<i32>(), 6),
+        ) {
+            let data = [vals[0], vals[1], vals[2], vals[3], vals[4], vals[5]];
+            let packed =
+                SymmetricPackedStorage::<i32, 3, 6>::new(data, UpLo::Upper);
+            for j in 0..3_usize {
+                for i in 0..=j {
+                    let idx = i.saturating_add(j.saturating_mul(j.saturating_add(1)) / 2);
+                    prop_assert_eq!(packed.packed_index(i, j), Some(idx));
+                    prop_assert_eq!(packed.value(i, j), Some(vals[idx]));
+                    prop_assert_eq!(packed.value(j, i), Some(vals[idx]));
+                }
+            }
+            prop_assert_eq!(packed.packed_index(1, 0), None);
+            prop_assert_eq!(packed.packed_index(2, 0), None);
+            prop_assert_eq!(packed.packed_index(3, 0), None);
+        }
+
+        /// COO → CSR/CSC preserves a fixed sparsity pattern's values.
+        #[test]
+        fn prop_coo_csr_csc_index_map(
+            v00 in any::<i32>(),
+            v11 in any::<i32>(),
+            v22 in any::<i32>(),
+            v02 in any::<i32>(),
+        ) {
+            let mut coo = ArrayCooStorage::<i32, 3, 3, 4>::new();
+            prop_assert!(coo.push(0, 0, v00).is_ok());
+            prop_assert!(coo.push(1, 1, v11).is_ok());
+            prop_assert!(coo.push(2, 2, v22).is_ok());
+            prop_assert!(coo.push(0, 2, v02).is_ok());
+            let csr: ArrayCsrStorage<i32, 3, 3, 4, 4> = coo.to_csr().unwrap();
+            let csc: ArrayCscStorage<i32, 3, 3, 4, 4> = coo.to_csc().unwrap();
+            prop_assert_eq!(csr.get(0, 0), Some(v00));
+            prop_assert_eq!(csr.get(1, 1), Some(v11));
+            prop_assert_eq!(csr.get(2, 2), Some(v22));
+            prop_assert_eq!(csr.get(0, 2), Some(v02));
+            prop_assert_eq!(csr.get(0, 1), Some(0));
+            prop_assert_eq!(csc.get(0, 0), Some(v00));
+            prop_assert_eq!(csc.get(1, 1), Some(v11));
+            prop_assert_eq!(csc.get(2, 2), Some(v22));
+            prop_assert_eq!(csc.get(0, 2), Some(v02));
+            prop_assert_eq!(csc.get(1, 0), Some(0));
+        }
+    }
+}
+
 pub mod storage_test_suite {
     use crate::assert_almost_eq;
     use crate::math::ConversionError;
@@ -51,7 +162,7 @@ pub mod storage_test_suite {
     };
     use crate::math::subprograms::level2::Gemv;
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies reversing an odd-length static array.
     fn test_storage_reverse_array_odd_length() {
         let array = [1, 2, 3, 4, 5];
@@ -59,7 +170,7 @@ pub mod storage_test_suite {
         assert_eq!(reversed, [5, 4, 3, 2, 1]);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies reversing an even-length static array.
     fn test_storage_reverse_array_even_length() {
         let array = [1, 2, 3, 4];
@@ -67,7 +178,7 @@ pub mod storage_test_suite {
         assert_eq!(reversed, [4, 3, 2, 1]);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies reversing a single-element array (identity behavior).
     fn test_storage_reverse_array_single_element() {
         let array = [1];
@@ -75,7 +186,7 @@ pub mod storage_test_suite {
         assert_eq!(reversed, [1]);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies populating a static array from an iterator with exact element count matching the array size.
     fn test_storage_array_from_iterator_exact() {
         let array: [i32; 5] = unsafe { array_from_iterator(0..5) };
@@ -89,7 +200,7 @@ pub mod storage_test_suite {
         let _array: [i32; 5] = unsafe { array_from_iterator(0..3) };
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies populating a static array from an iterator that produces more elements than the array size (extra items ignored).
     fn test_storage_array_from_iterator_excess_elements() {
         let array: [i32; 5] = unsafe { array_from_iterator(0..10) };
@@ -98,7 +209,7 @@ pub mod storage_test_suite {
 
     // --- ArrayStorage ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies `ArrayStorage::from_array` lays elements out column-major,
     /// matching `ContiguousStorage::ORDER` and `Storage::offset` (FR-1 +
     /// FR-3a of `storage-trait-design.md`).
@@ -117,7 +228,7 @@ pub mod storage_test_suite {
         assert_eq!(storage.get(1, 2), Some(&6));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies `get`/`get_mut` return `None` outside `[0, rows) x [0, cols)`
     /// (FR-1 + FR-4 of `storage-trait-design.md`).
     fn test_array_storage_bounds_checked_access() {
@@ -134,7 +245,7 @@ pub mod storage_test_suite {
         assert_eq!(storage.as_slice(), &[1, 2, 3, 42]);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies `StorageInit`'s four safe construction strategies (FR-5 of
     /// `storage-trait-design.md`).
     fn test_array_storage_init_strategies() {
@@ -157,7 +268,7 @@ pub mod storage_test_suite {
         assert_eq!(identity.as_slice(), &[1, 0, 0, 1]);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies `as_mut_slice` observes writes made through `get_mut` and
     /// vice versa (both paths address the same backing memory) (FR-3a of
     /// `storage-trait-design.md`).
@@ -170,7 +281,7 @@ pub mod storage_test_suite {
 
     // --- StaticStorageView / StaticStorageViewMut ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies `StaticStorageView` reproduces both row-major and column-major
     /// index mappings over the same backing slice without copying (FR-2 +
     /// FR-3b of `storage-trait-design.md`).
@@ -199,7 +310,7 @@ pub mod storage_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies both view constructors reject a backing slice whose length
     /// does not match `R::USIZE * C::USIZE` (FR-2 of `storage-trait-design.md`).
     fn test_storage_view_length_mismatch() {
@@ -218,7 +329,7 @@ pub mod storage_test_suite {
         ));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies `StaticStorageViewMut` writes are visible through the original
     /// borrowed slice once the view is dropped (FR-3b of
     /// `storage-trait-design.md`).
@@ -236,7 +347,7 @@ pub mod storage_test_suite {
 
     // --- BLAS Interoperability (FR-6) ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies a `ContiguousStorage` backend's `as_slice()`/`as_mut_slice()`
     /// feed directly into a BLAS subprogram trait (`GEMV`) with no
     /// intermediate copy and that `ORDER` matches the layout `GEMV`'s
@@ -277,7 +388,7 @@ pub mod storage_test_suite {
 
     // --- PivotStorage ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies `PivotStorage::identity` and `swap` maintain a permutation
     /// (FR-3 + FR-5 of `storage-trait-design.md`, the scratch-data backend
     /// category and its identity initialization).
@@ -291,7 +402,7 @@ pub mod storage_test_suite {
 
     // --- Packed Structured Storage Tests ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies `DiagonalStorage` operations and bounds.
     fn test_diagonal_storage() {
         use crate::math::storage::{
@@ -311,7 +422,7 @@ pub mod storage_test_suite {
         assert!(diag.set(0, 1, 5.0).is_err());
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies `SymmetricPackedStorage` upper and lower triangle indexing.
     fn test_symmetric_packed_storage() {
         use crate::math::storage::{
@@ -337,7 +448,7 @@ pub mod storage_test_suite {
         assert_eq!(sym_lower.value(0, 1), Some(2.0));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies `HermitianPackedStorage` enforces real diagonal and conjugate reflection.
     fn test_hermitian_packed_storage() {
         use crate::math::complex_num::Complex64;
@@ -360,7 +471,7 @@ pub mod storage_test_suite {
         assert!(herm.set(0, 0, Complex64::new(5.0, 0.0)).is_ok());
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies `TriangularPackedStorage` unit diagonal and zero regions.
     fn test_triangular_packed_storage() {
         use crate::math::storage::{
@@ -383,7 +494,7 @@ pub mod storage_test_suite {
 
     // --- Sparse Storage Tests ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies `ArrayCooStorage` push and `ArrayCsrStorage::from_coo` 3-pass assembly.
     fn test_coo_to_csr_assembly() {
         use crate::math::storage::{
@@ -404,7 +515,7 @@ pub mod storage_test_suite {
         assert_eq!(csr.get(0, 1), Some(0.0));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies `ArraySparseVector` operations.
     fn test_sparse_vector() {
         let mut vec = ArraySparseVector::<f64, 10, 5>::new();
@@ -415,7 +526,7 @@ pub mod storage_test_suite {
         assert_eq!(vec.values(), &[4.0, 8.0]);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies `transpose_view`, `reverse_view`, and their mutable counterparts (FR-6 of `storage-design.md`).
     fn test_storage_view_transformations() {
         let mut storage = ArrayStorage::<f64, 2, 3>::from_array([
@@ -470,7 +581,7 @@ pub mod storage_test_suite {
         assert_eq!(vsm.get(1, 0), Some(&200.0));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies non-owning packed structured views (FR-10 of `storage-design.md`).
     fn test_storage_packed_views() {
         // DiagonalView & DiagonalViewMut
@@ -546,7 +657,7 @@ pub mod storage_test_suite {
         assert_eq!(tri_mut.value(0, 1), Some(22.0));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies layout conversion: DiagonalStorage <-> ArrayStorage
     fn test_storage_conversion_diagonal() {
         let diag = DiagonalStorage::<f64, 3>::from_array([1.0, 2.0, 3.0]);
@@ -561,7 +672,7 @@ pub mod storage_test_suite {
         assert_eq!(diag_back.value(0, 1), Some(0.0));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies layout conversion: SymmetricPackedStorage <-> ArrayStorage
     fn test_storage_conversion_symmetric() {
         let sym = SymmetricPackedStorage::<f64, 2, 3>::new(
@@ -582,7 +693,7 @@ pub mod storage_test_suite {
         assert_eq!(sym_back.uplo(), UpLo::Upper);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies layout conversion: TriangularPackedStorage <-> ArrayStorage
     fn test_storage_conversion_triangular() {
         let tri = TriangularPackedStorage::<f64, 2, 3>::new(
@@ -605,7 +716,7 @@ pub mod storage_test_suite {
         assert_eq!(tri_back.uplo(), UpLo::Upper);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies layout conversion: HermitianPackedStorage <-> ArrayStorage
     fn test_storage_conversion_hermitian() {
         let herm = HermitianPackedStorage::<Complex<f64>, 2, 3>::new(
@@ -737,7 +848,7 @@ pub mod storage_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// §6.1 L3 same-tag round-trip: Lower packed triangle is load-bearing.
     fn test_storage_from_dense_triangle_lower_tag_round_trip() {
         check_symmetric_lower_round_trip();
@@ -745,7 +856,7 @@ pub mod storage_test_suite {
         check_hermitian_lower_round_trip();
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// §6.1 L3: `Diag::Unit` round-trips as implicit unit diagonal.
     fn test_storage_from_dense_triangle_unit_diag_round_trip() {
         let mut tri = TriangularPackedStorage::<f64, 3, 6>::new(
@@ -780,7 +891,7 @@ pub mod storage_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies layout conversion: ArrayCooStorage -> ArrayStorage & ToCsrStorage
     fn test_storage_conversion_coo_csr() {
         let mut coo = ArrayCooStorage::<f64, 2, 2, 4>::new();
@@ -797,7 +908,7 @@ pub mod storage_test_suite {
         assert_eq!(dense_csr.get(0, 0), Some(&5.0));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies all `StorageError` failure paths (V&V §6.1 of `storage-design.md`).
     fn test_storage_error_failure_paths() {
         // 1. InvalidHermitianDiagonal: imaginary component on diagonal
@@ -859,7 +970,7 @@ pub mod storage_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies Level 1 size_of memory formulas and stride invariants across dense, packed, and sparse backends.
     fn test_storage_level1_size_of_formulas_and_stride_invariants() {
         use core::mem::size_of;
@@ -898,7 +1009,7 @@ pub mod storage_test_suite {
         assert_eq!(dense_row.c_stride(), 1);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Layout smoke: packed symmetric covariance next to a dense state vector.
     /// Not a §6.2 Val-1 discharge (numerical-model Kalman workflow is deferred).
     fn test_storage_packed_symmetric_and_dense_layout_smoke() {
@@ -923,7 +1034,7 @@ pub mod storage_test_suite {
         assert_almost_eq!(unsafe { *x.get_unchecked(0, 0) }, 10.0, 1e-10);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Layout smoke: COO band assembled into CSR.
     /// Not a §6.2 Val-2 discharge (sparse MPC workflow is deferred).
     fn test_storage_coo_csr_band_layout_smoke() {
@@ -944,7 +1055,7 @@ pub mod storage_test_suite {
         assert_eq!(csr.get(3, 3), Some(1.0));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Layout smoke: strided 2×2 view over a 4×4 parent without copies.
     /// Not a §6.2 Val-3 discharge (subsystem extraction workflow is deferred).
     fn test_storage_submatrix_view_zero_copy_smoke() {
@@ -968,7 +1079,7 @@ pub mod storage_test_suite {
         assert_eq!(sub_view.get(1, 1), Some(&4.0));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Layout smoke: complex dense storage plus transpose view.
     /// Not a §6.2 Val-4 discharge (MIMO frequency-grid workflow is deferred).
     fn test_storage_complex_matrix_transpose_view_smoke() {
@@ -987,7 +1098,7 @@ pub mod storage_test_suite {
         assert_eq!(g_t.get(1, 1), Some(&Complex::ONE));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies dense checked vs unchecked element access.
     fn test_storage_dense_checked_unchecked() {
         let dense = ArrayStorage::<f64, 2, 3>::from_array([
@@ -1006,7 +1117,7 @@ pub mod storage_test_suite {
         assert_eq!(dense.get(0, 3), None);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies an unchecked mutable window and a cross-layout block copy.
     fn test_storage_submatrix_mut_unchecked() {
         let mut dst = ArrayStorage::<f64, 3, 3>::zeros();
@@ -1023,7 +1134,7 @@ pub mod storage_test_suite {
         assert_eq!(dst.get(2, 0), Some(&0.0));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies view checked vs unchecked access.
     fn test_storage_view_checked_unchecked() {
         let slice = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
@@ -1045,7 +1156,7 @@ pub mod storage_test_suite {
         assert_eq!(view.get(0, 3), None);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies StaticStorageView layout and checked/unchecked access.
     fn test_storage_view_layouts_checked_unchecked() {
         let slice = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
@@ -1069,7 +1180,7 @@ pub mod storage_test_suite {
         assert_eq!(view_row.get(2, 0), None);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies StaticStorageViewMut checked vs unchecked access.
     fn test_storage_view_mut_checked_unchecked() {
         let mut slice_mut = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
@@ -1088,7 +1199,7 @@ pub mod storage_test_suite {
         assert_eq!(view_mut_col.get(2, 0), None);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies packed storage checked vs unchecked access.
     fn test_storage_packed_checked_unchecked() {
         use crate::math::complex_num::Complex64;
@@ -1135,7 +1246,7 @@ pub mod storage_test_suite {
         assert_eq!(herm.value(2, 0), None);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies Hermitian properties (real diagonal, conjugate symmetry).
     fn test_storage_hermitian_properties() {
         use crate::math::complex_num::Complex64;
@@ -1161,7 +1272,7 @@ pub mod storage_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies transposition involution.
     fn test_storage_transposed_involution() {
         let dense = ArrayStorage::<f64, 2, 3>::from_array([
@@ -1181,7 +1292,7 @@ pub mod storage_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_storage_view_new_with_strides_dimension_mismatch() {
         let data = [1.0f64, 2.0, 3.0];
         let err = StorageView::<f64, Const<2>, Const<2>>::new_with_strides(
@@ -1196,7 +1307,7 @@ pub mod storage_test_suite {
         assert!(ok.is_ok());
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_storage_explicit_zero_coo_csr_csc_nnz_parity() {
         let mut coo = ArrayCooStorage::<f64, 2, 2, 4>::new();
         assert!(coo.push(0, 0, 1.0).is_ok());
@@ -1209,7 +1320,7 @@ pub mod storage_test_suite {
         assert_eq!(csc.get(1, 1), Some(0.0));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_storage_csr_csc_set_unallocated() {
         let mut coo = ArrayCooStorage::<f64, 2, 2, 4>::new();
         assert!(coo.push(0, 0, 1.0).is_ok());
@@ -1231,7 +1342,7 @@ pub mod storage_test_suite {
         assert_eq!(csc.get(0, 0), Some(9.0));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     #[allow(
         clippy::too_many_lines,
         clippy::float_cmp,
@@ -1657,117 +1768,5 @@ pub mod storage_test_suite {
         let mut piv = PivotStorage::<3>::identity();
         piv.as_mut_slice()[0] = 2;
         assert_eq!(piv.as_slice()[0], 2);
-    }
-}
-
-// Property-based coverage of `ArrayStorage`/`StaticStorageView` index-mapping
-// invariants (FR-1 of `storage-trait-design.md`, §6.1 item 2). Kept separate
-// from unit tests: `proptest` is a host-only dev-dependency.
-#[cfg(test)]
-mod storage_property_tests {
-    use crate::math::num_types::Const;
-    use crate::math::storage::{
-        ArrayCooStorage, ArrayCscStorage, ArrayCsrStorage, ArrayStorage,
-        ColMajor, DenseStorage, PackedStorage, SparseStorage,
-        StaticStorageView, StorageInit, SymmetricPackedStorage, ToCscStorage,
-        ToCsrStorage, UpLo,
-    };
-    use proptest::prelude::*;
-
-    proptest! {
-        /// Every logical `(i, j)` in a 3x4 `ArrayStorage` reads back the
-        /// value it was constructed with and `offset()` matches the
-        /// column-major formula exactly (implying, over the full `i, j`
-        /// range, that the index mapping is injective).
-        #[test]
-        fn prop_array_storage_round_trips_every_index(
-            vals in proptest::collection::vec(any::<i32>(), 12),
-        ) {
-            let storage: ArrayStorage<i32, 3, 4> =
-                StorageInit::<i32, Const<3>, Const<4>>::from_fn(|i, j| vals[j.saturating_mul(3).saturating_add(i)]);
-
-            for j in 0..4 {
-                for i in 0..3 {
-                    prop_assert_eq!(
-                        storage.get(i, j),
-                        Some(&vals[j.saturating_mul(3).saturating_add(i)])
-                    );
-                    prop_assert_eq!(storage.offset(i, j), j.saturating_mul(3).saturating_add(i) as isize);
-                }
-            }
-            prop_assert_eq!(storage.get(3, 0), None);
-            prop_assert_eq!(storage.get(0, 4), None);
-        }
-
-        /// `StaticStorageView` over an arbitrary slice reproduces the same
-        /// column-major index mapping as `ArrayStorage` for the same data.
-        #[test]
-        fn prop_storage_view_matches_array_storage(
-            vals in proptest::collection::vec(any::<i32>(), 6),
-        ) {
-            let array: ArrayStorage<i32, 2, 3> =
-                StorageInit::<i32, Const<2>, Const<3>>::from_fn(|i, j| vals[j.saturating_mul(2).saturating_add(i)]);
-            let view: StaticStorageView<'_, i32, Const<2>, Const<3>, ColMajor> =
-                StaticStorageView::new(&vals).unwrap();
-
-            for j in 0..3 {
-                for i in 0..2 {
-                    prop_assert_eq!(
-                        array.get(i, j),
-                        view.get(i, j)
-                    );
-                }
-            }
-        }
-
-        /// Upper packed index `i + j(j+1)/2` round-trips `value` for every
-        /// stored triangle slot, and `packed_index` is `None` on the
-        /// unstored triangle and out of bounds.
-        #[test]
-        fn prop_symmetric_packed_upper_index_map(
-            vals in proptest::collection::vec(any::<i32>(), 6),
-        ) {
-            let data = [vals[0], vals[1], vals[2], vals[3], vals[4], vals[5]];
-            let packed =
-                SymmetricPackedStorage::<i32, 3, 6>::new(data, UpLo::Upper);
-            for j in 0..3_usize {
-                for i in 0..=j {
-                    let idx = i.saturating_add(j.saturating_mul(j.saturating_add(1)) / 2);
-                    prop_assert_eq!(packed.packed_index(i, j), Some(idx));
-                    prop_assert_eq!(packed.value(i, j), Some(vals[idx]));
-                    prop_assert_eq!(packed.value(j, i), Some(vals[idx]));
-                }
-            }
-            prop_assert_eq!(packed.packed_index(1, 0), None);
-            prop_assert_eq!(packed.packed_index(2, 0), None);
-            prop_assert_eq!(packed.packed_index(3, 0), None);
-        }
-
-        /// COO → CSR/CSC preserves a fixed sparsity pattern's values.
-        #[test]
-        fn prop_coo_csr_csc_index_map(
-            v00 in any::<i32>(),
-            v11 in any::<i32>(),
-            v22 in any::<i32>(),
-            v02 in any::<i32>(),
-        ) {
-            let mut coo = ArrayCooStorage::<i32, 3, 3, 4>::new();
-            prop_assert!(coo.push(0, 0, v00).is_ok());
-            prop_assert!(coo.push(1, 1, v11).is_ok());
-            prop_assert!(coo.push(2, 2, v22).is_ok());
-            prop_assert!(coo.push(0, 2, v02).is_ok());
-            let csr: ArrayCsrStorage<i32, 3, 3, 4, 4> = coo.to_csr().unwrap();
-            let csc: ArrayCscStorage<i32, 3, 3, 4, 4> = coo.to_csc().unwrap();
-            prop_assert_eq!(csr.get(0, 0), Some(v00));
-            prop_assert_eq!(csr.get(1, 1), Some(v11));
-            prop_assert_eq!(csr.get(2, 2), Some(v22));
-            prop_assert_eq!(csr.get(0, 2), Some(v02));
-            prop_assert_eq!(csr.get(0, 1), Some(0));
-            prop_assert_eq!(csc.get(0, 0), Some(v00));
-            prop_assert_eq!(csc.get(1, 1), Some(v11));
-            prop_assert_eq!(csc.get(2, 2), Some(v22));
-            prop_assert_eq!(csc.get(0, 2), Some(v02));
-            prop_assert_eq!(csc.get(1, 0), Some(0));
-        }
     }
 }

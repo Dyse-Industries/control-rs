@@ -148,7 +148,7 @@ pub mod matrix_test_suite {
 
     // --- Constructors (FR-2, FR-6) ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// `zero`/`identity`/`diagonal` are usable in a `const` context and
     /// produce the expected elements (FR-2).
     fn test_zero_identity_diagonal_const_eval() {
@@ -177,7 +177,7 @@ pub mod matrix_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// `from_fn` builds a matrix element-by-element from row/column indices
     /// (FR-6).
     fn test_from_fn() {
@@ -190,7 +190,7 @@ pub mod matrix_test_suite {
 
     // --- Operators (FR-3) ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// `Add`/`Sub`/`Neg` are element-wise (FR-3).
     fn test_add_sub_neg() {
         let a: Owned<f64, 2, 2> = Matrix::from_fn(|i, j| (i * 2 + j) as f64);
@@ -212,7 +212,7 @@ pub mod matrix_test_suite {
         assert_almost_eq!(*neg.get(1, 1).unwrap(), -3.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Operators equal the named saturating methods, and integer elements
     /// clamp at their bounds instead of wrapping (FR-3).
     fn test_saturating_operators_integer() {
@@ -244,7 +244,7 @@ pub mod matrix_test_suite {
         assert_eq!((&a * &col).as_slice(), prod.as_slice());
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Matrix-matrix multiplication statically enforces `(M x N) * (N x P)
     /// -> (M x P)` and computes the standard product (FR-3).
     fn test_mul_matrix_matrix() {
@@ -264,7 +264,7 @@ pub mod matrix_test_suite {
         assert_almost_eq!(*scaled.get(1, 1).unwrap(), 8.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Matrix-vector multiplication is the `P == 1` case of the same `Mul`
     /// impl (FR-3, matrix-design.md §4.5's "Matrix-Vector Multiplication").
     fn test_mul_matrix_vector() {
@@ -278,7 +278,7 @@ pub mod matrix_test_suite {
 
     // --- Transposition (FR-4) ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// `transpose_view`/`transpose_into`/`transpose` agree on a non-square
     /// matrix, and `transpose_view` is a true zero-copy reinterpretation
     /// (reads the same flat data `transpose()` copies).
@@ -310,7 +310,7 @@ pub mod matrix_test_suite {
         _assert_matrix_almost_eq(&dest, &owned);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// `transpose_mut` performs an in-place transposition for square
     /// matrices (FR-4).
     fn test_transpose_mut_square() {
@@ -325,7 +325,7 @@ pub mod matrix_test_suite {
 
     // --- LU: determinant, solve, inversion (FR-4) ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// `LuDecomposition::determinant` matches the closed-form 2x2
     /// determinant, including the sign flip from a row exchange.
     fn test_lu_determinant() {
@@ -342,7 +342,7 @@ pub mod matrix_test_suite {
         assert_almost_eq!(lu_swapped.determinant(), -1.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// `LuDecomposition::solve_mut` solves `A * x = b` against a
     /// known-answer system.
     fn test_lu_solve_mut() {
@@ -356,7 +356,7 @@ pub mod matrix_test_suite {
         assert_almost_eq!(*b.get(1, 0).unwrap(), 1.4, 1e-9);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Packed $PA = LU$ residual ratio $< 20$ (`matrix-design.md` §6.3).
     fn test_lu_factor_residual() {
         let a: Owned<f64, 3, 3> = Matrix::from_fn(|i, j| {
@@ -400,7 +400,7 @@ pub mod matrix_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Undersized pivot scratch returns `WorkspaceTooSmall` instead of panicking.
     fn test_lu_decompose_undersized_pivots() {
         let mut a: Owned<f64, 2, 2> =
@@ -412,7 +412,7 @@ pub mod matrix_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// `invert_mut`/`invert_into` round-trip: `A * A^-1 == I` within
     /// tolerance (FR-4).
     fn test_lu_invert_round_trip() {
@@ -432,7 +432,7 @@ pub mod matrix_test_suite {
         _assert_matrix_almost_eq(&inv_into, &inv_mut);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// $A A^{-1} = I$ with $\varepsilon$ scaled by $\kappa_\infty(A)$
     /// (`matrix-design.md` §6.3 linear-solve / inversion residual).
     fn test_inverse_identity_roundtrip_cond_scaled() {
@@ -446,7 +446,7 @@ pub mod matrix_test_suite {
         _assert_inv_identity_roundtrip(&hilbert);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Induced $\infty$-norm is sub-multiplicative: $\lVert AB\rVert_\infty
     /// \le \lVert A\rVert_\infty \lVert B\rVert_\infty$ (FR-2).
     fn test_inf_norm_submultiplicative() {
@@ -460,7 +460,7 @@ pub mod matrix_test_suite {
         assert!(lhs <= rhs, "||AB||_∞={lhs} exceeds ||A||_∞||B||_∞={rhs}");
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// A singular matrix fails `LU` decomposition with
     /// `LinAlgError::SingularMatrix` rather than panicking (§4.9.3).
     fn test_lu_singular_matrix_errors() {
@@ -473,7 +473,7 @@ pub mod matrix_test_suite {
 
     // --- Structural specializations (FR-5) ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// `UpperTriangular`/`LowerTriangular` accept matrices that satisfy the
     /// invariant and reject matrices that don't (FR-5).
     fn test_upper_lower_construction() {
@@ -492,7 +492,7 @@ pub mod matrix_test_suite {
         assert!(LowerTriangular::from_owned(not_lower).is_none());
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// `solve_lower_triangular`/`solve_upper_triangular` match §4.10.1's
     /// forward/back-substitution example against a known-answer system.
     fn test_solve_triangular() {
@@ -517,7 +517,7 @@ pub mod matrix_test_suite {
 
     // --- LDLT (FR-5) ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// `Symmetric` accepts symmetric matrices and rejects asymmetric ones.
     fn test_symmetric_construction() {
         let sym: Owned<f64, 2, 2> =
@@ -529,7 +529,7 @@ pub mod matrix_test_suite {
         assert!(Symmetric::from_owned(asym).is_none());
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// `LdltDecomposition::determinant`/`solve_mut` match `LuDecomposition`
     /// on a symmetric positive-definite system.
     fn test_ldlt_determinant_and_solve() {
@@ -546,7 +546,7 @@ pub mod matrix_test_suite {
         assert_almost_eq!(*b.get(1, 0).unwrap(), 1.0, 1e-9);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// A singular symmetric matrix fails `LDL^T` decomposition with
     /// `LinAlgError::SingularMatrix`.
     fn test_ldlt_singular_matrix_errors() {
@@ -559,7 +559,7 @@ pub mod matrix_test_suite {
 
     // --- Cholesky (FR-5) ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// `CholeskyDecomposition::solve_mut` matches `LdltDecomposition` on the
     /// same symmetric positive-definite system as
     /// `test_ldlt_determinant_and_solve` (`matrix-design.md` §5.5).
@@ -576,7 +576,7 @@ pub mod matrix_test_suite {
         assert_almost_eq!(*b.get(1, 0).unwrap(), 1.0, 1e-9);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// $A - L L^T$ residual ratio $< 20$ (`matrix-design.md` §6.3).
     fn test_cholesky_factor_residual() {
         let a: Owned<f64, 2, 2> =
@@ -592,7 +592,7 @@ pub mod matrix_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// A symmetric but indefinite matrix (eigenvalues `3` and `-1`, not
     /// positive definite) fails Cholesky decomposition with
     /// `LinAlgError::NotPositiveDefinite` rather than panicking on a negative
@@ -607,7 +607,7 @@ pub mod matrix_test_suite {
 
     // --- QR (FR-5) ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// `QrDecomposition::solve_mut` produces an `x` satisfying `A * x == b`
     /// (residual check) on the same system as `test_lu_invert_round_trip`
     /// (§4.7, Householder reflections).
@@ -625,7 +625,7 @@ pub mod matrix_test_suite {
         _assert_matrix_almost_eq(&residual, &b);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// $\lVert Q^T Q - I\rVert_\infty < N\varepsilon$ (`matrix-design.md` §6.3).
     fn test_qr_orthogonality() {
         let a: Owned<f64, 3, 3> = Matrix::from_fn(|i, j| {
@@ -640,7 +640,7 @@ pub mod matrix_test_suite {
         assert!(err < bound, "||Q^T Q - I||_inf={err} exceeds N eps={bound}");
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Unlike `LU`/`LDL^T`, `into_qr` itself never fails on a rank-deficient
     /// matrix (`matrix-design.md` §5.5); the resulting `R` factor
     /// carries a near-zero pivot, which `solve_mut` reports as
@@ -657,7 +657,7 @@ pub mod matrix_test_suite {
 
     // --- Kalman filter covariance update (validation, §6.2.1) ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// End-to-end numeric integrity check mirroring §6.2.1's discrete
     /// Kalman filter covariance update `P = (I - K*H) * P_pred`.
     fn test_kalman_covariance_update() {
@@ -676,7 +676,7 @@ pub mod matrix_test_suite {
         assert_almost_eq!(*updated.get(1, 1).unwrap(), 1.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Covariance time-update $P^- = A P A^T + Q$ and Joseph measurement
     /// update return bitwise-symmetric $P$ (`matrix-design.md` §6.2.1).
     fn test_covariance_predict_symmetry() {
@@ -701,7 +701,7 @@ pub mod matrix_test_suite {
         _assert_exactly_symmetric(&joseph);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_coordinate_access() {
         let mut m: Owned<f64, 2, 2> = Owned::zero();
         m.set(0, 1, 3.0).unwrap();
@@ -710,7 +710,7 @@ pub mod matrix_test_suite {
         assert!(m.get(2, 0).is_none());
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_strided_submatrix() {
         let m: Owned<f64, 3, 3> = Owned::from_fn(|i, j| (i * 3 + j) as f64);
         let sub = m.submatrix::<2, 2>(1, 1).unwrap();
@@ -728,7 +728,7 @@ pub mod matrix_test_suite {
         assert_eq!(sl.as_slice().len(), 9);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_c_abi_layout() {
         let m: Owned<f64, 2, 2> = Owned::from_array([[1.0, 2.0], [3.0, 4.0]]);
         let slice = m.as_slice();
@@ -739,7 +739,7 @@ pub mod matrix_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_lu_workspace_too_small() {
         let mut a: Owned<f64, 2, 2> = Owned::identity();
         let mut pivots = [0usize; 1];
@@ -749,7 +749,7 @@ pub mod matrix_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_qr_rect_tall() {
         let a: Owned<f64, 3, 2> =
             Owned::from_fn(|i, j| [[1.0, 0.0], [1.0, 1.0], [0.0, 1.0]][i][j]);
@@ -766,7 +766,7 @@ pub mod matrix_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_qr_rect_square() {
         let a: Owned<f64, 2, 2> =
             Owned::from_fn(|i, j| [[3.0, 1.0], [4.0, 2.0]][i][j]);
@@ -783,7 +783,7 @@ pub mod matrix_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_matrix_storage_views_and_mul_into() {
         let mut m = Owned::<f64, 2, 2>::diagonal([3.0, 4.0]);
         assert_eq!(m.cols(), 2);
@@ -811,7 +811,7 @@ pub mod matrix_test_suite {
         assert_eq!(stored.as_slice()[3], 5.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_scalar_mul_trace_expm_block_write() {
         let ident = Owned::<f64, 2, 2>::identity();
         let scaled = &ident * 3.0;
@@ -841,7 +841,7 @@ pub mod matrix_test_suite {
         assert_almost_eq!(*dest.get(0, 0).unwrap(), 0.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_from_and_to_row_arrays() {
         let rows = [[1.0, 2.0, 3.0], [4.0, 5.0, 6.0]];
         let mat = Owned::<f64, 2, 3>::from_row_arrays(rows);
@@ -859,7 +859,7 @@ pub mod matrix_test_suite {
         assert_eq!(mat_3x2.to_row_arrays(), rows_3x2);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// A rotation generator of norm 12 needs scaling and squaring; without it
     /// the series truncation error is large.
     fn test_expm_large_norm_needs_scaling() {
@@ -875,7 +875,7 @@ pub mod matrix_test_suite {
         assert_almost_eq!(*exp_rot.get(1, 1).unwrap(), cos_theta, 1e-5);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// A pivot of exactly machine epsilon is accepted by the `LDL^T`
     /// factorization and by its solve; only smaller pivots are singular.
     fn test_ldlt_pivot_at_epsilon_is_accepted() {
@@ -886,7 +886,7 @@ pub mod matrix_test_suite {
         assert_almost_eq!(*b.get(0, 0).unwrap(), 1.0 / f64::EPSILON, 1.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_expm_non_trivial() {
         // Skew-symmetric 2D rotation: [[0, -theta], [theta, 0]]
         // exp(A) = [[cos(theta), -sin(theta)], [sin(theta), cos(theta)]]
@@ -914,7 +914,6 @@ pub mod matrix_test_suite {
 // Property-based coverage of algebraic matrix identities (§6.1.2 of
 // `matrix-design.md`). Kept separate from unit tests: `proptest` is a host-only
 // dev-dependency.
-#[cfg(test)]
 mod matrix_property_tests {
     use crate::math::num_types::{Const, Dim};
     use crate::matrix::{Matrix, Owned};
