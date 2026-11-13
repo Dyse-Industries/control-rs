@@ -15,7 +15,7 @@
 //! restated on every impl/struct below because `Dim` is implemented per
 //! literal (`Const<1>` .. `Const<1024>` plus extra powers of two through
 //! `Const<16384>`, `num_types` generated impls), not via a blanket
-//! `impl<const N: usize> Dim for Const<N>` (the
+//! `impl<const N: usize> Dim for Const<N>`, the
 //! same pattern `storage.rs`'s own `ArrayStorage` impls already use.
 #![allow(
     clippy::arbitrary_source_item_ordering,
