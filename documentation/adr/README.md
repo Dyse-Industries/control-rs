@@ -10,5 +10,6 @@ row and names its replacement.
 
 | ADR | Title | Status | Superseded by |
 |:--|:--|:--|:--|
-| [ADR-0001](0001-adopt-adrs.md) | Adopt ADRs for workspace decisions | Accepted | - |
-| [ADR-0003](0003-mul-acc-accumulation-primitive.md) | Accumulate recurrences through the `MulAcc` trait | Proposed | - |
+| [ADR-0001](0001-adopt-adrs.md) | Adopt ADRs for workspace decisions | Accepted | — |
+| [ADR-0002](0002-decouple-library-crates-from-ets-runtime.md) | Decouple Core Library Crates from Embedded Test Server Runtime | Proposed | — |
+| [ADR-0003](0003-mul-acc-accumulation-primitive.md) | Accumulate recurrences through the `MulAcc` trait | Proposed | — |

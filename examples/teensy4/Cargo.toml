@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-control-rs = { path = "../..", default-features = false, features = ["ets"] }
+control-rs = { path = "../.." }
 control-rs-ets = { path = "../../control-rs-ets" }
 control-rs-macros = { path = "../../control-rs-macros" }
 cortex-m = "0.7"

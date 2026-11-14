@@ -9,7 +9,6 @@
     clippy::approx_constant
 )]
 
-#[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod transfer_function_test_suite {
     use crate::assert_almost_eq;
     use crate::math::num_traits::Radical;
@@ -17,7 +16,7 @@ pub mod transfer_function_test_suite {
         ArrayTransferFunction, TransferFunctionError,
     };
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_frequency_response_continuous() {
         // 1st-order low-pass filter: H(s) = 1 / (1 + s)
         let tf =
@@ -38,7 +37,7 @@ pub mod transfer_function_test_suite {
         assert_almost_eq!(phase, -core::f64::consts::FRAC_PI_4, 1e-6); // -45 deg
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_transfer_function_series() {
         // H1(s) = 1 / (1 + s), H2(s) = 2 / (2 + s)
         let h1 =
@@ -61,7 +60,7 @@ pub mod transfer_function_test_suite {
         assert_eq!(p_ser.den_slice(), &[10.0, 7.0, 1.0]);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_parallel_and_feedback() {
         let h1 =
             ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [1.0, 1.0]);
@@ -83,7 +82,7 @@ pub mod transfer_function_test_suite {
         assert_almost_eq!(h_fb.den_slice()[2], 1.0, 1e-12);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// A leading denominator coefficient exactly at machine epsilon is
     /// accepted by the constructor and the canonical form; zero is rejected
     /// by both.
@@ -107,7 +106,7 @@ pub mod transfer_function_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     #[allow(clippy::too_many_lines)]
     fn test_try_from_coefficients() {
         assert_eq!(
@@ -181,7 +180,7 @@ pub mod transfer_function_test_suite {
         assert!(disc_ss.is_discrete());
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_controllable_canonical_form() {
         // H(s) = (2 + 3s) / (4 + 5s + s^2)  [monic denominator]
         let tf = ArrayTransferFunction::<f64, 2, 3>::continuous(
@@ -223,7 +222,7 @@ pub mod transfer_function_test_suite {
         assert_almost_eq!(h_tf.im, h_ss_im, 1e-12);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// $\lambda_i(A_c)$ match the roots of $D(s)$ (`transfer-function-design.md` §6.3).
     fn test_ccf_eigenvalues_match_denominator_roots() {
         // D(s) = 4 + 5s + s^2 = (s+1)(s+4); A = [[0, 1], [-4, -5]].
@@ -256,7 +255,7 @@ pub mod transfer_function_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_controllable_canonical_form_with_feedthrough() {
         // Proper but not strictly: H(s) = (2 + 3s + s^2) / (4 + 5s + s^2)
         // => d = 1, β = (2-4, 3-5) = (-2, -2)
@@ -270,7 +269,7 @@ pub mod transfer_function_test_suite {
         assert_almost_eq!(ss.c().get(0, 1).copied().unwrap(), -2.0, 1e-12);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_ccf_proper_feedthrough() {
         // H(s) = (1 + 2s) / (1 + s)  → d = 2, β0 = 1 - 2*1 = -1
         let tf = ArrayTransferFunction::<f64, 2, 2>::continuous(
@@ -283,7 +282,7 @@ pub mod transfer_function_test_suite {
         assert_almost_eq!(ss.c().get(0, 0).copied().unwrap(), -1.0, 1e-12);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_evaluate_complex_empty_numerator() {
         // N = 0 is a valid Dim; Horner must not underflow usize.
         let tf = ArrayTransferFunction::<f64, 0, 2>::continuous([], [1.0, 1.0]);
@@ -293,7 +292,7 @@ pub mod transfer_function_test_suite {
         assert_almost_eq!(h.im, 0.0, 1e-12);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_tustin_and_zoh() {
         let tf =
             ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [1.0, 1.0]);
@@ -315,7 +314,7 @@ pub mod transfer_function_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Pre-warped Tustin maps $H_c(j\omega_c)$ to $H_d(e^{j\omega_c T_s})$
     /// within $5\varepsilon$ (`transfer-function-design.md` §6.3).
     fn test_tustin_prewarped() {
@@ -335,7 +334,7 @@ pub mod transfer_function_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_controllable_canonical_form_realization_invariant_order2() {
         use crate::math::complex_num::Complex;
 
@@ -391,7 +390,7 @@ pub mod transfer_function_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_controllable_canonical_form_realization_invariant_order3() {
         use crate::math::complex_num::Complex;
 
@@ -442,7 +441,7 @@ pub mod transfer_function_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_transfer_function_view() {
         let mut tf =
             ArrayTransferFunction::<f64, 1, 2>::continuous([1.0], [1.0, 1.0]);
@@ -458,7 +457,7 @@ pub mod transfer_function_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_pole_zero_cancellation_bode() {
         // H(s) = 1/(s+1). Multiply num/den by (s+2), a stable factor.
         let h =
@@ -487,7 +486,7 @@ pub mod transfer_function_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_transfer_function_poles_and_zeros_orders() {
         // Order-1 system: H(s) = (3) / (s + 2) -> pole at -2, D=2
         let tf1 =
@@ -529,7 +528,7 @@ pub mod transfer_function_test_suite {
         assert_almost_eq!(poles_notch[2].re, 0.0, 1e-12);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_transfer_function_poles_discrete_and_cascade() {
         use crate::polynomial::RootError;
 
@@ -575,7 +574,6 @@ pub mod transfer_function_test_suite {
     }
 }
 
-#[cfg(test)]
 mod transfer_function_property_tests {
     use crate::transfer_function::ArrayTransferFunction;
     use proptest::prelude::*;

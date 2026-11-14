@@ -9,14 +9,13 @@
     clippy::approx_constant
 )]
 
-#[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod state_space_test_suite {
     use crate::assert_almost_eq;
     use crate::math::storage::DenseStorage;
     use crate::matrix::Owned;
     use crate::state_space::{ArrayStateSpace, StateSpaceError};
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_discrete_simulation_step() {
         // Scalar system: x[k+1] = 0.5 x[k] + 1.0 u[k], y[k] = 2.0 x[k]
         let a = Owned::<f64, 1, 1>::from_fn(|_, _| 0.5);
@@ -39,7 +38,7 @@ pub mod state_space_test_suite {
         assert_almost_eq!(x2.get(0, 0).copied().unwrap(), 1.5, 1e-12);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_continuous_derivative() {
         // Mass-spring system: \dot{x} = [[0, 1], [-k/m, -c/m]] x + [[0], [1/m]] u
         let a = Owned::<f64, 2, 2>::from_array([[0.0, -2.0], [1.0, -1.0]]);
@@ -57,7 +56,7 @@ pub mod state_space_test_suite {
         assert_almost_eq!(y.get(0, 0).copied().unwrap(), 1.0, 1e-12);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_zoh_discretization() {
         // Pure integrator: \dot{x} = u, y = x
         let a = Owned::<f64, 1, 1>::zero();
@@ -73,7 +72,7 @@ pub mod state_space_test_suite {
         assert_almost_eq!(sys_d.b().get(0, 0).copied().unwrap(), 0.1, 1e-6);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_zoh_vs_scalar_exp() {
         let a = Owned::<f64, 1, 1>::from_fn(|_, _| -2.0);
         let b = Owned::<f64, 1, 1>::from_fn(|_, _| 1.0);
@@ -89,7 +88,7 @@ pub mod state_space_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_tustin_scalar() {
         let a = Owned::<f64, 1, 1>::from_fn(|_, _| -2.0);
         let b = Owned::<f64, 1, 1>::from_fn(|_, _| 1.0);
@@ -126,7 +125,7 @@ pub mod state_space_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_series_parallel_feedback() {
         let a = Owned::<f64, 1, 1>::from_fn(|_, _| -1.0);
         let b = Owned::<f64, 1, 1>::from_fn(|_, _| 1.0);
@@ -177,7 +176,7 @@ pub mod state_space_test_suite {
         let _ = g.feedback::<1, 2>(&ident_fb, -1.0).unwrap();
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Algebraic loop $I - D_2 D_1$ singular (`state-space-design.md` §6.3).
     fn test_feedback_singular_loop_matrix() {
         let a = Owned::<f64, 1, 1>::from_fn(|_, _| -1.0);
@@ -192,7 +191,7 @@ pub mod state_space_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// A third-order controllable canonical model converts to its transfer
     /// function: every Faddeev-LeVerrier step and numerator term matters.
     fn test_to_transfer_function_third_order() {
@@ -213,7 +212,7 @@ pub mod state_space_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_ctrb_obsv_tf() {
         let a = Owned::<f64, 1, 1>::from_fn(|_, _| -2.0);
         let b = Owned::<f64, 1, 1>::from_fn(|_, _| 3.0);
@@ -233,7 +232,7 @@ pub mod state_space_test_suite {
         assert_almost_eq!(tf.num_slice()[0], 14.0, 1e-9);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_state_space_display_tustin_and_faddeev() {
         use core::fmt::Write;
 
@@ -289,7 +288,7 @@ pub mod state_space_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_state_space_view() {
         let a = Owned::<f64, 1, 1>::from_fn(|_, _| 0.5);
         let b = Owned::<f64, 1, 1>::from_fn(|_, _| 1.0);
@@ -342,7 +341,7 @@ pub mod state_space_test_suite {
         y_out
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_similarity_transform_poles_and_step() {
         let a = Owned::<f64, 2, 2>::from_array([[0.0, -4.0], [1.0, -0.8]]);
         let b = Owned::<f64, 2, 1>::from_array([[0.0, 1.0]]);
@@ -371,7 +370,7 @@ pub mod state_space_test_suite {
         assert_almost_eq!(d_t, d_d, 1e-15);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_zoh_multi_step_matches_coarse_sample() {
         let a = Owned::<f64, 2, 2>::from_array([[0.0, -4.0], [1.0, -0.8]]);
         let b = Owned::<f64, 2, 1>::from_array([[0.0, 1.0]]);
@@ -401,7 +400,6 @@ pub mod state_space_test_suite {
     }
 }
 
-#[cfg(test)]
 mod state_space_property_tests {
     use crate::matrix::Owned;
     use crate::state_space::ArrayStateSpace;

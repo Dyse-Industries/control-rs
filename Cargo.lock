@@ -323,8 +323,6 @@ dependencies = [
 name = "control-rs"
 version = "0.0.0"
 dependencies = [
- "control-rs-ets",
- "control-rs-macros",
  "criterion",
  "libm",
  "proptest",
