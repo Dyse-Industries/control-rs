@@ -60,6 +60,9 @@ impl HostComms for RiscvSemihostingComms {
     }
 }
 
+mod macro_suite;
+mod riscv_profiler_suite;
+
 #[ets_setup]
 #[allow(dead_code)]
 fn setup() -> Context<RiscvSemihostingComms, RiscvProfiler> {

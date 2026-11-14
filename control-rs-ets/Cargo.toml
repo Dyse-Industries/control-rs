@@ -20,6 +20,7 @@ crc = { version = "3.4.0", default-features = false }
 
 [dev-dependencies]
 postcard = { version = "1.0", default-features = false, features = ["alloc"] }
+control-rs-macros = { path = "../control-rs-macros" }
 
 [features]
 default = ["stack-paint"]

@@ -364,6 +364,7 @@ dependencies = [
 name = "control-rs-ets"
 version = "0.1.0"
 dependencies = [
+ "control-rs-macros",
  "cortex-m",
  "crc",
  "postcard",
