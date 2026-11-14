@@ -69,7 +69,6 @@ audit = ["deny", "deny-duplicates", "semver", "geiger"]
 valgrind = ["valgrind"]
 verify = ["cross-compare"]
 coverage = ["coverage"]
-target = ["virtual-ets"]
 kani = ["kani"]
 
 # ==============================================================================

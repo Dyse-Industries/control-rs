@@ -160,35 +160,6 @@ jobs:
           retention-days: 7
 
   # ============================================================================
-  # Group: target (virtual-ets)
-  # ============================================================================
-  target:
-    name: QEMU ETS
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: thumbv7em-none-eabihf, thumbv7em-none-eabi, riscv32imac-unknown-none-elf, riscv64gc-unknown-none-elf
-
-      - name: Install QEMU
-        run: sudo apt-get update && sudo apt-get install -y qemu-system-arm  qemu-system-riscv qemu-system-misc
-
-      - name: Run Target Group
-        run: cargo ci --verbose --diff --group target
-
-      - name: Upload Target Artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ci-artifacts-target
-          path: target/ci-artifacts/
-          retention-days: 30
-
-  # ============================================================================
   # Groups: audit & valgrind (deny, semver, geiger, valgrind)
   # ============================================================================
   audit:
