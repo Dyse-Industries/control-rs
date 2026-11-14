@@ -185,7 +185,7 @@ target:
   their own `CPUProfiler` implementation in their application or board-support crate.
 
 For example, on an ARMv6-M RP2040 target, the board crate provides a custom
-profiler utilizing the RP2040 64-bit microsecond hardware timer:
+profiler using the RP2040 64-bit microsecond hardware timer:
 
 ```rust
 pub struct Rp2040Profiler {
