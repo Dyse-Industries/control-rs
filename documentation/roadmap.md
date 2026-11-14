@@ -74,7 +74,7 @@ work follows both tracks.
       in review against the implementation
     - [x] **PR4-2**: Implementation
     - [x] **PR4-3**: Fine-tuning and polish: `fixed-num-design.md` FR-8 and
-      ADR-0003 for `MulAcc`; `margin`, `root_locus`, `Section`; phase-crossover
+      ADR-0002 for `MulAcc`; `margin`, `root_locus`, `Section`; phase-crossover
       bracketing, non-finite `Pid` gains
     - [x] Post-merge scope and correctness pass
       ([#119](https://github.com/Dyse-Industries/control-rs/pull/119))
@@ -124,7 +124,7 @@ in dependency order, ETS-1 first.
   ([#104](https://github.com/Dyse-Industries/control-rs/pull/104), open)
     - Design: `ets/ets-executive-design.md`, `ets/embedded-test-server-design.md`,
       `ets/test-suite-design.md`, `ets/macros-design.md`,
-      `ets/cpu-profiler-design.md`; ADR-0002
+      `ets/cpu-profiler-design.md`; ADR-0003
     - Dispatcher, `Context` and runner; `Atomic`, `Lockstep`, `FreeRunning`,
       `Periodic` and `Triggered`; `LifecycleTask`, `TaskSlot`, `Packet`
       derive; named settings (`SettingCell`, static dispatch); board binding;
