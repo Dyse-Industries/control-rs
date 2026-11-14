@@ -28,46 +28,46 @@ Usage scenarios:
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Range-valued numeric substitution**: A numeric value denotes a
+- **FR-1 - Range-valued numeric substitution**: A numeric value denotes a
   closed range of reals and stands in for a scalar wherever crate algorithms
   are already generic over their element type. Algorithms are not rewritten to
   know about ranges.
-- **FR-2 — Sound enclosure**: Evaluating an algorithm on input ranges yields a
+- **FR-2 - Sound enclosure**: Evaluating an algorithm on input ranges yields a
   result range containing every result the scalar algorithm would produce for
   any point in those inputs. Without inclusion a passing test proves nothing.
-- **FR-3 — Enclosure valid under round-to-nearest**: Rounding error committed
+- **FR-3 - Enclosure valid under round-to-nearest**: Rounding error committed
   while computing the enclosure stays inside it, on targets that offer no way
   to change the floating-point rounding mode.
-- **FR-4 — Range verdict**: A property reduces its result range to a pass or
+- **FR-4 - Range verdict**: A property reduces its result range to a pass or
   fail on target. A range that straddles the acceptance bound fails; the check
   does not silently narrow to a midpoint.
-- **FR-5 — Instantiation as ordinary suite entries**: A bounded set of type and
+- **FR-5 - Instantiation as ordinary suite entries**: A bounded set of type and
   dimension instantiations registers as individual ETS test entries, so a
   failure names the instantiation that produced it. The bound is author-supplied,
   as in published bounded-exhaustive tooling (Politano et al., 2024).
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Target execution**: The range type compiles and runs on the crate's
+- **NFR-1 - Target execution**: The range type compiles and runs on the crate's
   embedded targets under `no_std` with no allocation.
-- **NFR-2 — No new dependency**: The capability adds no third-party crate to
+- **NFR-2 - No new dependency**: The capability adds no third-party crate to
   the dependency tree, consistent with the standing rule to minimize
   dependencies.
-- **NFR-3 — Pay-per-use footprint**: Suites that do not instantiate a property
+- **NFR-3 - Pay-per-use footprint**: Suites that do not instantiate a property
   at the range type carry no flash or stack cost for it.
 
 #### 2.3 Constraints
 
-- **C-1 — Elementary arithmetic only**: Ranges support addition, subtraction,
+- **C-1 - Elementary arithmetic only**: Ranges support addition, subtraction,
   multiplication, division, and square root. Transcendental enclosures
   (exponential, logarithm, trigonometry) are out of scope, so the range type
   satisfies the crate's scalar-level bounds but not its full floating-point
   bound.
-- **C-2 — Binary floating-point elements**: `f32` and `f64` only. Fixed-point
+- **C-2 - Binary floating-point elements**: `f32` and `f64` only. Fixed-point
   and complex element types are out of scope.
-- **C-3 — Existing suite registration is unchanged**: No new procedural macro
+- **C-3 - Existing suite registration is unchanged**: No new procedural macro
   and no change to how ETS suites are declared or discovered.
-- **C-4 — Does not replace host oracle validation**: Cross-checks against host
+- **C-4 - Does not replace host oracle validation**: Cross-checks against host
   oracles conformant to `documentation/vv/cross-compare-design.md` remain the
   validation layer; this design adds a verification technique beside them.
 
@@ -108,7 +108,7 @@ endpoint moves up one. The steps come from `next_down` and `next_up` on the
 primitive float types, which implement IEEE 754 `nextDown`/`nextUp` exactly
 (Peters, 2021). They are integer-arithmetic operations on the bit pattern,
 which "avoids issues with denormal values potentially flushing to zero during
-floating point arithmetic operations on some platforms" (Peters, 2021) — the
+floating point arithmetic operations on some platforms" (Peters, 2021): the
 reason they behave identically on host and on target.
 
 This is the round-to-nearest emulation of directed rounding that Rump et al.
@@ -175,7 +175,7 @@ attribute registers, so a failure is attributed by test name with no change to
 the executor.
 
 Input ranges are chosen by equivalence partitioning and boundary value analysis
-(ISO/IEC/IEEE, 2021) — a partition per operating regime, plus the endpoints of
+(ISO/IEC/IEEE, 2021): a partition per operating regime, plus the endpoints of
 each partition as degenerate intervals.
 
 ---
@@ -199,7 +199,7 @@ input up to a bound is bounded exhaustive testing, justified by the small scope
 hypothesis: "the majority of software defects can be revealed by relatively
 small inputs" (Politano et al., 2024; Coppit et al., 2005). For a continuous
 numerical range this degrades to sampling, which proves nothing between
-samples, and the sample count multiplies out — "this combinatorial explosion is
+samples, and the sample count multiplies out: "this combinatorial explosion is
 an inevitable consequence of relentlessly increasing a uniform depth-limit for
 exhaustive testing" (Runciman et al., 2008), a serious cost when each execution
 occupies target hardware. Enumeration is still the right tool for the discrete
@@ -310,7 +310,7 @@ Cortex-M target is a measurement that has not been taken.
     testing without transcendental interval extensions.
   - Stability and frequency-domain tools such as `routh` and `margins` satisfy
     the scalar-level bound, but `routh`'s epsilon-perturbation branch and
-    `margins`' bisection search are comparison-driven — introducing the
+    `margins`' bisection search are comparison-driven, introducing the
     undecidable control flow risk identified above when intervals bracket zero or
     crossing thresholds.
   - FR-5 on-target execution for `classical_tools` cannot run on embedded
@@ -366,7 +366,7 @@ Comput. Program.*, no. 103153, 2024, doi: 10.1016/j.scico.2024.103153.
 https://rust-lang.github.io/rfcs/3173-float-next-up-down.html. Accessed: Sep. 8,
 2026.
 
-[6] ISO, IEC, and IEEE, "Software and systems engineering — Software testing —
+[6] ISO, IEC, and IEEE, "Software and systems engineering - Software testing -
 Part 4: Test techniques," ISO/IEC/IEEE 29119-4:2021, Geneva, Switzerland, 2021.
 [Online]. Available: https://www.iso.org/standard/79430.html. Accessed: Sep. 8,
 2026.

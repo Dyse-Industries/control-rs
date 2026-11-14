@@ -173,7 +173,7 @@ fn apply_valued_flag(
 }
 
 fn print_help() {
-    println!("compare — Cross-Compare Harness & HDF5 Verification System");
+    println!("compare: Cross-Compare Harness & HDF5 Verification System");
     println!();
     println!("USAGE:");
     println!("    cargo compare [OPTIONS]");

@@ -3,7 +3,7 @@
 //! `complex_num.rs` has no dedicated design doc, so tests here are not
 //! cited against per-test functional requirements. `Complex<T>: Scalar`
 //! (and the fallible-arithmetic tests below) do transitively exercise
-//! `num-traits-design.md`'s **FR-3** — see `num_trait_tests.rs` for the
+//! `num-traits-design.md`'s **FR-3**, see `num_trait_tests.rs` for the
 //! primary `Scalar` coverage.
 
 #[cfg_attr(not(test), control_rs_macros::ets_suite)]

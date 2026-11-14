@@ -11,13 +11,13 @@
 `control-rs::math` exposes four crate-wide error types, defined once in
 `src/math/mod.rs`:
 
-- `ArithmeticError` — Scalar `Try*` failures (`math::ops`), consumed by
+- `ArithmeticError`: Scalar `Try*` failures (`math::ops`), consumed by
   `complex_num.rs` and `assert.rs`.
-- `ConversionError` — Representation and value-validity failures whose
+- `ConversionError`: Representation and value-validity failures whose
   producing conversion's type signature cannot already rule them out.
-- `StorageError` — Indexing, capacity, and structural-invariant failures on
+- `StorageError`: Indexing, capacity, and structural-invariant failures on
   dense, packed, and sparse backends (`storage-design.md`).
-- `LinAlgError` — Computational failures of factorizations, solvers, and
+- `LinAlgError`: Computational failures of factorizations, solvers, and
   spectral decompositions (`subprograms-design.md`).
 
 `storage-design.md` and `subprograms-design.md` each introduce error
@@ -32,17 +32,17 @@ failure in the course of computation (Anderson et al., 1999).
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Single Definition for Shared Error Types**: An error type
+- **FR-1 - Single Definition for Shared Error Types**: An error type
   consumed by more than one sibling module (`storage`, `subprograms`,
   `Matrix`, `Polynomial`, `Tensor`, `StateSpace`, `TransferFunction`) is
   defined once, here. Single-consumer enums (for example, `DivisionError` in
   `polynomial-design.md` §4.8.2) stay in their owning module.
-- **FR-2 — No Statically Decidable Failure Modes**: A variant may be
+- **FR-2 - No Statically Decidable Failure Modes**: A variant may be
   returned only for a condition that is not already provable from the
   producer's generic bounds. If a bound already guarantees the condition,
   the API is infallible (`From`, associated-function kernel, or
   `debug_assert` at a kernel boundary) with respect to that condition.
-- **FR-3 — Layered Failure Classes**: Map each runtime failure to one
+- **FR-3 - Layered Failure Classes**: Map each runtime failure to one
   enum by class, not by producing file:
     - scalar arithmetic → `ArithmeticError`;
     - erased-length / representation conversion → `ConversionError`;
@@ -53,7 +53,7 @@ failure in the course of computation (Anderson et al., 1999).
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Convention Compliance**: Every error type is a plain enum
+- **NFR-1 - Convention Compliance**: Every error type is a plain enum
   deriving `Debug, Clone, Copy, PartialEq, Eq`, with a hand-written
   `core::fmt::Display` and an `impl core::error::Error`. The root crate takes
   no proc-macro error dependency (`thiserror`); its only dependency is `libm`.
@@ -181,8 +181,8 @@ cost over using the raw storage type" (uom, 2026).
 
 **`NonMonicPolynomial` stays.** `Polynomial → Matrix` companion-form
 conversion (`../numerical-models/polynomial-design.md` §4.7.1) fails when
-the leading coefficient is not `T::ONE` — a property of runtime
-coefficient values, invisible to `N: Dim`. nalgebra's factorization APIs
+the leading coefficient is not `T::ONE` (a property of runtime
+coefficient values, invisible to `N: Dim`). nalgebra's factorization APIs
 keep an equivalent value-dependent check at runtime: `Cholesky::new`
 "Returns `None` if the input matrix is not definite-positive" (nalgebra,
 2026), with no compile-time alternative offered.
@@ -243,14 +243,14 @@ Computational class only (`INFO > 0`; Anderson et al., 1999):
 
 **Not on `LinAlgError`:**
 
-- **`DimensionMismatch`** — not on `LinAlgError`.
+- **`DimensionMismatch`**: not on `LinAlgError`.
   `subprograms-design.md` C-1 (kernels assume valid dimensions) and NFR-2
   (containers enforce shape statically) make illegal operand shape a
   compile error or a `debug_assert` at the kernel boundary, not a solver
   `Err` (Eigen, 2026; Anderson et al., 1999). DSP convolution against a
   runtime slice is `ConversionError::DimensionMismatch` (`src/math/dsp.rs`;
   `polynomial-design.md` §4.5).
-- **`NonSquareMatrix`** — shipped, never produced. Square factorizations
+- **`NonSquareMatrix`**: shipped, never produced. Square factorizations
   are `Matrix<T, D, D>` / `Const<D>: Dim`. ndarray-linalg's `NotSquare`
   exists because ndarray shapes are runtime (ndarray-linalg, 2026);
   that rationale does not apply here (FR-2).
@@ -290,7 +290,7 @@ to `Potrf` is a `matrix-design.md` change, not this module's.
   following nalgebra's `Cholesky::new -> Option<Self>` (nalgebra, 2026).
   Rejected: `storage_tests.rs` and downstream callers already branch on
   _which_ condition failed; ndarray, ndarray-linalg and LAPACK all keep a
-  structured, multi-variant error — ndarray's `ErrorKind` distinguishes
+  structured, multi-variant error: ndarray's `ErrorKind` distinguishes
   "incompatible shape" from "overflow when computing offset, length, etc."
   (ndarray, 2026), ndarray-linalg's `LinalgError` composes a shape variant
   with a wrapped LAPACK code (ndarray-linalg, 2026), and LAPACK's `INFO`
@@ -300,9 +300,9 @@ to `Potrf` is a `matrix-design.md` change, not this module's.
 - **Per-strategy modules** (saturating/wrapping/strict), following the
   `fixed` crate's `Saturating`/`Wrapping`/`Strict` split (fixed, 2026).
   Rejected: that pattern trades a single fallible operation for multiple
-  infallible ones under different numeric policies — applicable to
+  infallible ones under different numeric policies (applicable to
   `ArithmeticError`'s overflow domain, not to conversion, storage, or
-  factorization domains.
+  factorization domains).
 - **Approximate instead of error**, following micromath's infallible,
   precision-traded approximations (micromath, 2023). Not applicable:
   dimension, monic-ness, structural invariants, and singularity are
@@ -323,7 +323,7 @@ to `Potrf` is a `matrix-design.md` change, not this module's.
 1. `StorageView` / `StorageViewMut::new_with_strides` and
    `StaticStorageView` / `StaticStorageViewMut::new` `DimensionMismatch`
    paths keep their existing success/failure unit test pairs and proptest
-   coverage (`src/math/tests/storage_tests.rs`) — unaffected (§4.2).
+   coverage (`src/math/tests/storage_tests.rs`), unaffected (§4.2).
 2. Convolution against a runtime slice is a **current** gate, not deferred
    to polynomial landing. A short `output` buffer returns
    `Err(ConversionError::DimensionMismatch)`, not a panic. The shipped
@@ -368,7 +368,7 @@ No ETS of the error enums themselves; ETS of kernels is
 
 Tensor conversions have no runtime `RANK` branch. Omitting
 `DimensionMismatch` from `StorageError` and `LinAlgError` keeps BLAS inner
-loops and `set` match arms free of a dead shape class — zero runtime cost
+loops and `set` match arms free of a dead shape class: zero runtime cost
 on `ArrayStorage` kernels, consistent with `subprograms-design.md` NFR-3.
 `StorageError` and the extra `LinAlgError` variants are `Copy` enums; they
 add no allocation.
@@ -426,7 +426,7 @@ add no allocation.
 | Step 2: Align dependent model docs | `matrix-design.md` §4.8, `polynomial-design.md` §4.7.2, `tensor-design.md` §4.10 describe the shipped conversion surface (no tensor `From`).         | Complete                   |
 | Step 3: Add `StorageError`         | Land the enum, `StorageResult`, `Display`/`Error` impls, and Display tests in `src/math/mod.rs` (§3, §4.3). View constructors stay on `ConversionError`. | Complete                   |
 | Step 4: Align `LinAlgError`        | Add `NotPositiveDefinite`, `WorkspaceTooSmall`, `MaxIterationsReached`; remove `NonSquareMatrix`; keep `SingularMatrix`. Update Display tests.           | Complete                   |
-| Step 5: Producer tests             | Storage Phases 2–4 and subprograms Phase 4 attach the failure-path tests in §6 items 4–5.                                                                | — (owned by those designs) |
+| Step 5: Producer tests             | Storage Phases 2–4 and subprograms Phase 4 attach the failure-path tests in §6 items 4–5.                                                                | - (owned by those designs) |
 | Step 6: Convolution producer       | `dsp.rs` `Convolution` returns `Err(ConversionError::DimensionMismatch)` on a short output (§6 item 2); a panic / `#[should_panic]` test is a defect.    | Complete                   |
 
 ---

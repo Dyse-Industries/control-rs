@@ -50,7 +50,7 @@ fn setup_scenario_check(fixture_workspace: &std::path::Path) -> io::Result<()> {
         .current_dir(fixture_workspace)
         .args([
             "--config",
-            ".cargo/trace/trace.toml",
+            ".cargo/trace.toml",
             "--out",
             "target/ci-artifacts/reqs.jsonl",
         ])
@@ -83,11 +83,11 @@ fn setup_scenario_decisions(
         "# ADR-0001: Size\n\n![Status](https://img.shields.io/badge/ADR%20Status-Proposed-orange)\n",
     )?;
     let mut config =
-        fs::read_to_string(fixture_workspace.join(".cargo/trace/trace.toml"))?;
+        fs::read_to_string(fixture_workspace.join(".cargo/trace.toml"))?;
     config.push_str(
         "[decisions]\nfiles = [\"adr\"]\nid = 'ADR-[0-9]{4}'\ndefinition = '^#\\s+ADR-[0-9]{4}:'\nstatus = 'ADR%20Status-(?P<status>[A-Za-z]+)-'\naccepted = [\"Accepted\"]\n",
     );
-    fs::write(fixture_workspace.join(".cargo/trace/trace.toml"), config)
+    fs::write(fixture_workspace.join(".cargo/trace.toml"), config)
 }
 
 fn create_temp_context(scenario: NegativeScenario) -> io::Result<TempContext> {
@@ -107,11 +107,11 @@ fn create_temp_context(scenario: NegativeScenario) -> io::Result<TempContext> {
         "[package]\nname = \"dummy\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
     )?;
 
-    let trace_dir = fixture_workspace.join(".cargo/trace");
-    fs::create_dir_all(&trace_dir)?;
+    let cargo_dir = fixture_workspace.join(".cargo");
+    fs::create_dir_all(&cargo_dir)?;
     fs::write(
-        trace_dir.join("trace.toml"),
-        "id = 'FR-[0-9]+'\ndoc = '[a-z]+'\nfiles = [\"docs\"]\ndoc_id = '^#\\s+.*\\((?P<doc>[a-z]+)\\)'\ndefinition = '^- \\*\\*FR-'\ncondition = 'VC-[0-9]+'\nverification = '^\\| VC-'\nretired = []\n[method.libtest]\nresult_artifact = \"target/ci-artifacts/test.log\"\n",
+        cargo_dir.join("trace.toml"),
+        "id = 'FR-[0-9]+'\ndoc = '[a-z]+'\nfiles = [\"docs\"]\ndoc_id = '^#\\s+.*\\((?P<doc>[a-z]+)\\)'\ndefinition = '^- \\*\\*FR-'\ncondition = 'VC-[0-9]+'\nverification = '^\\| VC-'\ndoc_status = { status = 'Design%20Status-(?P<status>[A-Za-z_]+)-', pass = [\"Ready\", \"Shipped\"], warn = [\"Draft\"] }\nretired = []\n[method.libtest]\nresult_artifact = \"target/ci-artifacts/test.log\"\n",
     )?;
 
     match scenario {
@@ -142,7 +142,7 @@ fn test_negative_trace_reqs_gate_fails_on_duplicate_def() -> TestResult {
         env!("CARGO_BIN_EXE_trace-reqs"),
         vec![
             "--config".to_string(),
-            ".cargo/trace/trace.toml".to_string(),
+            ".cargo/trace.toml".to_string(),
             "--out".to_string(),
             "reqs.jsonl".to_string(),
         ],
@@ -173,7 +173,7 @@ fn test_negative_trace_check_gate_fails_on_uncovered_condition() -> TestResult {
         env!("CARGO_BIN_EXE_trace-check"),
         vec![
             "--config".to_string(),
-            ".cargo/trace/trace.toml".to_string(),
+            ".cargo/trace.toml".to_string(),
             "--reqs".to_string(),
             "target/ci-artifacts/reqs.jsonl".to_string(),
             "--out".to_string(),
@@ -207,7 +207,7 @@ fn test_negative_trace_reqs_gate_fails_on_unaccepted_and_missing_decisions()
         env!("CARGO_BIN_EXE_trace-reqs"),
         vec![
             "--config".to_string(),
-            ".cargo/trace/trace.toml".to_string(),
+            ".cargo/trace.toml".to_string(),
             "--out".to_string(),
             "reqs.jsonl".to_string(),
         ],

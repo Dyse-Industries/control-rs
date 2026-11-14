@@ -39,29 +39,29 @@ Primary usage scenarios:
 
 #### 2.1. Functional Requirements
 
-- **FR-1 — Ascending Degree Coefficient Indexing**: Single-variable polynomials
+- **FR-1 - Ascending Degree Coefficient Indexing**: Single-variable polynomials
   represent $P(s) = \sum_{i=0}^{N-1} a_i s^i$ where index $i$ corresponds directly
   to the coefficient of $s^i$. Indexing must preserve degree semantics across
   differentiation, integration, and evaluation.
-- **FR-2 — Real-Time Horner Evaluation**: Evaluating $P(s)$ at a scalar
+- **FR-2 - Real-Time Horner Evaluation**: Evaluating $P(s)$ at a scalar
   point $s$ executes in exactly $N-1$ multiply-accumulate (FMA) steps for an
   $N$-coefficient polynomial of degree $N-1$ (Higham, 2002). Evaluation must execute
   in constant working memory without dynamic allocation.
-- **FR-3 — Discrete Convolution Multiplication**: Multiplying degree-$(N-1)$ and
+- **FR-3 - Discrete Convolution Multiplication**: Multiplying degree-$(N-1)$ and
   degree-$(M-1)$ polynomials ($N$ and $M$ coefficients) yields an exact
   degree-$(N+M-2)$ polynomial ($N+M-1$ coefficients) whose coefficients equal the
   linear discrete convolution of the inputs (ARM, 2025). Coefficients must be
   computed without numerical truncation across supported scalar types.
-- **FR-4 — Fallible Polynomial Division**: Polynomial Euclidean
+- **FR-4 - Fallible Polynomial Division**: Polynomial Euclidean
   division ($A(s) = Q(s) D(s) + R(s)$) returns the quotient and remainder, or
   returns a typed error variant when dividing by a zero polynomial.
-- **FR-5 — Companion Matrix Realization**: Polynomials construct companion
+- **FR-5 - Companion Matrix Realization**: Polynomials construct companion
   matrices whose eigenvalues equal the polynomial roots. Conversion must return
   an explicit error if the leading coefficient is zero (Aurentz et al., 2018).
-- **FR-6 — Discretization & Trajectory Transforms**: Evaluates trajectory
+- **FR-6 - Discretization & Trajectory Transforms**: Evaluates trajectory
   splines (cubic and quintic) and parameter substitutions (for example, bilinear
   transform $s \to \frac{2}{T_s}\frac{z-1}{z+1}$) without heap allocation.
-- **FR-7 — Generic Polynomial Root Finding**: Computes the complex roots
+- **FR-7 - Generic Polynomial Root Finding**: Computes the complex roots
   ($r \in \mathbb{C}^N$) of a polynomial of capacity $N$ into a fixed-size worst-case buffer
   `[Complex<T>; N]` without heap allocation or generic buffer parameters. Dispatches hierarchically
   to $O(1)$ direct closed-form solutions for linear ($N=2$) and quadratic ($N=3$) cases,
@@ -75,19 +75,19 @@ Primary usage scenarios:
 
 #### 2.2. Non-Functional Requirements
 
-- **NFR-1 — Data-Independent Evaluation Latency**: Polynomial evaluation cycle
+- **NFR-1 - Data-Independent Evaluation Latency**: Polynomial evaluation cycle
   count depends only on degree $N$, not on numerical coefficient values,
   ensuring predictable Worst-Case Execution Time (WCET).
-- **NFR-2 — Memory Footprint Predictability**: Polynomial operations execute
+- **NFR-2 - Memory Footprint Predictability**: Polynomial operations execute
   within compile-time-bounded stack frames without dynamic heap growth.
 
 #### 2.3. Constraints
 
-- **C-1 — Capacity Bound**: The coefficient capacity `N` is a `Dim` from
+- **C-1 - Capacity Bound**: The coefficient capacity `N` is a `Dim` from
   the `num-types-design.md` C-1 set ($0..=1024$ plus $2048$, $4096$, $8192$,
   $16384$), so degree is at most $N - 1$. Stack cost is
   $N \times \text{size\_of}(T)$ per polynomial.
-- **C-2 — `#![no_std]` / Zero Heap Allocation**: All polynomial representations
+- **C-2 - `#![no_std]` / Zero Heap Allocation**: All polynomial representations
   and operations operate strictly on fixed stack arrays or borrowed memory
   slices.
 
@@ -146,7 +146,7 @@ By parameterizing `Polynomial` over `DenseStorage<T, R = N, C = Const<1>>`,
 algebraic logic:
 
 ```rust
-/// Owning polynomial backed by a stack array — `N` is the alias's own const generic.
+/// Owning polynomial backed by a stack array; `N` is the alias's own const generic.
 pub type ArrayPolynomial<T, const N: usize> =
 Polynomial<T, Const<N>, ArrayStorage<T, N, 1>>;
 
@@ -311,7 +311,7 @@ provides two interfaces:
   The computed result is exact for a polynomial whose coefficients are
   perturbed by at most $\gamma_{2n} = 2nu / (1 - 2nu)$ from
   $p$'s true coefficients, where $u$ is unit roundoff (Higham, 2002, Ch.
-    5) — a small, degree-linear backward-error bound quantifying the
+    5), a small, degree-linear backward-error bound quantifying the
        "minimizes rounding error" claim above.
 - **Trajectory Splines & Bilinear Substitution (FR-6)**:
   ```rust
@@ -403,7 +403,7 @@ through this matrix (§4.6, §5.1).
   guarantee, not a coefficient-level one: Aurentz et al.'s backward-
   stability result guarantees the computed eigenvalues are exact for a
   matrix *near* the companion matrix, not that they are exact for a
-  polynomial near $p$'s own coefficients (Aurentz et al., 2018) — callers
+  polynomial near $p$'s own coefficients (Aurentz et al., 2018); callers
   root-finding on coefficient-sensitive input should read accuracy claims
   with that distinction in mind.
 - **Failure Condition**: Returns `ConversionError::NonMonicPolynomial` if
@@ -429,7 +429,7 @@ time via `Dim` type constraints, the same mechanism `matrix-design.md`
 
 `ConversionError` is shared across `Matrix`, `Polynomial` and `Tensor`
 conversions and is defined once, canonically, in
-[`error-design.md`](../math/error-design.md) §3 — not restated here.
+[`error-design.md`](../math/error-design.md) §3 (not restated here).
 
 `DivisionError` and `RootError` are specific to `Polynomial` and
 stay in this module, which `error-design.md` FR-1 states as the rule: an error
@@ -464,7 +464,7 @@ pub enum RootError {
   `matrix-design.md` §4.9.3's `get`-method pattern.
 - **Near-Singular Divisor**: `div_rem` accuracy degrades continuously as
   the divisor's leading coefficient shrinks toward (but does not reach)
-  zero — a documented conditioning caveat, not a `DivisionError` variant
+  zero, a documented conditioning caveat, not a `DivisionError` variant
   (§4.6).
 - **Host/Design-Time Scope**: `div_rem` and simultaneous-iteration root-finding
   have no established fixed-point (Q31/Q15) numerical precedent in DSP
@@ -502,7 +502,7 @@ cubic at the same cost bound and remain a candidate (§8).
 
 Asymptotically faster than direct $O(N \times M)$ summation for large
 degree, but numerically stable only when both operands' coefficients are of
-comparable magnitude (van der Hoeven, 2008) — an assumption this crate
+comparable magnitude (van der Hoeven, 2008), an assumption this crate
 cannot make about arbitrary user-supplied coefficients. This is consistent
 with CMSIS-DSP's own guidance that direct convolution, not an FFT-based
 approach, is appropriate below its documented long-vector cutoff (ARM
@@ -598,17 +598,17 @@ stagnation for degenerate matrices. A closed-form quadratic solver:
 
 | Requirement                                     | Method                                       | Artifact                                                  |
 |:------------------------------------------------|:---------------------------------------------|:----------------------------------------------------------|
-| FR-1 — Ascending Degree Coefficient Indexing    | Compile-time shape check                     | rustdoc `compile_fail` doctests in `src/polynomial/mod.rs`            |
-| FR-2 — Real-Time Horner Evaluation              | Requirements-based test, Property-based test | `src/polynomial/tests/polynomial_tests.rs::test_polynomial_evaluation`, `test_horner_backward_error` |
-| FR-3 — Discrete Convolution Multiplication      | Property-based test, Back-to-back comparison | `src/polynomial/tests/polynomial_tests.rs::test_polynomial_multiplication` |
-| FR-4 — Fallible Polynomial Division             | Requirements-based test                      | `src/polynomial/tests/polynomial_tests.rs::test_polynomial_div_rem`   |
-| FR-5 — Companion Matrix Realization             | Back-to-back comparison                      | `src/polynomial/tests/polynomial_tests.rs::test_companion_matrix`     |
-| FR-6 — Discretization & Trajectory Transforms   | Requirements-based test, Doctest             | `src/polynomial/tests/polynomial_tests.rs::test_cubic_quintic_bilinear` |
-| FR-7 — Generic Polynomial Root Finding          | Requirements-based test, Property-based test | `src/polynomial/tests/polynomial_tests.rs::test_quadratic_roots`, `test_generic_roots` |
-| NFR-1 — Data-Independent Evaluation Latency     | On-target execution                          | ETS disassembly audit for zero panic landing pads         |
-| NFR-2 — Memory Footprint Predictability         | Resource usage evaluation                    | `#![no_std]` host allocator audit                         |
-| C-1 — Maximum Degree Bound                      | Compile-time shape check                     | `clippy::large_stack_arrays` CI check                     |
-| C-2 — `#![no_std]` / Zero Heap Allocation       | Resource usage evaluation                    | Compilation under `#![no_std]` targets                    |
+| FR-1 - Ascending Degree Coefficient Indexing    | Compile-time shape check                     | rustdoc `compile_fail` doctests in `src/polynomial/mod.rs`            |
+| FR-2 - Real-Time Horner Evaluation              | Requirements-based test, Property-based test | `src/polynomial/tests/polynomial_tests.rs::test_polynomial_evaluation`, `test_horner_backward_error` |
+| FR-3 - Discrete Convolution Multiplication      | Property-based test, Back-to-back comparison | `src/polynomial/tests/polynomial_tests.rs::test_polynomial_multiplication` |
+| FR-4 - Fallible Polynomial Division             | Requirements-based test                      | `src/polynomial/tests/polynomial_tests.rs::test_polynomial_div_rem`   |
+| FR-5 - Companion Matrix Realization             | Back-to-back comparison                      | `src/polynomial/tests/polynomial_tests.rs::test_companion_matrix`     |
+| FR-6 - Discretization & Trajectory Transforms   | Requirements-based test, Doctest             | `src/polynomial/tests/polynomial_tests.rs::test_cubic_quintic_bilinear` |
+| FR-7 - Generic Polynomial Root Finding          | Requirements-based test, Property-based test | `src/polynomial/tests/polynomial_tests.rs::test_quadratic_roots`, `test_generic_roots` |
+| NFR-1 - Data-Independent Evaluation Latency     | On-target execution                          | ETS disassembly audit for zero panic landing pads         |
+| NFR-2 - Memory Footprint Predictability         | Resource usage evaluation                    | `#![no_std]` host allocator audit                         |
+| C-1 - Maximum Degree Bound                      | Compile-time shape check                     | `clippy::large_stack_arrays` CI check                     |
+| C-2 - `#![no_std]` / Zero Heap Allocation       | Resource usage evaluation                    | Compilation under `#![no_std]` targets                    |
 
 #### 6.5. Coverage
 
@@ -644,7 +644,7 @@ stagnation for degenerate matrices. A closed-form quadratic solver:
 - **Memory Footprint**: Owning `ArrayPolynomial<T, N>` occupies
   exactly $N \times \text{size\_of}(T)$ bytes on stack without heap overhead.
 - **Horner FLOP Count**: `evaluate` executes in exactly $N-1$ additions
-  and $N-1$ multiplications (utilizing hardware FMA instructions on ARM
+  and $N-1$ multiplications (using hardware FMA instructions on ARM
   Cortex-M4/M7).
 - **Zero-Copy Views**: `PolynomialView` and `PolynomialViewMut` occupy only 2
   pointer words plus stride metadata, avoiding buffer copying.
@@ -705,50 +705,47 @@ stagnation for degenerate matrices. A closed-form quadratic solver:
    Available: https://docs.rs/aberth/latest/aberth/. Accessed: Aug. 7, 2026.
 3. **Horner, W. G. (1819).** A New Method of Solving Numerical Equations of All
    Orders, by Continuous Approximation. _Philosophical Transactions of the Royal
-   Society of London_, 109, 308–335. — Origin of the $N-1$ operation evaluation
+   Society of London_, 109, 308–335. - Origin of the $N-1$ operation evaluation
    scheme; direct FLOP-count justification for `evaluate`.
 4. **Higham, N. J. (2002).** _Accuracy and Stability of Numerical Algorithms_,
-   2nd ed., Ch. 5 "Polynomials". SIAM. — Backward-error bound $\gamma_{2n}$ for
+   2nd ed., Ch. 5 "Polynomials". SIAM. - Backward-error bound $\gamma_{2n}$ for
    Horner's method, quantifying the accuracy claim in §4.6.
 5. **Henrici, P. (1974).** _Applied and Computational Complex Analysis, Volume
    1: Power Series, Integration, Conformal Mapping, Location of Zeros_. Wiley. (
-   Cited edition: 1988 Wiley Classics Library reprint, ISBN 0471608416.) —
-   Zero-location theory underpinning root-finding correctness and region bounds.
+   Cited edition: 1988 Wiley Classics Library reprint, ISBN 0471608416.) - Zero-location theory underpinning root-finding correctness and region bounds.
 6. **Bini, D. A., Boito, P., Eidelman, Y., Gemignani, L., & Gohberg, I. (2010).
    ** A Fast Implicit QR Eigenvalue Algorithm for Companion Matrices. _Linear
-   Algebra and its Applications_, 432(8), 2006–2031. — $O(N^2)$-time
+   Algebra and its Applications_, 432(8), 2006–2031. - $O(N^2)$-time
    companion-matrix QR exploiting unitary-plus-rank-one structure.
 7. **Aurentz, J. L., Mach, T., Vandebril, R., & Watkins, D. S. (2015).** Fast
    and Backward Stable Computation of Roots of Polynomials. _SIAM Journal on
-   Matrix Analysis and Applications_, 36(3), 942–973. — Reduces Bini et al.
+   Matrix Analysis and Applications_, 36(3), 942–973. - Reduces Bini et al.
    (2010) companion-matrix storage from $O(N^2)$ to $O(N)$ while preserving
    backward stability.
 8. **Aurentz, J. L., Mach, T., Vandebril, R., & Watkins, D. S. (2018).** Fast
    and Backward Stable Computation of Roots of Polynomials, Part II: Backward
    Error Analysis; Companion Matrix and Companion Pencil. _SIAM Journal on
-   Matrix Analysis and Applications_, 1245–1269, doi: 10.1137/17M1152802. —
-   Formalizes the distinction between backward stability with respect to the
+   Matrix Analysis and Applications_, 1245–1269, doi: 10.1137/17M1152802. - Formalizes the distinction between backward stability with respect to the
    companion matrix and backward stability with respect to the polynomial's own
    coefficients (§4.7.1).
 9. **Faddeev, D. K., & Faddeeva, V. N. (1963).** _Computational Methods of
-   Linear Algebra_. W. H. Freeman and Company. — Trace-based derivation of the
+   Linear Algebra_. W. H. Freeman and Company. - Trace-based derivation of the
    Faddeev–LeVerrier algorithm; shared with `matrix-design.md` §4.8.1, which
    specifies the inverse (`Matrix` → characteristic `Polynomial`) conversion.
 10. **van der Hoeven, J. (2008).** Making fast multiplication of polynomials
     numerically stable. [Online].
     Available: https://www.texmacs.org/joris/stablemult/stablemult.html.
-    Accessed: Aug. 7, 2026. — Numerical-stability precondition (
+    Accessed: Aug. 7, 2026. - Numerical-stability precondition (
     comparable-magnitude coefficients) for FFT-based polynomial multiplication,
     motivating its rejection in §5.2.
 11. **ARM. (2025).** Convolution. _CMSIS-DSP_ (Version 1.15.0). [Online].
     Available: https://arm-software.github.io/CMSIS-DSP/v1.15.0/group__Conv.html.
-    Accessed: Aug. 7, 2026. — Long-vector FFT cutoff guidance and Q15/Q31
+    Accessed: Aug. 7, 2026. - Long-vector FFT cutoff guidance and Q15/Q31
     fixed-point accumulator/overflow behavior for direct convolution, referenced
     in §5.2.
 12. **Claessen, K., & Hughes, J. (2000).** QuickCheck: A Lightweight Tool for
-    Random Testing of Haskell Programs. _ACM SIGPLAN Notices_, 35(9), 268–279. —
-    Property-based testing methodology framing `proptest` algebraic invariant
+    Random Testing of Haskell Programs. _ACM SIGPLAN Notices_, 35(9), 268–279. - Property-based testing methodology framing `proptest` algebraic invariant
     checks (§6.1).
 13. **Goldberg, D. (1991).** What Every Computer Scientist Should Know About
-    Floating-Point Arithmetic. _ACM Computing Surveys_, 23(1), 5–48. — Numerically
+    Floating-Point Arithmetic. _ACM Computing Surveys_, 23(1), 5–48. - Numerically
     stable quadratic root formula eliminating catastrophic subtractive cancellation.

@@ -32,36 +32,36 @@ Primary usage scenarios:
 
 #### 2.1 Functional Requirements
 
-* **FR-1 — Per-Model Emission**: `validate <model>` (or `validate` for all
+- **FR-1 - Per-Model Emission**: `validate <model>` (or `validate` for all
   five) writes `target/verification/<model>.rust.h5` containing every signal in §5.1 for
   that model.
-* **FR-2 — Independent Reference Oracles**: Each model has a SciPy/NumPy
+- **FR-2 - Independent Reference Oracles**: Each model has a SciPy/NumPy
   oracle; alternative-library oracles are listed in §4. Each oracle is a
   separate `python_script` variant writing
   `target/verification/<model>.<library>.h5`.
-* **FR-3 — Tolerance Metadata**: The SciPy oracle attaches `measure` and
+- **FR-3 - Tolerance Metadata**: The SciPy oracle attaches `measure` and
   `bound` to every dataset, and `bound.<library>` where an alternative oracle
   is held to a different bound.
-* **FR-4 — Signal Coverage**: The Rust container provides every SciPy signal.
+- **FR-4 - Signal Coverage**: The Rust container provides every SciPy signal.
   An alternative oracle may omit a signal only where the SciPy dataset carries
   `missing_ok.<library>`.
 
 #### 2.2 Non-Functional Requirements
 
-* **NFR-1 — Zero Dynamic Heap Allocation**: Model computations under test use
+- **NFR-1 - Zero Dynamic Heap Allocation**: Model computations under test use
   `ArrayStorage` or static buffers; the emitter allocates only for container
   serialization.
-* **NFR-2 — High-Precision Backward Stability**: Linear solves and numerical
+- **NFR-2 - High-Precision Backward Stability**: Linear solves and numerical
   transformations meet the bounds in §5.1.
-* **NFR-3 — Bare-Metal Portability**: The algorithms under test are the same
+- **NFR-3 - Bare-Metal Portability**: The algorithms under test are the same
   `no_std` implementations that run on target.
 
 #### 2.3 Constraints
 
-* **C-1 — Harness Boundary**: `control-rs-verification` depends on
+- **C-1 - Harness Boundary**: `control-rs-verification` depends on
   `control-rs` only for the models under test. Execution and comparison
   belong to `control-rs-compare` ([cross-compare-design](../vv/cross-compare-design.md)).
-* **C-2 — Timing Out of Scope**: Performance and jitter are measured by the
+- **C-2 - Timing Out of Scope**: Performance and jitter are measured by the
   criterion benches (`benches/`) and the `regression` gate, not by this suite.
 
 ---

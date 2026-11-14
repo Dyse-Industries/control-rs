@@ -3144,7 +3144,7 @@ pub mod subprogram_test_suite {
         assert_almost_eq!(t00.re, 7.0, 1e-9);
         assert_almost_eq!(t00.im, 0.0, 1e-9);
 
-        // UNMQR: Trans applies Qᵀ, ConjTrans applies Qᴴ — distinct for complex Q.
+        // UNMQR: Trans applies Qᵀ, ConjTrans applies Qᴴ (distinct for complex Q).
         let mut qr = ArrayStorage::<Complex64, 2, 2>::from_array([
             [Complex64::new(1.0, 2.0), Complex64::new(0.5, 0.25)],
             [Complex64::new(3.0, -1.0), Complex64::new(2.0, 1.0)],

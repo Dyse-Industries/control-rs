@@ -1,4 +1,4 @@
-//! `control-rs-compare` — Cross-Compare Harness & HDF5 Verification Comparison System.
+//! `control-rs-compare`: Cross-Compare Harness & HDF5 Verification Comparison System.
 //!
 //! Provides typed HDF5 numerical comparison, unified `compare.toml` configuration loading,
 //! multi-language variant process orchestration, and structured control-rs-verification reporting.

@@ -1,15 +1,21 @@
-extends: existence
-message: "Consider simplifying bloated phrase '%s'."
+extends: substitution
+message: "Consider using '%s' instead of '%s'."
 link: documentation/documentation-standards.md
 level: error
+scope: [paragraph, list, blockquote, comment]
 ignorecase: true
-tokens:
-  - in order to
-  - prior to
-  - at this point in time
-  - at the present time
-  - a large number of
-  - due to the fact that
-  - for the purpose of
-  - with the exception of
-  - in the event that
+swap:
+  in order to: to
+  prior to: before
+  at this point in time: now
+  at the present time: now
+  a large number of: many
+  due to the fact that: because
+  for the purpose of: for
+  with the exception of: except
+  in the event that: if
+  utilize: use
+  utilized: used
+  utilizes: uses
+  utilizing: using
+  whether or not: whether

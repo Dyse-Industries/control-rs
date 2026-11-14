@@ -46,53 +46,53 @@ Primary usage scenarios:
 
 #### 2.1. Functional Requirements
 
-- **FR-1 — Continuous & Discrete LTI Representation**: Represents Linear
+- **FR-1 - Continuous & Discrete LTI Representation**: Represents Linear
   Time-Invariant (LTI) systems with continuous
   dynamics ($\dot{x} = A x + B u, y = C x + D u$) or discrete
   updates ($x_{k+1} = A x_k + B u_k, y_k = C x_k + D u_k$) with explicit sample
   time $T_s$. Dimension compatibility ($N_x, N_u, N_y$) must be validated at
   compile time.
-- **FR-2 — Deterministic State Propagation**: Evaluates single-step state
+- **FR-2 - Deterministic State Propagation**: Evaluates single-step state
   propagation ($x_{k+1}$) and output generation ($y_k$) given current
   state $x_k$ and input $u_k$. Systems with zero direct feedthrough ($D = 0$)
   must skip the feedforward multiply-accumulate without runtime branch overhead.
-- **FR-3 — System Interconnection Algebra**: Supports series ($G_2 \cdot G_1$),
+- **FR-3 - System Interconnection Algebra**: Supports series ($G_2 \cdot G_1$),
   parallel ($G_1 + G_2$), and feedback ($G / (I + G H)$) interconnections,
   deriving composite state dimensions at compile time. Feedback interconnections
   evaluate algebraic loop solvability and return
   `Err(StateSpaceError::SingularLoopMatrix)` when $(I - \mathrm{sign}\, D_2 D_1)$
   is singular.
-- **FR-4 — Continuous-to-Discrete Discretization**: Discretizes continuous-time
+- **FR-4 - Continuous-to-Discrete Discretization**: Discretizes continuous-time
   state-space models using Zero-Order Hold (ZOH via scaling-and-squaring matrix
   exponential) and Bilinear / Tustin transformations (Van Loan, 1978; Higham,
   2005). Ill-conditioned discretization transformations return explicit error
   variants.
-- **FR-5 — Coordinate Similarity Transformations**: Computes coordinate basis
+- **FR-5 - Coordinate Similarity Transformations**: Computes coordinate basis
   changes ($z = T x$) producing transformed system
   matrices ($\tilde{A} = T A T^{-1}$, $\tilde{B} = T B$, $\tilde{C} = C T^{-1}$, $\tilde{D} = D$),
   returning an error if transformation matrix $T$ is singular.
-- **FR-6 — Controllability, Observability & Transfer Function Conversion**:
+- **FR-6 - Controllability, Observability & Transfer Function Conversion**:
   Generates controllability and observability
   matrices ($[B, AB, \dots, A^{n-1}B]$ and $[C; CA; \dots; CA^{n-1}]$) and
   provides conversion to SISO `TransferFunction` models.
 
 #### 2.2. Non-Functional Requirements
 
-- **NFR-1 — Single-Step Execution Complexity**: Discrete single-step propagation
+- **NFR-1 - Single-Step Execution Complexity**: Discrete single-step propagation
   executes in $O(N_x^2 + N_x N_u + N_y N_x + N_y N_u)$ operations with zero
   dynamic memory allocations.
-- **NFR-2 — Bounded Stack Overhead**: System representations and intermediate
+- **NFR-2 - Bounded Stack Overhead**: System representations and intermediate
   interconnection matrices maintain bounded stack footprints suited for embedded
   real-time tasks.
 
 #### 2.3. Constraints
 
-- **C-1 — Non-Zero State Dimensions**: State, input, and output dimensions must
+- **C-1 - Non-Zero State Dimensions**: State, input, and output dimensions must
   satisfy $N_x \ge 1, N_u \ge 1, N_y \ge 1$.
-- **C-2 — Dimension Capacity Limits**: State dimensions are
+- **C-2 - Dimension Capacity Limits**: State dimensions are
   bounded ($N_x \le 32$, $N_u, N_y \le 16$) to ensure real-time determinism and
   prevent stack overflow.
-- **C-3 — `#![no_std]` Environment**: Operates strictly in `#![no_std]` without
+- **C-3 - `#![no_std]` Environment**: Operates strictly in `#![no_std]` without
   standard library dependencies.
 
 ---
@@ -114,7 +114,7 @@ coordinate transforms, and SISO transfer function conversions.
 Accessors (§4.3) are layout-agnostic per `storage-design.md` §4.1: ordering is
 carried by the leaf's `isize` strides rather than by a layout flag.
 `a_matrix()`/`b_matrix()`/`c_matrix()`/`d_matrix()` and
-`step()`/`derivative()` never assume `Sa`/`Sb`/`Sc`/`Sd` are column-major —
+`step()`/`derivative()` never assume `Sa`/`Sb`/`Sc`/`Sd` are column-major:
 swapping any one of them for a row-major backend requires no change here.
 
 - **`crate::math::subprograms`**: BLAS Level 1/2/3 kernels (`Gemv`, `Gemm`,
@@ -216,7 +216,7 @@ pub type StateSpaceViewMut<'a, T, const NX: usize, const NU: usize, const NY: us
 `StorageView`/`StorageViewMut` are themselves `DenseStorage` implementors
 (`storage-design.md` FR-2), so `StateSpaceView`'s `a_matrix()` (§4.3)
 constructs a `MatrixSlice` directly over the existing borrowed view rather
-than performing a redundant copy — the accessor borrows straight through, it
+than performing a redundant copy: the accessor borrows straight through, it
 does not re-wrap. Views are strided, not necessarily contiguous, so they
 carry no `as_slice()`; the accessors that need one bound
 `ContiguousStorage` separately (§4.3). Built-in time-domain simulation
@@ -305,7 +305,7 @@ impl core::error::Error for StateSpaceError {}
 Both variants reuse the same singularity-detection check shown above.
 
 Near-singular (but not exactly singular) evaluation of $H(s)$ near a pole of
-$A$ (§4.9) is *not* treated as a constructor- or call-time error — a valid
+$A$ (§4.9) is *not* treated as a constructor- or call-time error; a valid
 `StateSpace` may still be evaluated at an ill-conditioned frequency point,
 which is documented behavior (§4.9) rather than a distinct error variant,
 matching the posture already adopted for `TransferFunction::evaluate_complex`
@@ -504,17 +504,17 @@ is made independently by `transfer-function-design.md` §5 for
 
 | Requirement                                             | Method                                           | Artifact                                                              |
 |:--------------------------------------------------------|:-------------------------------------------------|:----------------------------------------------------------------------|
-| FR-1 — Continuous & Discrete LTI Representation         | Compile-time shape check                         | rustdoc `compile_fail` doctests in `src/state_space/mod.rs`           |
-| FR-2 — Deterministic State Propagation                  | Requirements-based test, Back-to-back comparison | `src/state_space/tests/state_space_tests.rs::test_discrete_simulation_step` |
-| FR-3 — System Interconnection Algebra                   | Property-based test, Back-to-back comparison     | `src/state_space/tests/state_space_tests.rs::test_series_parallel_feedback`, `test_feedback_singular_loop_matrix` |
-| FR-4 — Continuous-to-Discrete Discretization            | Requirements-based test, Back-to-back comparison | `src/state_space/tests/state_space_tests.rs::test_zoh_discretization`  |
-| FR-5 — Coordinate Similarity Transformations            | Property-based test, Requirements-based test     | `src/state_space/tests/state_space_tests.rs::test_similarity_transform_poles_and_step` |
-| FR-6 — Controllability, Observability & TF Conversion   | Requirements-based test                          | `src/state_space/tests/state_space_tests.rs::test_ctrb_obsv_tf`        |
-| NFR-1 — Single-Step Execution Complexity                | Resource usage evaluation                        | `size_of` assertions and `#![no_std]` host check                      |
-| NFR-2 — Bounded Stack Overhead                          | On-target execution                              | ETS suite `state_space_test_suite`                                    |
-| C-1 — Non-Zero State Dimensions                         | Compile-time shape check                         | Type definitions for linear systems                                   |
-| C-2 — Dimension Capacity Limits                         | Resource usage evaluation                        | `clippy::large_stack_arrays` CI check                                 |
-| C-3 — `#![no_std]` Environment                          | Resource usage evaluation                        | Compilation under `#![no_std]` target triples                         |
+| FR-1 - Continuous & Discrete LTI Representation         | Compile-time shape check                         | rustdoc `compile_fail` doctests in `src/state_space/mod.rs`           |
+| FR-2 - Deterministic State Propagation                  | Requirements-based test, Back-to-back comparison | `src/state_space/tests/state_space_tests.rs::test_discrete_simulation_step` |
+| FR-3 - System Interconnection Algebra                   | Property-based test, Back-to-back comparison     | `src/state_space/tests/state_space_tests.rs::test_series_parallel_feedback`, `test_feedback_singular_loop_matrix` |
+| FR-4 - Continuous-to-Discrete Discretization            | Requirements-based test, Back-to-back comparison | `src/state_space/tests/state_space_tests.rs::test_zoh_discretization`  |
+| FR-5 - Coordinate Similarity Transformations            | Property-based test, Requirements-based test     | `src/state_space/tests/state_space_tests.rs::test_similarity_transform_poles_and_step` |
+| FR-6 - Controllability, Observability & TF Conversion   | Requirements-based test                          | `src/state_space/tests/state_space_tests.rs::test_ctrb_obsv_tf`        |
+| NFR-1 - Single-Step Execution Complexity                | Resource usage evaluation                        | `size_of` assertions and `#![no_std]` host check                      |
+| NFR-2 - Bounded Stack Overhead                          | On-target execution                              | ETS suite `state_space_test_suite`                                    |
+| C-1 - Non-Zero State Dimensions                         | Compile-time shape check                         | Type definitions for linear systems                                   |
+| C-2 - Dimension Capacity Limits                         | Resource usage evaluation                        | `clippy::large_stack_arrays` CI check                                 |
+| C-3 - `#![no_std]` Environment                          | Resource usage evaluation                        | Compilation under `#![no_std]` target triples                         |
 
 #### 6.5. Coverage
 
@@ -654,37 +654,37 @@ is made independently by `transfer-function-design.md` §5 for
 8. **python-control developers. (2026).** `control.ss2tf`, python-control
    documentation. [Online].
    Available: https://python-control.readthedocs.io/en/latest/generated/control.ss2tf.html.
-9. **MathWorks. (2026).** `c2d` — Convert model from continuous to discrete
+9. **MathWorks. (2026).** `c2d` - Convert model from continuous to discrete
    time, MATLAB documentation. [Online].
    Available: https://www.mathworks.com/help/control/ref/dynamicsystem.c2d.html.
 10. **MathWorks. (2026).** *Continuous-Discrete Conversion Methods*, MATLAB &
     Simulink documentation. [Online].
     Available: https://www.mathworks.com/help/control/ug/continuous-discrete-conversion-methods.html.
-11. **MathWorks. (2026).** `obsv` — Observability of state-space model, MATLAB
+11. **MathWorks. (2026).** `obsv` - Observability of state-space model, MATLAB
     documentation. [Online].
     Available: https://www.mathworks.com/help/control/ref/statespacemodel.obsv.html.
-12. **MathWorks. (2026).** `ctrb` — Controllability of state-space model, MATLAB
+12. **MathWorks. (2026).** `ctrb` - Controllability of state-space model, MATLAB
     documentation. [Online].
     Available: https://www.mathworks.com/help/control/ref/statespacemodel.ctrb.html.
-13. **MathWorks. (2026).** `ctrbf` — Compute controllability staircase form,
+13. **MathWorks. (2026).** `ctrbf` - Compute controllability staircase form,
     MATLAB documentation. [Online].
     Available: https://www.mathworks.com/help/control/ref/ctrbf.html.
 14. **MathWorks. (2026).** *State-Space Realizations* (`canon`, `compreal`,
     `modalreal`), MATLAB & Simulink documentation. [Online].
     Available: https://www.mathworks.com/help/control/ug/canonical-state-space-realizations.html.
-15. **MathWorks. (2026).** `canon` — (Not recommended) Canonical state-space
+15. **MathWorks. (2026).** `canon` - (Not recommended) Canonical state-space
     realization, MATLAB documentation. [Online].
     Available: https://www.mathworks.com/help/ident/ref/dynamicsystem.canon.html.
-16. **MathWorks. (2026).** `prescale` — Optimal scaling of state-space models,
+16. **MathWorks. (2026).** `prescale` - Optimal scaling of state-space models,
     MATLAB documentation. [Online].
     Available: https://www.mathworks.com/help/control/ref/ss.prescale.html.
 17. **MathWorks. (2026).** *Scaling State-Space Models*, MATLAB & Simulink
     documentation. [Online].
     Available: https://www.mathworks.com/help/control/ug/scaling-state-space-models.html.
-18. **MathWorks. (2026).** `ss2ss` — State coordinate transformation for
+18. **MathWorks. (2026).** `ss2ss` - State coordinate transformation for
     state-space model, MATLAB documentation. [Online].
     Available: https://www.mathworks.com/help/ident/ref/statespacemodel.ss2ss.html.
-19. **MathWorks. (2026).** `sparss` — Sparse first-order state-space model,
+19. **MathWorks. (2026).** `sparss` - Sparse first-order state-space model,
     MATLAB documentation. [Online].
     Available: https://www.mathworks.com/help/control/ref/sparss.html.
 20. **python-control issue #116 / SLICOT `TB05AD`. (2026).** Discussion of using

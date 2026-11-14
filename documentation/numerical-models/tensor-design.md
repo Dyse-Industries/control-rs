@@ -34,50 +34,50 @@ Primary usage scenarios:
 
 #### 2.1. Functional Requirements
 
-- **FR-1 — Multidimensional Array Representation**: Represents N-dimensional
+- **FR-1 - Multidimensional Array Representation**: Represents N-dimensional
   tensors parameterized over compile-time rank, dimension extents, and memory
   strides without runtime layout metadata overhead.
-- **FR-2 — Multilinear Grid Interpolation**: Evaluates fractional N-dimensional
+- **FR-2 - Multilinear Grid Interpolation**: Evaluates fractional N-dimensional
   coordinate queries across lookup grids via weighted multilinear interpolation
   over the $2^{\text{RANK}}$ surrounding hypercube vertices (Weiser &
   Zarantonello, 1988). Interpolation must execute without heap allocations for
   gain-scheduled flight control tables.
-- **FR-3 — Tensor Contraction & Matrix Slicing**: Computes tensor contractions
+- **FR-3 - Tensor Contraction & Matrix Slicing**: Computes tensor contractions
   along matching axes, producing an output tensor of
   rank $\text{Rank}_A + \text{Rank}_B - 2$. Slicing 2-D hyperplanes from a
   tensor must provide zero-copy `MatrixSlice` views when coordinates align with
   layout strides.
-- **FR-4 — Quantized Fixed-Point Inference**: Performs tensor arithmetic and
+- **FR-4 - Quantized Fixed-Point Inference**: Performs tensor arithmetic and
   activation functions over quantized integer representations (`SHIFT`
   fixed-point scaling) without floating-point emulation or dynamic memory
   allocation (Wu et al., 2020). Quantization, dequantization and elementwise
   arithmetic accept every `Quantized<Repr, SHIFT>`; contraction routes through
   `Gemm` and requires `T: Scalar`, which excludes the interchange formats
   `Q7` and `Q15` (`fixed-num-design.md` FR-7, `num-traits-design.md` §4.3).
-- **FR-5 — Nonlinear Activation Functions**: Applies elementwise activation
+- **FR-5 - Nonlinear Activation Functions**: Applies elementwise activation
   functions (such as ReLU and piecewise-linear table activations) in-place over
   tensor buffers for embedded TinyML controller evaluation (Lai et al., 2018).
 
 #### 2.2. Non-Functional Requirements
 
-- **NFR-1 — Bounded Stack Allocation**: The element count of a tensor is the
+- **NFR-1 - Bounded Stack Allocation**: The element count of a tensor is the
   compile-time constant `Layout::SIZE`, so its footprint
   `SIZE × size_of::<T>()` is known before the program runs. The type system
   enforces no element cap: rank-2 array tensors take each axis from
   `num-types-design.md` C-1, and higher-rank shapes are plain `usize`
   constants. The MCU budget of 1,024 elements ($4\text{ KB}$ for 32-bit types)
   is a deployment guideline checked with `size_of` assertions.
-- **NFR-2 — Real-Time Inference Latency**: Multilinear interpolation and tensor
+- **NFR-2 - Real-Time Inference Latency**: Multilinear interpolation and tensor
   contraction execute in bounded cycle counts without dynamic layout branching.
 
 #### 2.3. Constraints
 
-- **C-1 — Out of Scope Capabilities**: On-device training, backpropagation,
+- **C-1 - Out of Scope Capabilities**: On-device training, backpropagation,
   automatic differentiation, and runtime model file parsers (ONNX/TFLite) are
   explicitly out of scope.
-- **C-2 — Static Quantization Parameter Encoding**: Quantization-scale const
+- **C-2 - Static Quantization Parameter Encoding**: Quantization-scale const
   generic parameters must be plain integer shifts.
-- **C-3 — `#![no_std]` / Zero Heap Allocation**: All tensor representations and
+- **C-3 - `#![no_std]` / Zero Heap Allocation**: All tensor representations and
   operations execute strictly on stack-allocated arrays or borrowed memory
   buffers.
 
@@ -255,7 +255,7 @@ subprogram acceleration need a dedicated storage/tensor design.
 `Float` here is [
 `num-traits-design.md`](../math/num-traits-design.md)'s
 hardware-aligned hierarchy (`Signed + One + Radical + Exponential + Trig +
-Div`), used deliberately rather than the retired `Real` — this document
+Div`), used deliberately rather than the retired `Real`; this document
 already follows that naming crate-wide (§4.4, §4.9).
 
 This is a distinct operation from `contract_into` (which contracts against
@@ -269,14 +269,14 @@ better $O(\text{RANK} \log \text{RANK})$ asymptotic scaling but is not
 adopted here (see §5.3) since no current target application exceeds rank
 ~4-5.
 
-The out-of-grid-bounds query policy (clamp vs. error) is not finalized —
+The out-of-grid-bounds query policy (clamp vs. error) is not finalized;
 see §7.
 
 #### 4.9. Minimal Activation Function Support
 
 CMSIS-NN's reference sigmoid/tanh implementation is itself a table lookup
 over a small int8 domain with linear interpolation between adjacent entries
-(Lai, Suda, & Chandra, 2018) — the same table-plus-interpolation mechanism
+(Lai, Suda, & Chandra, 2018): the same table-plus-interpolation mechanism
 as §4.7. Rather than implement activation functions as an unrelated
 feature, a minimal `Activation` trait is layered directly on
 `interpolate`:
@@ -319,7 +319,7 @@ ML framework.
 
 System-identification outputs (Volterra/NARX kernels, N4SID state-space
 matrices) are, in practice, 2D (CP-decomposed factor matrices or state-space
-matrices, not dense high-rank tensors — Batselier, Chen, & Wong, 2016), so
+matrices, not dense high-rank tensors; Batselier, Chen, & Wong, 2016), so
 the rank-2 view path is the relevant interoperability surface for that
 target application; no rank-N-specific system-identification API is
 required.
@@ -333,7 +333,7 @@ required.
   `Option<&T>`/`Option<&mut T>` via `get`/`get_mut`; `contract_into_dynamic`
   returns `Result<(), ContractionError>`. Neither raises a panic.
 - **Interpolation Bounds**: A query coordinate outside the grid's valid
-  range is a genuinely open question (§7) — whether it clamps to the
+  range is a genuinely open question (§7): whether it clamps to the
   boundary, extrapolates or returns `Result<T, InterpolationError>` is not
   finalized.
 
@@ -347,7 +347,7 @@ required.
   `contract_into`/`Activation` call sequence, following MicroFlow's proven
   pattern of parsing a model at Rust compile time via procedural macro
   rather than shipping a runtime interpreter (Carnelos, Pasti, & Bellotto,
-  2024 — chosen over an interpreter specifically to avoid the C++-toolchain
+  2024; chosen over an interpreter specifically to avoid the C++-toolchain
   dependency a runtime `.tflite` parser would require, inconsistent with
   this crate's `no_std` posture). Depends on external tooling components;
   not allocated a development-plan phase here (§8).
@@ -365,15 +365,15 @@ required.
   information already lives entirely at the type level.
 - **`Tensor`-Level Const Generics (considered, rejected)**: Adding
   `const SHIFT: i32` directly to `Tensor<T, Layout, B, SHIFT>` was
-  considered, but this conflates two orthogonal concerns — shape (`Layout`)
-  and scalar representation (`SHIFT`) — inside one type and would require
+  considered, but this conflates two orthogonal concerns - shape (`Layout`)
+  and scalar representation (`SHIFT`) - inside one type and would require
   every existing `impl` block (`Add`, `contract_into`, conversions) to
   thread `SHIFT` arithmetic (for example, rescaling when contracting two tensors
   with different shifts), a significant complexity increase to an
   already-generic type.
 - **Scalar-Level Type (selected)**: `Quantized<Repr, SHIFT>` (§4.10) makes
   quantization a property of `T`, requiring zero change to `Tensor`'s
-  existing generic signature — `Tensor<T, Layout, B>` already accepts any
+  existing generic signature: `Tensor<T, Layout, B>` already accepts any
   conforming `T`. This mirrors the `fixed` crate's `FixedI32<Frac>` pattern
   and keeps quantization orthogonal to shape.
 
@@ -389,11 +389,11 @@ unstabilized (§2.3).
   for `Matrix`, giving cross-type consistency. Real post-training
   quantization scales computed by external frameworks are not powers of
   two, so importing such a scale requires rounding to the nearest
-  representable shift at import time — a bounded, one-time offline cost.
+  representable shift at import time, a bounded, one-time offline cost.
 - **Rational `SCALE_NUM`/`SCALE_DENOM` (future extension)**: Recovers the
   imported model's exact scale, at the cost of one integer division per
-  dequantization instead of a bit-shift — more expensive on FPU-less
-  Cortex-M targets. Deferred; not required until the (future-work)
+  dequantization instead of a bit-shift (more expensive on FPU-less
+  Cortex-M targets). Deferred; not required until the (future-work)
   model-import path needs full-precision affine scales.
 
 #### 5.3. Multilinear (Hypercube) vs. Simplex/Triangulated Interpolation
@@ -479,16 +479,16 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 
 | Requirement                                  | Method                                           | Artifact                                                             |
 |:---------------------------------------------|:-------------------------------------------------|:---------------------------------------------------------------------|
-| FR-1 — Multidimensional Array Representation | Compile-time shape check                         | rustdoc `compile_fail` doctests in `src/tensor/mod.rs`               |
-| FR-2 — Multilinear Grid Interpolation        | Requirements-based test, Back-to-back comparison | `src/tensor/tests/tensor_tests.rs::test_tensor_grid_interpolation`   |
-| FR-3 — Tensor Contraction & Matrix Slicing   | Property-based test, Back-to-back comparison     | `src/tensor/tests/tensor_tests.rs::test_tensor_contract`             |
-| FR-4 — Quantized Fixed-Point Inference       | Requirements-based test, Back-to-back comparison | `src/tensor/tests/tensor_tests.rs::test_quantized_scalar_operations` |
-| FR-5 — Nonlinear Activation Functions        | Requirements-based test                          | `src/tensor/tests/tensor_tests.rs::test_activations`                 |
-| NFR-1 — Bounded Stack Allocation             | Resource usage evaluation                        | `size_of` assertions against the 1,024-element MCU budget            |
-| NFR-2 — Real-Time Inference Latency          | On-target execution                              | ETS suite `tensor_test_suite`                                        |
-| C-1 — Out of Scope Capabilities              | Inspection                                       | Training/ONNX parsers absent from `src/tensor/`                      |
-| C-2 — Static Quantization Parameter Encoding | Compile-time shape check                         | `Quantized<Repr, SHIFT>` const generic                               |
-| C-3 — `#![no_std]` / Zero Heap Allocation    | Resource usage evaluation                        | Compilation under `#![no_std]` target triples                        |
+| FR-1 - Multidimensional Array Representation | Compile-time shape check                         | rustdoc `compile_fail` doctests in `src/tensor/mod.rs`               |
+| FR-2 - Multilinear Grid Interpolation        | Requirements-based test, Back-to-back comparison | `src/tensor/tests/tensor_tests.rs::test_tensor_grid_interpolation`   |
+| FR-3 - Tensor Contraction & Matrix Slicing   | Property-based test, Back-to-back comparison     | `src/tensor/tests/tensor_tests.rs::test_tensor_contract`             |
+| FR-4 - Quantized Fixed-Point Inference       | Requirements-based test, Back-to-back comparison | `src/tensor/tests/tensor_tests.rs::test_quantized_scalar_operations` |
+| FR-5 - Nonlinear Activation Functions        | Requirements-based test                          | `src/tensor/tests/tensor_tests.rs::test_activations`                 |
+| NFR-1 - Bounded Stack Allocation             | Resource usage evaluation                        | `size_of` assertions against the 1,024-element MCU budget            |
+| NFR-2 - Real-Time Inference Latency          | On-target execution                              | ETS suite `tensor_test_suite`                                        |
+| C-1 - Out of Scope Capabilities              | Inspection                                       | Training/ONNX parsers absent from `src/tensor/`                      |
+| C-2 - Static Quantization Parameter Encoding | Compile-time shape check                         | `Quantized<Repr, SHIFT>` const generic                               |
+| C-3 - `#![no_std]` / Zero Heap Allocation    | Resource usage evaluation                        | Compilation under `#![no_std]` target triples                        |
 
 #### 6.5. Coverage
 
@@ -574,38 +574,35 @@ meeting the audit-footprint and `const fn`-on-stable-Rust requirements.
 ## References
 
 1. **Kolda, T. G., & Bader, B. W. (2009).** Tensor Decompositions and
-   Applications. _SIAM Review_, 51(3), 455–500. — Tensor contraction and
+   Applications. _SIAM Review_, 51(3), 455–500. - Tensor contraction and
    decomposition computational complexity.
 2. **Soro, S. (2021).** TinyML for Ubiquitous Edge AI. MITRE Technical Report
-   MTR200519, _arXiv:2102.01255_. — Memory-footprint and inference-latency
+   MTR200519, _arXiv:2102.01255_. - Memory-footprint and inference-latency
    framing for microcontroller-class deployments.
 3. **Warden, P., & Situnayake, D. (2019).** _TinyML: Machine Learning with
    TensorFlow Lite on Arduino and Ultra-Low-Power Microcontrollers_. O'Reilly
-   Media. — Weight/activation memory-budgeting guidelines.
+   Media. - Weight/activation memory-budgeting guidelines.
 4. **David, R., et al. (2021).** TensorFlow Lite Micro: Embedded Machine
    Learning on TinyML Systems. _Proceedings of Machine Learning and Systems (
-   MLSys) 3_. — Static arena memory-planning precedent for embedded inference
+   MLSys) 3_. - Static arena memory-planning precedent for embedded inference
    engines.
 5. **Lai, L., Suda, N., & Chandra, V. (2018).** CMSIS-NN: Efficient Neural
-   Network Kernels for Arm Cortex-M CPUs. _arXiv:1801.06601_. —
-   Table-lookup-plus-interpolation activation-function kernel design.
+   Network Kernels for Arm Cortex-M CPUs. _arXiv:1801.06601_. - Table-lookup-plus-interpolation activation-function kernel design.
 6. **Carnelos, M., Pasti, F., & Bellotto, N. (2024).** MicroFlow: An Efficient
-   Rust-Based Inference Engine for TinyML. _arXiv:2409.19432_. — Ahead-of-time
+   Rust-Based Inference Engine for TinyML. _arXiv:2409.19432_. - Ahead-of-time
    model-to-static-Rust-code compilation precedent (§4.13).
 7. **Weiser, A., & Zarantonello, S. E. (1988).** A Note on Piecewise Linear and
    Multilinear Table Interpolation in Many Dimensions. _Mathematics of
-   Computation_, 50(181), 189–196. — Canonical formalization of the multilinear
+   Computation_, 50(181), 189–196. - Canonical formalization of the multilinear
    grid-interpolation primitive (§4.7).
 8. **Koo, S. M., & Sands, T. (2024).** Bilinear Interpolation of
-   Three-Dimensional Gain-Scheduled Autopilots. _Sensors_, 24(1), 13. —
-   Flight-control gain-scheduling lookup-table precedent.
+   Three-Dimensional Gain-Scheduled Autopilots. _Sensors_, 24(1), 13. - Flight-control gain-scheduling lookup-table precedent.
 9. **Batselier, K., Chen, Z., & Wong, N. (2016).** Tensor Network alternating
-   linear scheme for MIMO Volterra system identification. _arXiv:1607.00127_. —
-   System-identification tensor shape/rank precedent.
+   linear scheme for MIMO Volterra system identification. _arXiv:1607.00127_. - System-identification tensor shape/rank precedent.
 10. **Wu, H., Judd, P., Zhang, X., Isaev, M., & Micikevicius, P. (2020).**
     Integer Quantization for Deep Learning Inference: Principles and Empirical
-    Evaluation. _arXiv:2004.09602_. — Affine int8 quantization convention used
+    Evaluation. _arXiv:2004.09602_. - Affine int8 quantization convention used
     by mainstream trained-model export formats.
 11. **Hennessy, J. L., & Patterson, D. A. (2017).** _Computer Architecture: A
-    Quantitative Approach_ (6th ed.). Morgan Kaufmann. — Cache and
+    Quantitative Approach_ (6th ed.). Morgan Kaufmann. - Cache and
     memory-hierarchy modeling for stride-based N-D indexing.

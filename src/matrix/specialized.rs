@@ -3,11 +3,11 @@
 //! New-type wrappers around [`Owned`] enforcing a mathematical invariant, so
 //! callers who hold one of these types get a statically known guarantee
 //! (upper/lower triangular, symmetric) instead of re-checking it. A full
-//! square matrix is wrapped (not a packed triangular layout) — this trades
+//! square matrix is wrapped (not a packed triangular layout); this trades
 //! memory space for cache-friendly, slice-compatible storage
 //! (`matrix-design.md` §4.10).
 //!
-//! `Const<D>: Dim` is restated on every impl/struct below — see
+//! `Const<D>: Dim` is restated on every impl/struct below (see
 //! `decomposition.rs`'s module doc for why.
 #![allow(
     clippy::arbitrary_source_item_ordering,

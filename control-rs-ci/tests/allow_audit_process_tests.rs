@@ -42,7 +42,14 @@ mod allow_audit_process {
     fn git(root: &Path, args: &[&str]) {
         let status = Command::new("git")
             .current_dir(root)
-            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.com",
+                "-c",
+                "commit.gpgsign=false",
+            ])
             .args(args)
             .output()
             .unwrap()

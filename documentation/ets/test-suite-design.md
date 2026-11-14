@@ -25,30 +25,30 @@ registry, requiring zero boilerplate and little runtime overhead.
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Distributed Suite Discovery**: Test suites and cases must be
+- **FR-1 - Distributed Suite Discovery**: Test suites and cases must be
   discoverable across modules and crates at runtime without central registration
   tables.
-- **FR-2 — Dynamic Parameter Configuration**: Settings on the target must be
+- **FR-2 - Dynamic Parameter Configuration**: Settings on the target must be
   adjustable from the host (`control-rs-tui`) via typed
   get/set accessors.
-- **FR-3 — Embedded Metadata**: Test suites and cases must include descriptive
+- **FR-3 - Embedded Metadata**: Test suites and cases must include descriptive
   metadata and doc-strings stored directly in Flash memory.
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Zero Runtime Registration Overhead**: The test registry must be
+- **NFR-1 - Zero Runtime Registration Overhead**: The test registry must be
   constructed during the linking phase.
-- **NFR-2 — High ROM/RAM Efficiency**: Test descriptors must reside directly in
+- **NFR-2 - High ROM/RAM Efficiency**: Test descriptors must reside directly in
   Flash memory (ROM) to conserve RAM.
-- **NFR-3 — Low-Overhead Execution**: Running an empty test function must return
+- **NFR-3 - Low-Overhead Execution**: Running an empty test function must return
   immediately, costing only a few cycles.
 
 #### 2.3 Constraints
 
-- **C-1 — Strict `#![no_std]` Execution**: The target-side framework must
+- **C-1 - Strict `#![no_std]` Execution**: The target-side framework must
   compile under `#![no_std]` with zero dynamic heap allocation.
-- **C-2 — Target Architecture Constraints**: ARM-V6/7/8 and RISC-V.
-- **C-3 — Eradication of `static mut`**: All global state and configurable
+- **C-2 - Target Architecture Constraints**: ARM-V6/7/8 and RISC-V.
+- **C-3 - Eradication of `static mut`**: All global state and configurable
   settings must use thread-safe interior mutability wrappers, not `static mut`.
 
 ---
@@ -100,7 +100,7 @@ flowchart TD
 
 #### 4.1. Linker-Based Distributed Test Discovery
 
-Instead of building a dynamic test registry at runtime, the framework utilizes a
+Instead of building a dynamic test registry at runtime, the framework uses a
 linker-based distributed slice mechanism. Procedural macros generate one
 `SuiteDescriptor` static per suite and place a `&'static SuiteDescriptor`
 pointer to it (`SUITE_DESCRIPTOR_PTR`) in a custom ELF memory section named
@@ -427,7 +427,7 @@ descriptor statics, which are data.
 ### 7. Performance & Resource Considerations
 
 * **ROM/RAM Overhead**: To operate within the 32 KB Flash and 8 KB RAM budget,
-  the target Server utilizes zero heap allocations and avoids unnecessary string
+  the target Server uses zero heap allocations and avoids unnecessary string
   formatting on-device. All descriptors reside strictly in Flash.
 * **Atomic Ordering**: Setting telemetry uses `Ordering::Relaxed` to bypass
   ARM memory barrier instructions (`DMB`/`DSB`), which can take multiple
@@ -471,7 +471,7 @@ descriptor statics, which are data.
 | **Step 1: Core Structs & Traits**           | Define `SuiteDescriptor`, `Setting` trait and type-safe atomic settings wrappers.                                 | 0.5 days         |
 | **Step 2: Linker Script & Injection**       | Develop the `build.rs` script to generate the custom `ets_suites.x` script fragment containing `KEEP` directives. | 0.5 days         |
 | **Step 3: Target Server State Machine**     | Implement the on-target Server's state machine, timestamp-based lifecycle tracking and panic handlers.            | 0.5 days         |
-| **Step 4: Host-Side Wire Discovery** — *Shipped* | Discovery-mode session in `control-rs-ets-host` (`TryReset` + `ListSuites`, `SuiteInfo`/`TestInfo` replies); no ELF parsing. | Complete         |
+| **Step 4: Host-Side Wire Discovery** - *Shipped* | Discovery-mode session in `control-rs-ets-host` (`TryReset` + `ListSuites`, `SuiteInfo`/`TestInfo` replies); no ELF parsing. | Complete         |
 
 ---
 

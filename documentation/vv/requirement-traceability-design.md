@@ -1,6 +1,6 @@
 # Requirement Traceability Infrastructure (requirement-traceability)
 
-![Date Badge](https://img.shields.io/badge/Date-October_23,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-November_11,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 ![Design Status Badge](https://img.shields.io/badge/Design%20Status-Ready-brightgreen)
 
@@ -91,19 +91,19 @@ editing tools; and any systems-engineering view.
 
 ### Functional Requirements
 
-- **FR-1 — Definitions**: `trace-reqs` shall record one definition for the
+- **FR-1 - Definitions**: `trace-reqs` shall record one definition for the
   first requirement ID on each line that matches the `definition` pattern,
   with the definition text formed per [Matching Rules](#matching-rules).
-- **FR-2 — Conditions**: `trace-reqs` shall record one condition row for each
-  line that matches the `verification` pattern, with the condition ID on the
-  line as `id`, every requirement ID outside condition IDs as `parents`, the
-  method named in a code span as `method` and the code spans of the `Target`
-  cell as `targets`.
-- **FR-3 — Qualified IDs**: `trace-reqs` shall qualify every recorded ID as
+- **FR-2 - Conditions**: `trace-reqs` shall record one condition row for each
+  line that matches the `verification` pattern, with the condition ID of the
+  first cell as `id`, the requirement IDs of the second cell as `parents`, the
+  method named in a code span of the third cell as `method` and the code spans
+  of the fourth cell as `targets`.
+- **FR-3 - Qualified IDs**: `trace-reqs` shall qualify every recorded ID as
   `<doc>#<id>` per [Matching Rules](#matching-rules), with `<doc>` extracted by
   the `doc_id` pattern, so that equal IDs in different documents never collide,
   and shall recognize an ID only at word boundaries.
-- **FR-4 — Checks**: `trace-reqs` shall report as a defect: a missing document
+- **FR-4 - Checks**: `trace-reqs` shall report as a defect: a missing document
   ID declaration matching `doc_id`; a document, requirement or condition defined
   more than once; a condition with no parent or with an undefined parent; a
   verification row with no condition ID or with more than one; a condition row
@@ -111,31 +111,31 @@ editing tools; and any systems-engineering view.
   [Methods](#methods), with no target, or a `doc-status` condition whose target
   names its own document; a defined requirement with no condition; and a retired
   ID that is defined or referenced.
-- **FR-6 — Requirement Rows**: `trace-reqs` shall write `reqs.jsonl` with one
+- **FR-6 - Requirement Rows**: `trace-reqs` shall write `reqs.jsonl` with one
   row per definition and per condition, in the row schema of
   [Artifacts](#artifacts).
-- **FR-8 — Coverage Verdict**: `trace-check` shall derive condition and
+- **FR-8 - Coverage Verdict**: `trace-check` shall derive condition and
   requirement status per [Status Derivation](#status-derivation), write
   `trace-report.json` and exit 0 iff no condition is `Uncovered`, `Unrun` or
   `Fail`.
-- **FR-9 — Diagnostic Format**: `trace-reqs` and `trace-check`
+- **FR-9 - Diagnostic Format**: `trace-reqs` and `trace-check`
   shall report each defect as one `path:line: message` line and shall exit
   non-zero when any defect exists.
-- **FR-10 — File Selection**: `trace-reqs` shall select its input files per
+- **FR-10 - File Selection**: `trace-reqs` shall select its input files per
   [File Selection](#file-selection).
-- **FR-11 — Targets**: `trace-check` shall resolve each target of a condition
+- **FR-11 - Targets**: `trace-check` shall resolve each target of a condition
   whose method is automated against the result log or outcome record of that
   method, and shall report a target that is absent from the log or directory,
   failed, or ambiguous (for example conflicting outcomes across repeats) as a
   defect at the condition row.
-- **FR-12 — Decision References**: When the configuration has a `[decisions]`
+- **FR-12 - Decision References**: When the configuration has a `[decisions]`
   table, `trace-reqs` shall record the ID and status of each decision record
   it selects, and shall report as a defect: a decision record with no status
   or defined more than once; and a decision ID cited in the text of a
   requirement definition that no decision record defines, or whose status is
   not in `accepted` (ADR-0001).
 
-- **FR-13 — Links**: For a condition whose method is `link`,
+- **FR-13 - Links**: For a condition whose method is `link`,
   `trace-reqs` shall resolve each target as a design document, a requirement or
   a condition per [Matching Rules](#matching-rules), and shall report as a
   defect a target that names nothing defined, a document
@@ -143,7 +143,7 @@ editing tools; and any systems-engineering view.
   `trace-check` shall give the condition the status of what it names per
   [Status Derivation](#status-derivation), using the graph of
   `tracer-link-graph-design.md`.
-- **FR-14 — Quality Gate References**: For a condition whose method is `gate`,
+- **FR-14 - Quality Gate References**: For a condition whose method is `gate`,
   `trace-check` shall resolve each target as a quality gate slug against
   `<result_dir>/<gate>.result.json` using `GateOutcome::load_from_file`, and
   shall report as a defect: a target naming a gate with no outcome artifact, an
@@ -152,34 +152,34 @@ editing tools; and any systems-engineering view.
 
 ### Non-Functional Requirements
 
-- **NFR-1 — Audit Latency**: Each of the two binaries shall complete on the
+- **NFR-1 - Audit Latency**: Each of the two binaries shall complete on the
   `control-rs` workspace in under 1 s of wall-clock time, excluding compilation.
-- **NFR-3 — Dependency Budget**: The two binaries shall add no dependency to
+- **NFR-3 - Dependency Budget**: The two binaries shall add no dependency to
   `control-rs-ci` beyond its current set, workspace crates
   `control-rs-compare`, and the `regex` crate.
-- **NFR-4 — Schema Versioning**: Every row and `trace-report.json` shall carry
+- **NFR-4 - Schema Versioning**: Every row and `trace-report.json` shall carry
   an integer `schema` field, incremented on every incompatible change.
 
 ### Constraints
 
-- **C-1 — Plain-Text Source**: Requirements and their verification shall live in
+- **C-1 - Plain-Text Source**: Requirements and their verification shall live in
   the Markdown files the configuration lists; no generated file shall be
   committed or required for reading or writing a requirement.
-- **C-2 — No Editor Integration**: The design shall deliver diagnostics only; it
+- **C-2 - No Editor Integration**: The design shall deliver diagnostics only; it
   shall ship no editor plugin, schema, snippet or language server.
-- **C-3 — Paths from Configuration**: Every input and output path of the two
+- **C-3 - Paths from Configuration**: Every input and output path of the two
   binaries shall arrive from a command-line argument or the configuration file.
-- **C-4 — Read-Only Inputs**: The tracer shall run no test, build or gate; it
+- **C-4 - Read-Only Inputs**: The tracer shall run no test, build or gate; it
   reads Markdown, the configuration, its own artifacts and per-target test and
   proof result logs from `target/ci-artifacts/`.
-- **C-5 — External Systems Tooling**: Hierarchy views, allocation, verification
+- **C-5 - External Systems Tooling**: Hierarchy views, allocation, verification
   matrices and model export shall consume the `.jsonl` files outside this
   workspace's CI path.
-- **C-6 — Artifact Location**: The two binaries shall write under
+- **C-6 - Artifact Location**: The two binaries shall write under
   `target/ci-artifacts/` when run as gates.
-- **C-7 — Document Style Exclusion**: `trace-reqs` shall check no citation,
+- **C-7 - Document Style Exclusion**: `trace-reqs` shall check no citation,
   reference or general document style.
-- **C-8 — Per-Target Verification Status**: The tracer shall derive condition
+- **C-8 - Per-Target Verification Status**: The tracer shall derive condition
   status from per-target test and proof results; it shall never infer condition
   status from aggregate gate verdicts.
 
@@ -192,7 +192,7 @@ editing tools; and any systems-engineering view.
 1. **Define the requirement** in the Requirements section:
 
    ```markdown
-   - **FR-3 — Packed Storage**: Packed symmetric, Hermitian and triangular storage
+   - **FR-3 - Packed Storage**: Packed symmetric, Hermitian and triangular storage
      shall return `None` from `value(i, j)` when `i` or `j` is out of bounds.
    ```
 
@@ -247,7 +247,7 @@ Every line of `reqs.jsonl` is one occurrence of one ID:
   "kind": "definition",
   "file": "documentation/math/storage-design.md",
   "line": 42,
-  "text": "- **FR-3 — Packed Storage**: Packed symmetric ... out of bounds."
+  "text": "- **FR-3 - Packed Storage**: Packed symmetric ... out of bounds."
 }
 {
   "schema": 5,
@@ -345,6 +345,11 @@ retired = [
     "requirement-traceability#VC-12.1",
 ]
 
+[doc_status]
+status = 'Design%20Status-(?P<status>[A-Za-z_]+)-'
+pass = ["Ready", "Shipped"]
+warn = ["Draft"]
+
 [method.libtest]
 result_artifact = "target/ci-artifacts/test.log"
 interpreter_artifact = "target/ci-artifacts/miri.log"
@@ -372,10 +377,13 @@ accepted = ["Accepted"]
 | Key                                   | Meaning                                                                                                                                                                            |
 |:--------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `id`                                  | Regex for one requirement ID                                                                                                                                                       |
-| `condition`                           | Regex for one condition ID; optional (defaults to `VC-[0-9]+(?:\.[0-9]+[a-z]?)?`)                                                                                                  |
+| `condition`                           | Regex for one condition ID                                                                                                                                                         |
 | `doc`                                 | Regex for the document name in a qualified ID `<doc>#<id>`                                                                                                                         |
 | `files`                               | Markdown files, and directories whose `.md` files are read (see [File Selection](#file-selection))                                                                                 |
-| `doc_id`                              | Regex for the document ID declaration; optional (defaults to `^#\s+.*\((?P<doc>[a-z0-9-]+)\)`)                                                                                     |
+| `doc_id`                              | Regex whose `<doc>` capture is the document name in the document ID declaration                                                                                                    |
+| `doc_status.status`                   | Regex whose `<status>` capture is a traced document's status                                                                                                                       |
+| `doc_status.pass`                     | Document statuses on which a `doc-status` condition passes                                                                                                                         |
+| `doc_status.warn`                     | Document statuses on which it passes with W-4; optional                                                                                                                            |
 | `definition`                          | Regex for a line that defines a requirement                                                                                                                                        |
 | `verification`                        | Regex for a line that defines a condition                                                                                                                                          |
 | `method.<m>`                          | Result artifact path for method `<m>`; a `<m>` that names no method of `METHODS` is a configuration error, and a condition of a result-artifact method with no artifact is `Unrun` |
@@ -419,8 +427,7 @@ pub(crate) const METHODS: [TraceCheckMethod; 7] = [/* libtest, kani, compare, ju
   deserializing the typed `GateOutcome` via
   `control_rs_ci::gate::GateOutcome::load_from_file`.
 - `doc-status` reads a document target's status from the file the rows give
-  for that document, as the first match of `DocumentMetaPatterns` (the fixed
-  pattern `(?:Design|Doc)%20Status-(?P<status>[A-Za-z_]+)-`), and a decision
+  for that document, as the first match of `doc_status.status`, and a decision
   target's status with `[decisions]`. A `doc-status` condition cannot target its
   own document. Its targets add no link edge.
 - `link` returns the status that `LinkGraph::derive` gave the row; `derive`
@@ -448,11 +455,11 @@ The rules below are the whole parser:
    not an occurrence.
 3. A line that matches `definition` defines the first requirement ID on it.
    Its text is the line plus the indented lines that follow it.
-4. A line that matches `verification` defines the condition ID on it. Every
-   requirement ID on the line is a parent, the one code span whose content
-   is in the method set is the method and the code spans of the fourth cell of
-   a row
-   with five or more cells are the targets.
+4. A line that matches `verification` is split into cells at each `|` not
+   escaped as `\|`. The first cell holds the condition ID, every requirement
+   ID in the second cell is a parent, the code span of the third cell whose
+   content is in the method set is the method and the code spans of the fourth
+   cell are the targets. Later cells are not read.
 5. The document name is the `<doc>` captured by the `doc_id` pattern on the
    first matching line: `# Title (storage)` yields `storage`. An ID written
    without `<doc>#` belongs to the document it appears in. A document with no
@@ -514,8 +521,8 @@ logs in `target/ci-artifacts/`:
 | Method `doc-status`, condition targets its own document               | `Fail`                        | yes                  |
 | Method `doc-status`, a target naming no traced document or decision   | `Unrun`                       | yes                  |
 | Method `doc-status`, decision target with a status in `accepted`      | `Pass`                        | no                   |
-| Method `doc-status`, document target with status `Ready` or `Shipped` | `Pass`                        | no                   |
-| Method `doc-status`, document target with status `Draft`              | `Pass`, warning W-4           | no                   |
+| Method `doc-status`, document target with a status in `pass`        |   `Pass`                        | no                   |
+| Method `doc-status`, document target with a status in `warn`        |   `Pass`, warning W-4           | no                   |
 | Method `doc-status`, any other status or none                         | `Fail`                        | yes                  |
 | Method `doc-status`, multiple targets                                 | Worst status among targets    | iff that status does |
 
@@ -573,7 +580,8 @@ another suite or class than the one logged is absent, even when its bare
 signal, key or name is logged.
 
 **Draft warning.** `trace-check` emits the non-fatal warning **W-4 (Draft
-document)** when a `doc-status` target is a document whose status is `Draft`.
+document)** when a `doc-status` target is a document whose status is in
+`doc_status.warn`.
 The warning points at the condition row and names the document.
 
 **Interpreter warning.** Miri serves as a secondary interpreter for test
@@ -632,10 +640,10 @@ Rows are sorted by `file`, then `line`. Examples are in
 
 ### Invocation and Gate Wiring
 
-| Binary        | Gate and placement              | Arguments                                                                                                                                                  |
-|:--------------|:--------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `trace-reqs`  | `trace-reqs`, `lint` group      | `--config .cargo/trace/trace.toml --out target/ci-artifacts/reqs.jsonl`                                                                                    |
-| `trace-check` | `trace`, `post` exclusive stage | `--config .cargo/trace/trace.toml --reqs target/ci-artifacts/reqs.jsonl --out target/ci-artifacts/trace-report.json --graph target/ci-artifacts/links.mmd` |
+| Binary        | Gate and placement              | Arguments                                                                                                                                            |
+|:--------------|:--------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------------------------|
+| `trace-reqs`  | `trace-reqs`, `lint` group      | `--config .cargo/trace.toml --out target/ci-artifacts/reqs.jsonl`                                                                                    |
+| `trace-check` | `trace`, `post` exclusive stage | `--config .cargo/trace.toml --reqs target/ci-artifacts/reqs.jsonl --out target/ci-artifacts/trace-report.json --graph target/ci-artifacts/links.mmd` |
 
 `trace-check` also accepts an optional `--graph <path>` that writes the link
 graph of `tracer-link-graph-design.md` as Mermaid (`.mmd`) or Graphviz DOT
@@ -759,9 +767,6 @@ Four choices keep the stronger levels additive:
   `Unrun`.
 - A condition has no link to the code that implements it, so a surviving
   mutant cannot be attributed to a requirement.
-- Every requirement ID on a verification row is a parent, including one
-  mentioned in the Criterion, and a second condition ID or a second method
-  code span is a defect. Criteria therefore name neither.
 - A requirement deleted without being added to `retired` is not detected;
   review of the diff is the control.
 - W-3 compares file modification times with the traced documents only. A
@@ -817,7 +822,7 @@ Four choices keep the stronger levels additive:
 | **Phase 4: Gate wiring**                                 | `trace` joins the `lint` group; the report job's trace step and the runner's retention of other gates' results go (`ci-design.md`).                                                                                                                                                        | 1                |
 | **Phase 5: Corpus migration**                            | Add condition IDs and methods to each document's Verification table and add the document to `files`. One pull request per area.                                                                                                                                                            | 3                |
 | **Phase 6: Framework Methods (PR3-6)**                   | Framework-qualified methods `libtest`, `kani`, `compare` and `junit`; per-target result evaluation in `trace-check` from `test.log`, `kani.log`, `cross-val-report.json` and `junit.xml`; Miri warning W-2; schema 4; `trace` moved to `post` stage.                                       | 2                |
-| **Phase 7: Decision references**                         | `[decisions]` table, decision records and citations per Matching Rules, the `decision` and `decision_status` checks and decision IDs in `duplicate`; `.cargo/trace/trace.toml` gains the table.                                                                                            | 1                |
+| **Phase 7: Decision references**                         | `[decisions]` table, decision records and citations per Matching Rules, the `decision` and `decision_status` checks and decision IDs in `duplicate`; `.cargo/trace.toml` gains the table.                                                                                                    | 1                |
 | **Phase 8: Links**                                       | The `link` method, Matching Rule 7, the `link` check and link status derivation over the graph of `tracer-link-graph-design.md`; `--graph` for `trace-check`.                                                                                                                              | 1                |
 | **Phase 9: Method objects**                              | `METHODS` of `TraceCheckMethod` for every method; the `target` check; `DocStatus` reading traced documents and decision records with W-4; `Review` and `Deferred` removed, report schema 5; exact `compare` and `junit` lookup; `doc-status` rows of traced documents name document names. | 2                |
 | **Phase 10: Quality Gate Method and Typed Dependencies** | Generic `gate` verification method reading typed `GateOutcome`; rejection of self-targeting `doc-status` conditions; typed `ValidationReport` deserialization via `control-rs-compare`; `kani` prefix stripping; token-bounded and CDATA-safe `junit` XML parsing.                         | 2                |
@@ -837,6 +842,7 @@ Four choices keep the stronger levels additive:
 | 7.0      | October 21, 2026   | @MitchellDScott, Claude Sonnet 5.5, Claude Opus 5.5 | Links (FR-13) and the `--graph` argument.                                                                                                                          |
 | 8.0      | October 23, 2026   | @MitchellDScott, Antigravity, Claude Opus 5.5       | Structured compare and junit methods in one METHODS table; doc-status reads document status; report schema 5.                                                      |
 | 8.1      | October 23, 2026   | @MitchellDScott, Antigravity, Cursor Agent          | Quality gate method (gate), self-targeting condition guard on doc-status, typed compare and gate dependencies, and JUnit token-bounded and CDATA-safe XML parsing. |
+| 8.2      | November 11, 2026  | @MitchellDScott, Claude Fable 5.2                   | Condition fields are read from their own table cells; document status pattern and words come from configuration.                                                   |
 
 ---
 

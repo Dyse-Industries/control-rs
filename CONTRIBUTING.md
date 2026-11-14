@@ -86,7 +86,7 @@ and `<slug>` is a short name. Its requirements and verification conditions
 follow the grammar the requirement tracer reads
 ([Author Workflow](documentation/vv/requirement-traceability-design.md#author-workflow)).
 The `trace-reqs` gate checks every document listed in
-[`.cargo/trace/trace.toml`](.cargo/trace/trace.toml). Open a PR containing the
+[`.cargo/trace.toml`](.cargo/trace.toml). Open a PR containing the
 design doc. Design docs normally merge ahead of, and separately from, their
 implementation. Vale checks prose under `documentation/` and `src/` in CI.
 

@@ -23,7 +23,7 @@ provide **checked** (returning `Option<&T>` / `Option<T>`) and **unchecked**
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Decoupled Storage Subsystems Architecture**: Provide distinct,
+- **FR-1 - Decoupled Storage Subsystems Architecture**: Provide distinct,
   zero-cost storage subsystem contracts across dense strided arrays (
   `DenseStorage<T>` / `Storage<T, R, C>`), packed structured matrices (
   `PackedStorage<T>`), and compressed sparse backends (`SparseStorage<T>`).
@@ -33,7 +33,7 @@ provide **checked** (returning `Option<&T>` / `Option<T>`) and **unchecked**
   subsystem exposes type-level or runtime dimension queries (`R: Dim, C: Dim`
   / `rows()`, `cols()`), safe element retrieval (`Option<&T>` / `Option<T>`),
   and safe modification (`Result<(), StorageError>`).
-- **FR-2 — Dense Strided Storage & Views**:
+- **FR-2 - Dense Strided Storage & Views**:
     - Unsafe immutable and mutable base pointer traits with signed `isize`
       strides and checked/unchecked accessors.
     - Zero-copy strided views supporting runtime strides, compile-time layouts (
@@ -44,7 +44,7 @@ provide **checked** (returning `Option<&T>` / `Option<T>`) and **unchecked**
       C-ABI/BLAS interop.
     - Fixed-capacity stack backends (`ArrayStorage`, `RowArrayStorage`) backed
       by nested inline arrays (`[[T; R]; C]`, `[[T; C]; R]`).
-- **FR-3 — Packed Structured Storage**:
+- **FR-3 - Packed Structured Storage**:
     - Decouple physical slot lookup (`packed_index`) from algebraic entry
       evaluation (`value`).
     - Fixed stack leaves and zero-copy non-owning views for Symmetric (SP),
@@ -52,22 +52,22 @@ provide **checked** (returning `Option<&T>` / `Option<T>`) and **unchecked**
       structures.
     - In-place mutation restricted to physical stored slots, rejecting implicit
       writes with `StorageError`.
-- **FR-4 — Compressed Sparse Storage & In-Place Modification**:
+- **FR-4 - Compressed Sparse Storage & In-Place Modification**:
     - Abstract sparse matrix traits for row-compressed (CSR) and
       column-compressed (CSC) formats with zero-copy row/column slicing.
     - Safe and unchecked in-place value modification of existing non-zeros
       without structural reallocation.
-- **FR-5 — Incremental Sparse Assembly & Stack Compression**:
+- **FR-5 - Incremental Sparse Assembly & Stack Compression**:
     - Fixed-capacity Coordinate (COO) assembly buffer supporting incremental
       `push`.
     - Stack-allocated $O(\text{nnz} + R)$ 3-pass sorting and duplicate
       accumulation compressing COO triplets into canonical sorted CSR/CSC
       storage without dynamic heap allocation.
-- **FR-6 — 1-D Sparse Vectors**: Dedicated trait (`SparseVectorStorage`),
+- **FR-6 - 1-D Sparse Vectors**: Dedicated trait (`SparseVectorStorage`),
   fixed-capacity stack leaf (`ArraySparseVector`), and borrowed view (
   `ViewSparseVector`) over parallel index and value slices for Level-1 SpBLAS
   operations.
-- **FR-7 — Layout Conversions & Numeric Support**:
+- **FR-7 - Layout Conversions & Numeric Support**:
     - Conversion to dense (`ToDenseStorage`) and between compressed layouts
       (`ToCsrStorage`, `ToCscStorage`) across dense, packed, and sparse
       backends. Recovering a structured layout from a dense operand is a
@@ -80,25 +80,25 @@ provide **checked** (returning `Option<&T>` / `Option<T>`) and **unchecked**
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — `#![no_std]` Compatibility**: Core storage executes with zero
+- **NFR-1 - `#![no_std]` Compatibility**: Core storage executes with zero
   dynamic heap allocation.
-- **NFR-2 — Compile-Time Verification**: Fixed capacities and array lengths are
+- **NFR-2 - Compile-Time Verification**: Fixed capacities and array lengths are
   checked statically at compile time without unstable `generic_const_exprs`.
-- **NFR-3 — Zero-Branch Codegen**: Unchecked pointer indexing compiles to
+- **NFR-3 - Zero-Branch Codegen**: Unchecked pointer indexing compiles to
   branchless instructions with 0 panic paths at `opt-level=3`.
 
 #### 2.3 Constraints
 
-- **C-1 — Strided Index Arithmetic**: Pointer offset
+- **C-1 - Strided Index Arithmetic**: Pointer offset
   is $r \cdot RS + c \cdot CS$ using `isize` arithmetic.
-- **C-2 — Const Bounds Invariant**: Packed array lengths require $L = N(N+1)/2$
+- **C-2 - Const Bounds Invariant**: Packed array lengths require $L = N(N+1)/2$
   enforced via const assertions.
-- **C-3 — Defensive & Unchecked Safety Contract**: Safe accessors validate
+- **C-3 - Defensive & Unchecked Safety Contract**: Safe accessors validate
   bounds; `unsafe` accessors require caller-proven bounds. `DenseStorage` and
   `DenseStorageMut` are `unsafe trait`s to guarantee backing pointer validity.
-- **C-4 — Dim Call Site**: Dimension types come from `num-types-design.md`'s
+- **C-4 - Dim Call Site**: Dimension types come from `num-types-design.md`'s
   `Dim` trait; this document does not define its own dimension representation.
-- **C-5 — Error Invariant Boundary**: Fallible indexing and structural
+- **C-5 - Error Invariant Boundary**: Fallible indexing and structural
   violations return `StorageError`; shape mismatches against runtime slices
   return `ConversionError::DimensionMismatch` per `error-design.md`.
 
@@ -507,7 +507,7 @@ Because default `get_unchecked` performs raw pointer arithmetic (
 that `as_ptr()` points to an addressable buffer and that `r * RS + c * CS`
 produces a valid in-bounds pointer for all $0 \le r < R$ and $0 \le c < C$.
 `rows()` and `cols()` project `R::USIZE` and `C::USIZE`; they are not stored
-fields. `T` remains a free scalar parameter — `Dim` parameterizes shape only
+fields. `T` remains a free scalar parameter; `Dim` parameterizes shape only
 (`num-types-design.md` Phase 3).
 
 Every strided backend enforces a dual-accessor contract (dimforge, 2026a;
@@ -585,7 +585,7 @@ interfaces:
 `ndarray`'s `ArrayBase` keeps dimension and stride in a shared `ArrayParts`
 struct; `swap_axes` permutes both without copying (ndarray, 2026a, 2026b).
 `nalgebra`'s plain `transpose()` returns an owning `OMatrix`, not a strided
-view—zero-copy transposition stays on `StorageView` / stride-swapped views (
+view; zero-copy transposition stays on `StorageView` / stride-swapped views (
 nalgebra, 2026c; faer, 2026b). Eigen's `Block` expression stores parent
 reference plus `(startRow, startCol, blockRows, blockCols)` for zero-copy
 submatrix windows (Eigen, 2026d). **Proposal (not in evidence)**: a
@@ -708,16 +708,16 @@ non-zero values without structural reallocation (sparsemat, 2026a; vbarrielle,
 sorted CSR format entirely on the stack in worst-case $O(R + \sum_{i=0}^{R-1} k_i^2) \le O(R + \text{nnz}^2)$ time ($O(\text{nnz} + R)$ under bounded row density) without heap
 allocation (SciPy Developers, 2026; sparsemat, 2026a):
 
-1. **Pass 1 — Histogram & Prefix Sum**: Iterates over COO
+1. **Pass 1: Histogram & Prefix Sum**: Iterates over COO
    triplets $0..\text{nnz}$,
    validates bounds $(r < R, c < C)$, counts entries per row into
    `row_counts[r]`,
    and computes the cumulative prefix sum into
    `row_offsets[i+1] = row_offsets[i] + row_counts[i]`.
-2. **Pass 2 — Bucket Distribution**: Distributes COO values and column indices
+2. **Pass 2: Bucket Distribution**: Distributes COO values and column indices
    into
    their corresponding row intervals in temporary working arrays.
-3. **Pass 3 — Row Sorting & Duplicate Accumulation**: Within each row interval
+3. **Pass 3: Row Sorting & Duplicate Accumulation**: Within each row interval
    `row_offsets[i]..row_offsets[i+1]`, performs an in-place insertion sort on
    column
    indices. If duplicate coordinates $(i, c)$ appear, sums their
@@ -862,7 +862,7 @@ Pirova et al., 2025).
 
 Phases 1–4 implement dense, packed (symmetric/Hermitian/triangular/diagonal),
 and CSR/CSC/COO formats only. Band indexing uses a non-linear slot map
-distinct from FR-2 stride arithmetic and from packed triangular indexing—
+distinct from FR-2 stride arithmetic and from packed triangular indexing;
 forcing it onto `DenseStorage` would forfeit the same optimization separation
 cited in §5 for packed/sparse splits.
 

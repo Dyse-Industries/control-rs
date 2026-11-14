@@ -851,8 +851,7 @@ mod tests {
 
         let frames = make_test_suite_telemetry(0, "MathSuite", 2, 1);
         for f in frames {
-            let actions =
-                state.handle_message(BridgeMessage::Telemetry(f.clone()));
+            let actions = state.handle_message(BridgeMessage::Telemetry(f));
             assert!(actions.is_empty());
         }
 

@@ -5,8 +5,8 @@
 //! ([`crate::math::storage`]) and the `Dim` compile-time dimension system
 //! ([`crate::math::num_types`]).
 //!
-//! One `Matrix<T, R, C, S>` implementation — arithmetic, transposition,
-//! factorization — operates over any conforming storage backend (stack
+//! One `Matrix<T, R, C, S>` implementation (arithmetic, transposition,
+//! factorization) operates over any conforming storage backend (stack
 //! array, borrowed view). Arithmetic operators and decompositions read
 //! elements through [`DenseStorage::get_unchecked`]/[`DenseStorageMut::get_unchecked_mut`]
 //! rather than assuming a fixed physical layout, so mixed-layout operands
@@ -88,7 +88,7 @@ pub type ArrayMatrix<T, const R: usize, const C: usize> =
 ///
 /// Fixed to the `Const<N>` bridge so its backing `ArrayStorage<T, R, C>` can
 /// use plain `const usize` row/column parameters (`ArrayStorage` cannot be
-/// generic over an arbitrary `Dim` type — see `matrix-design.md` §4.1).
+/// generic over an arbitrary `Dim` type; see `matrix-design.md` §4.1).
 pub type Owned<T, const R: usize, const C: usize> = ArrayMatrix<T, R, C>;
 
 /// A zero-copy, non-owning, immutable contiguous matrix view.
@@ -685,7 +685,7 @@ where
 
 /// Matrix-matrix multiplication (`(M x N) * (N x P) -> (M x P)`), dimension
 /// checked at compile time. Covers matrix-vector multiplication as the
-/// `P == 1` case — no separate impl is needed since a vector is just a
+/// `P == 1` case: no separate impl is needed since a vector is just a
 /// `Matrix<T, N, 1, _>`.
 impl<'b, T, const M: usize, const N: usize, const P: usize, S, S2>
     Mul<&'b Matrix<T, Const<N>, Const<P>, S2>>
@@ -706,7 +706,7 @@ where
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// Transposition (Owned only — every design-doc example uses plain owned
+// Transposition (Owned only, every design-doc example uses plain owned
 // matrices; a fully storage-generic version needs a `Transposed<O>` layout
 // marker not otherwise motivated by current call sites).
 ////////////////////////////////////////////////////////////////////////////////
@@ -719,7 +719,7 @@ where
     /// Creates a zero-copy, non-destructive transposed view over `self`.
     ///
     /// Reinterprets the same column-major flat data as a `C x R`, row-major
-    /// view — the standard zero-copy transpose trick — without allocation
+    /// view (the standard zero-copy transpose trick) without allocation
     /// or copying.
     #[must_use]
     #[allow(clippy::type_complexity)]

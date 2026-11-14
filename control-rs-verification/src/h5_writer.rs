@@ -1,4 +1,4 @@
-//! Pure-Rust HDF5 container writer utilizing `hdf5-pure`.
+//! Pure-Rust HDF5 container writer using `hdf5-pure`.
 //!
 //! Emits structured `.rust.h5` and `.scipy.h5` control-rs-verification containers containing
 //! nested group hierarchies and signal tolerance metadata.

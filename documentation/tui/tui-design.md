@@ -21,45 +21,45 @@ facilitating rapid on-target iteration.
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Target Metadata Display**: The TUI must query and display target
+- **FR-1 - Target Metadata Display**: The TUI must query and display target
   board details, core clock frequency, FPU status and debug link parameters,
   consuming `Telemetry::TargetInfo` from the host bridge.
-- **FR-2 — Hierarchical Test Tree**: The interface must present test suites and
+- **FR-2 - Hierarchical Test Tree**: The interface must present test suites and
   cases in a tree layout mapping the Rust module namespace.
-- **FR-3 — Hierarchical Telemetry Table**: For each test, the TUI must display
+- **FR-3 - Hierarchical Telemetry Table**: For each test, the TUI must display
   cycle count (CYCCNT), duration (µs) and peak stack memory usage.
-- **FR-4 — Persistent Log Terminal**: An integrated console window must display
+- **FR-4 - Persistent Log Terminal**: An integrated console window must display
   real-time debug and system logs streaming from the target.
-- **FR-5 — Keystroke Controls**: Users must control target execution via
+- **FR-5 - Keystroke Controls**: Users must control target execution via
   single-key shortcuts (`f` filter, `r` run all, `s` stop, `q` quit).
 
-- **FR-6 — Session liveness**: The dashboard retries discovery until the host
+- **FR-6 - Session liveness**: The dashboard retries discovery until the host
   session reports it complete, and it surfaces target process exit. A QEMU
   boot race or a dead subprocess must not look like an idle empty tree.
 
-- **FR-7 — Suite setting inspection and edit**: The operator can read a
+- **FR-7 - Suite setting inspection and edit**: The operator can read a
   setting's description and write a live `SetSetting` without leaving the
   dashboard. Discovery without that path is not a complete interactive session.
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Diff-only repaint**: An unchanged frame writes nothing to the
+- **NFR-1 - Diff-only repaint**: An unchanged frame writes nothing to the
   terminal; the write is the buffer diff, and repaint happens only when the
   application asks. A 16 ms / 60 FPS budget is not required.
-- **NFR-2 — Metrics Caching**: Test suite results are stored on the host to
+- **NFR-2 - Metrics Caching**: Test suite results are stored on the host to
   maintain state across target restarts or reconnections.
-- **NFR-3 — Non-Intrusive Polling**: The communication driver must poll
+- **NFR-3 - Non-Intrusive Polling**: The communication driver must poll
   telemetry buffers asynchronously without halting the target CPU.
 
 #### 2.3 Constraints
 
-- **C-1 — Presentation Only Scope**: `control-rs-tui` is strictly a presentation
+- **C-1 - Presentation Only Scope**: `control-rs-tui` is strictly a presentation
   frontend; it does not own physical transport, session state machines, framing
   algorithms, or CRC checks, which are wholly delegated to
   `control-rs-ets-host::ETSBridge`.
-- **C-2 — Single-Session Lifetime**: The binary manages exactly one active
+- **C-2 - Single-Session Lifetime**: The binary manages exactly one active
   `ETSBridge` session at any time.
-- **C-3 — Host Environment Constraints**: The crate requires standard terminal
+- **C-3 - Host Environment Constraints**: The crate requires standard terminal
   input/output and ANSI/VT escape sequences, operating under `std`.
 
 ---

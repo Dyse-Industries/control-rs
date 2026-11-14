@@ -18,28 +18,28 @@ hooks to the end-user or silicon vendor.
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Execution Duration Measurement**: Read a monotonically increasing CPU cycle count (
+- **FR-1 - Execution Duration Measurement**: Read a monotonically increasing CPU cycle count (
   `get_cycles`), robust to hardware counter wraparound.
-- **FR-2 — Wall-Clock Timestamp Query**: Report elapsed time in nanoseconds (`get_nanos`).
-- **FR-3 — Call-Stack Watermark Inspection**: Read the active stack pointer (`get_sp`) and
+- **FR-2 - Wall-Clock Timestamp Query**: Report elapsed time in nanoseconds (`get_nanos`).
+- **FR-3 - Call-Stack Watermark Inspection**: Read the active stack pointer (`get_sp`) and
   the stack boundary (`get_stack_end`).
-- **FR-4 — High-Watermark Stack Profiling**: Paint the stack with a sentinel pattern
+- **FR-4 - High-Watermark Stack Profiling**: Paint the stack with a sentinel pattern
   and scan for the peak-usage high-water mark.
-- **FR-5 — Atomic Section Profiling**: Run a closure with interrupts disabled and
+- **FR-5 - Atomic Section Profiling**: Run a closure with interrupts disabled and
   disable interrupts permanently.
-- **FR-6 — Fallback Platform Provision**: Provide defaults for targets that do not
+- **FR-6 - Fallback Platform Provision**: Provide defaults for targets that do not
   support these features.
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Deterministic Low Overhead**: Cycle and timer hooks must execute
+- **NFR-1 - Deterministic Low Overhead**: Cycle and timer hooks must execute
   within a few clock cycles so measurements do not perturb the code under test.
 
 #### 2.3 Constraints
 
-- **C-1 — Strict `#![no_std]`, Zero Heap**: Consistent with the rest of
+- **C-1 - Strict `#![no_std]`, Zero Heap**: Consistent with the rest of
   `control-rs-ets`.
-- **C-2 — Target Architectures**: ARM Cortex-M (ARMv7-M, ARMv8-M) and RISC-V (
+- **C-2 - Target Architectures**: ARM Cortex-M (ARMv7-M, ARMv8-M) and RISC-V (
   RV32/RV64). ARMv6-M has no DWT cycle counter; whether it is in scope is
   open (§8, §9 Step 3).
 
@@ -353,10 +353,10 @@ same reason the overhead itself is bounded.
   since `dwt-systick-monotonic` last released in 2022. Open question whether
   ETS's polling cadence is frequent enough to observe every
   wraparound without a dedicated interrupt. On RISC-V, RV32's `mcycle` is also
-  32 bits (with a separate `mcycleh` CSR) — whether `RiscvProfiler` combines
+  32 bits (with a separate `mcycleh` CSR); whether `RiscvProfiler` combines
   them into a full 64-bit value is unverified.
 * **ARMv6-M Support**: `cortex-m` gates `DWT::cycle_count()` behind
-  `#[cfg(not(armv6m))]` — Cortex-M0/M0+ have no DWT cycle counter, so
+  `#[cfg(not(armv6m))]`: Cortex-M0/M0+ have no DWT cycle counter, so
   `CortexMProfiler` as written fails to compile on those cores. Open question
   whether ARMv6-M is in scope: if so, a SysTick-derived fallback (the
   `rtic-monotonics` pattern, lower resolution) is required; if not, record the

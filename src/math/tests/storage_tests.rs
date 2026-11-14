@@ -2,7 +2,7 @@
 //!
 //! ## Functional Requirement Coverage (`storage-trait-design.md`)
 //!
-//! - **FR-1** (core storage trait — ptr access, index mapping, unchecked
+//! - **FR-1** (core storage trait: ptr access, index mapping, unchecked
 //!   access): `ArrayStorage`/`StorageView` layout and bounds-check tests,
 //!   plus the property-based index-mapping suite below.
 //! - **FR-2** (type-level dimension encoding): the `Const<_>`/`U2`/`U3`

@@ -59,139 +59,139 @@ minimal-parsing design principle**:
 
 #### 2.1 Functional Requirements
 
-- **FR-1 — Generic Gate Execution**: The runner must execute any quality gate
+- **FR-1 - Generic Gate Execution**: The runner must execute any quality gate
   declared in `gate.toml` under `[<gate>]`, supporting compiler checks, linters,
   tests, coverage, security audits and user-defined verification harnesses.
-- **FR-2 — Single Concrete Gate Model**: All quality gates must be represented
+- **FR-2 - Single Concrete Gate Model**: All quality gates must be represented
   and executed via a single concrete `Gate` type without gate-specific traits,
   subtypes or dynamic dispatch.
-- **FR-3 — Declarative Workspace Configuration (`gate.toml`)**: Runner settings,
+- **FR-3 - Declarative Workspace Configuration (`gate.toml`)**: Runner settings,
   execution groups, exclusive stages and individual gate execution definitions
   must be declared in a workspace-root `gate.toml` without hardcoded fallback
   vectors in runner source code. A missing file, an unknown key, a scheduled
   gate without a definition and a gate scheduled twice are configuration
   errors.
-- **FR-4 — Subcommand & Flag Economy**: The runner must parse compound command
+- **FR-4 - Subcommand & Flag Economy**: The runner must parse compound command
   strings (for example `command = "cargo clean"`) and optional argument vectors
   (`args`) without forcing repetition of subcommand names in arguments.
-- **FR-5 — Process & Log Stream Isolation**: Every gate must stream 100% of its
+- **FR-5 - Process & Log Stream Isolation**: Every gate must stream 100% of its
   `stdout` and `stderr` output to `target/ci-artifacts/<gate>.log` and record
   standardized metadata to `target/ci-artifacts/<gate>.result.json`.
-- **FR-6 — Structured Tool Degradation**: Absence or failure of an external tool
+- **FR-6 - Structured Tool Degradation**: Absence or failure of an external tool
   must surface as a structured warning in `GateOutcome` and log a diagnostic to
   `<gate>.log` rather than aborting or panicking when the gate policy is `warn`.
-- **FR-7 — Bounded Execution Timeouts**: Target executions and host gates must
+- **FR-7 - Bounded Execution Timeouts**: Target executions and host gates must
   execute under explicit wall-clock bounds, terminating hung processes cleanly.
-- **FR-8 — Multi-Lane Parallel Execution**: The runner must support partitioning
+- **FR-8 - Multi-Lane Parallel Execution**: The runner must support partitioning
   quality gates into independent concurrent execution groups declared in
   `gate.toml` (`[execution.groups]`), executing groups concurrently across
   worker threads while preserving sequential execution within each group.
-- **FR-9 — Exclusive Stages**: Gates that must run alone declare membership in
+- **FR-9 - Exclusive Stages**: Gates that must run alone declare membership in
   `[execution.exclusive]` `pre` or `post`. The runner must run `pre` gates
   sequentially before any group starts, and must start no group or `post` gate
   after a `pre` gate records `Verdict::Fail`. It must drain and join every group
   before dispatching `post` gates sequentially. A gate in no group runs in
   `post`.
-- **FR-10 — Fail-Closed Report Aggregation**: The report aggregator
+- **FR-10 - Fail-Closed Report Aggregation**: The report aggregator
   (`control-rs-ci report`) must derive overall pipeline success strictly from
   gate policies applied to `GateOutcome` verdicts. Any missing, corrupt or
   failing fail-closed gate must fail the aggregator with a non-zero exit code.
   A `fail` gate declared `required = false` may have no result, because no CI
   job runs it, but a recorded `Fail` still fails the aggregator.
-- **FR-11 — Artifact Relocation & Cleanup**: All CI outputs must be written
+- **FR-11 - Artifact Relocation & Cleanup**: All CI outputs must be written
   exclusively to `target/ci-artifacts/`. The runner and CLI tools must provide
   clean operations (`cargo ci clean`, `cargo gate clean`,
   `cargo report --clean`) to remove previous artifacts.
-- **FR-12 — Attributed Live Output**: On request (`-v`/`--verbose`), the runner
+- **FR-12 - Attributed Live Output**: On request (`-v`/`--verbose`), the runner
   must echo every line of each gate's `stdout` and `stderr` to the console as it
   is produced, prefixed with the gate's execution group and name, while still
   satisfying FR-5.
-- **FR-13 — Bounded Group Concurrency**: The runner must bound the number of
+- **FR-13 - Bounded Group Concurrency**: The runner must bound the number of
   concurrently executing groups by a limit declared in `gate.toml`
   (`[execution] max_jobs`) and overridable on the command line
   (`--max-jobs <n>`), defaulting to the number of declared groups. Groups beyond
   the limit must start in declaration order as running groups complete.
-- **FR-14 — Gate Argument Passthrough**: The `gate` binary must append
+- **FR-14 - Gate Argument Passthrough**: The `gate` binary must append
   user-supplied arguments following a `--` separator to the argument vector of
   exactly one selected gate, after the gate's configured `args`, without
   inspecting or rewriting them. A passthrough with zero or more than one
   selected gate must fail before any gate executes.
-- **FR-15 — Selection Independent of Policy**: Whether a gate runs in an
+- **FR-15 - Selection Independent of Policy**: Whether a gate runs in an
   unfiltered invocation (`default`) and how its verdict counts (`mode`) must be
   declared separately. A gate with `default = false` is left out of an
   unfiltered `cargo ci` but runs under its declared `mode` when selected by
   name or group. `mode = "skip"` disables a gate: it never executes, and an
   explicit selection records `Verdict::Skipped`. A selected `fail` gate whose
   result is missing fails the invocation, as in FR-10.
-- **FR-16 — Process-Tree Termination**: A gate that exceeds its timeout must be
+- **FR-16 - Process-Tree Termination**: A gate that exceeds its timeout must be
   terminated together with every descendant process it started, so no build,
   benchmark or emulator outlives the gate that launched it.
-- **FR-17 — Bare-Metal Target Build (deferred to PR10)**: The pipeline must
+- **FR-17 - Bare-Metal Target Build (deferred to PR10)**: The pipeline must
   compile the target firmware for every embedded target declared in
   `gate.toml`, including targets that CI cannot execute (Teensy 4.1), and fail
   when any build fails. No gate implements it yet (§4.9, §8).
-- **FR-18 — Virtual Target Execution**: The pipeline must build the ETS
+- **FR-18 - Virtual Target Execution**: The pipeline must build the ETS
   firmware for every QEMU target declared in `gate.toml`, run its suites to
   completion through `control-rs-ets-host` under a per-target wall-clock bound
   and record test outcomes, cycle counts, wall-clock duration ($\mu\text{s}$)
   and stack peak watermarks in `target/ci-artifacts/ets-results.json`.
-- **FR-19 — Non-Zero Exit on Empty or Incomplete Verification**: A target run
+- **FR-19 - Non-Zero Exit on Empty or Incomplete Verification**: A target run
   that executes zero tests, leaves queued tests pending, aborts (timeout,
   reset budget, send or reconnect failure, target exit) or reports a failed
   test must exit non-zero, preventing false passes from misconfigured targets
   or filters.
-- **FR-20 — Model Checking & Formal Verification**: The pipeline must execute
+- **FR-20 - Model Checking & Formal Verification**: The pipeline must execute
   bounded model checking over declared proof harnesses via `kani` and fail when
   any harness fails an assertion, unwinding limit or cover predicate.
-- **FR-21 — Undefined Behavior & Pointer Provenance Analysis**: The pipeline
+- **FR-21 - Undefined Behavior & Pointer Provenance Analysis**: The pipeline
   must execute the `control-rs` library unit tests under `miri`, failing on any
   detected undefined behavior, memory leak, pointer provenance violation or
   failed test.
-- **FR-22 — Path-Gated Skip**: A gate may declare `diff-trigger`, each a
+- **FR-22 - Path-Gated Skip**: A gate may declare `diff-trigger`, each a
   directory
   prefix or an exact file. Renamed and deleted files count by both paths. A gate
   without `diff-trigger` always runs.
-- **FR-23 — Relative Diff**: The tool uses default paths for the head and
+- **FR-23 - Relative Diff**: The tool uses default paths for the head and
   base of the comparison, but alternates may be specified through arguments
   or the gate.toml file.
-- **FR-24 — Environment Variable Gate Trigger**: A caller can override any
+- **FR-24 - Environment Variable Gate Trigger**: A caller can override any
   condition on all gates or individual gates.
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Zero Continuous Allocation (withdrawn)**: Withdrawn in revision
+- **NFR-1 - Zero Continuous Allocation (withdrawn)**: Withdrawn in revision
   1.32. The claim was not measurable as stated and did not hold: the report
   reads each log tail into memory.
-- **NFR-2 — Outcome Schema Stability**: The `GateOutcome` JSON schema and
+- **NFR-2 - Outcome Schema Stability**: The `GateOutcome` JSON schema and
   Markdown report structure (`ci-report.md`) must remain stable and versioned
   across releases. Every `GateOutcome` carries `schema`; `report` rejects a
   record of another version and lists it in the report.
-- **NFR-3 — Headless Dependency Floor**: The runner's dependency closure must
+- **NFR-3 - Headless Dependency Floor**: The runner's dependency closure must
   contain zero GUI, terminal-event or interactive styling crates.
 
 #### 2.3 Constraints
 
-- **C-1 — Step Summary Size Budget**: `ci-report.md` is budgeted
+- **C-1 - Step Summary Size Budget**: `ci-report.md` is budgeted
   to $\le 64\,\text{KiB}$ for human readability and fast PR rendering, with an
   absolute platform ceiling of 1 MiB ($1{,}048{,}576$ bytes) imposed by GitHub
   Actions step summaries [1].
-- **C-2 — Single MSRV Baseline**: All host tooling and runner crates must
+- **C-2 - Single MSRV Baseline**: All host tooling and runner crates must
   conform to the workspace `rust-version`.
-- **C-3 — Advisory / Fail-Closed Agreement**: Workflow jobs marked
+- **C-3 - Advisory / Fail-Closed Agreement**: Workflow jobs marked
   `continue-on-error` must match gates configured as `warn`. A fail-closed gate
   (`fail`) must not be bypassed.
-- **C-4 — Gate Opacity**: The runner depends only on a gate's declared
+- **C-4 - Gate Opacity**: The runner depends only on a gate's declared
   `command`, `args`, `env`, `cwd`, `timeout_secs`, `mode`, `default`,
   `required`, `diff-trigger` and `skip_exit_codes`, and on its exit status
   and produced artifacts. The runner must not inject, parse or rewrite gate
   arguments or environment to control a gate's internal behavior (for example,
   worker counts, shard selection or output format).
-- **C-5 — Target Architectures**: Embedded targets are ARM Cortex-M
+- **C-5 - Target Architectures**: Embedded targets are ARM Cortex-M
   (`thumbv7em-none-eabihf`, `thumbv7em-none-eabi`) and RISC-V
   (`riscv32imac-unknown-none-elf`, `riscv64gc-unknown-none-elf`) under QEMU,
   and the NXP i.MX RT1062 (Teensy 4.1, `thumbv7em-none-eabihf`) as a build-only
   target once FR-17 lands (PR10). Host tooling runs on `x86_64` and `aarch64`.
-- **C-6 — Indicative Emulation Timing**: Virtual QEMU execution is indicative
+- **C-6 - Indicative Emulation Timing**: Virtual QEMU execution is indicative
   only and does not model microarchitectural cache or bus contention. Cycle
   counts from QEMU are recorded, never gated; precise timing requires physical
   hardware runners (roadmap PR10).
@@ -1027,7 +1027,7 @@ full history so the merge-base resolves.
   from `gate.toml`'s default `target` group in favor of `virtual-ets`.
 - **Deferred Technical Debt** (recorded 2026-09-27 review, not resolved here):
     - `ci-design.md` keeps numbered `§` headings and the pre-`VC` §6 layout, and
-      is not in `.cargo/trace/trace.toml` `files`, so no CI requirement is
+      is not in `.cargo/trace.toml` `files`, so no CI requirement is
       traced.
       Closed by the design-template corpus migration.
     - Workflow (roadmap PR10): the report job rebuilds `cargo doc`, duplicating

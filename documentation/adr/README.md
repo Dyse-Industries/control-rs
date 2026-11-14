@@ -10,5 +10,5 @@ row and names its replacement.
 
 | ADR | Title | Status | Superseded by |
 |:--|:--|:--|:--|
-| [ADR-0001](0001-adopt-adrs.md) | Adopt ADRs for workspace decisions | Accepted | — |
-| [ADR-0003](0003-mul-acc-accumulation-primitive.md) | Accumulate recurrences through the `MulAcc` trait | Proposed | — |
+| [ADR-0001](0001-adopt-adrs.md) | Adopt ADRs for workspace decisions | Accepted | - |
+| [ADR-0003](0003-mul-acc-accumulation-primitive.md) | Accumulate recurrences through the `MulAcc` trait | Proposed | - |
