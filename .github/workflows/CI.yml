@@ -11,9 +11,7 @@ on:
       - 'benches/**'
       - 'control-rs-verification/**'
       - 'control-rs-ets/**'
-      - 'control-rs-ets-host/**'
       - 'control-rs-macros/**'
-      - 'control-rs-tui/**'
       - 'control-rs-ci/**'
       - 'control-rs-compare/**'
       - 'documentation/**'
@@ -36,9 +34,7 @@ on:
       - 'benches/**'
       - 'control-rs-verification/**'
       - 'control-rs-ets/**'
-      - 'control-rs-ets-host/**'
       - 'control-rs-macros/**'
-      - 'control-rs-tui/**'
       - 'control-rs-ci/**'
       - 'control-rs-compare/**'
       - 'documentation/**'
@@ -516,7 +512,7 @@ jobs:
   report:
     name: Aggregate Report
     runs-on: ubuntu-latest
-    needs: [ report_comment, lint, build_test, target, audit, verify, coverage, regression, mutants, kani, miri, trace ]
+    needs: [ report_comment, lint, build_test, audit, verify, coverage, regression, mutants, kani, miri, trace ]
     if: always()
     permissions:
       pull-requests: write

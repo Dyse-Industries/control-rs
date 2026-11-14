@@ -47,10 +47,8 @@ post = [
     "mutants-ci-0",
     "mutants-ci-1",
     "mutants-compare",
-    "mutants-ets-host",
     "mutants-ets",
     "mutants-macros",
-    "mutants-tui",
 ]
 
 # Concurrent groups:
@@ -92,7 +90,7 @@ description = "Downloads workspace dependencies into the Cargo cache before the 
 mode = "fail"
 command = "cargo fmt"
 args = ["--all", "--", "--check"]
-diff-trigger = ["src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-tui/", "control-rs-verification/", "rustfmt.toml"]
+diff-trigger = ["src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-macros/", "control-rs-verification/", "rustfmt.toml"]
 timeout_secs = 120
 description = "Verifies codebase formatting conformity with rustfmt"
 
@@ -100,7 +98,7 @@ description = "Verifies codebase formatting conformity with rustfmt"
 mode = "fail"
 command = "cargo clippy"
 args = ["--workspace", "--all-targets", "--", "-D", "warnings"]
-diff-trigger = ["src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-tui/", "control-rs-verification/", ".cargo/clippy.toml", ".cargo/clippy-allow-baseline.txt"]
+diff-trigger = ["src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-macros/", "control-rs-verification/", ".cargo/clippy.toml", ".cargo/clippy-allow-baseline.txt"]
 timeout_secs = 900
 description = "Executes Clippy linter across workspace targets"
 
@@ -108,7 +106,7 @@ description = "Executes Clippy linter across workspace targets"
 mode = "fail"
 command = "cargo run"
 args = ["--package", "control-rs-ci", "--bin", "allow-audit", "--", "--baseline", ".cargo/clippy-allow-baseline.txt", "--base-ref", "origin/main"]
-diff-trigger = ["src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-tui/", "control-rs-verification/", ".cargo/clippy-allow-baseline.txt"]
+diff-trigger = ["src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-macros/", "control-rs-verification/", ".cargo/clippy-allow-baseline.txt"]
 timeout_secs = 900
 description = "Fails on clippy suppression sites (allow, expect, cfg_attr, manifest allow level) beyond .cargo/clippy-allow-baseline.txt, on stale baseline entries, and on baseline growth against origin/main"
 
@@ -117,7 +115,7 @@ mode = "fail"
 command = "cargo doc"
 args = ["--workspace", "--no-deps"]
 env = { RUSTDOCFLAGS = "-D warnings" }
-diff-trigger = ["src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-tui/", "control-rs-verification/"]
+diff-trigger = ["src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-macros/", "control-rs-verification/"]
 timeout_secs = 900
 description = "Builds workspace API documentation with rustdoc warnings denied"
 
@@ -169,7 +167,7 @@ description = "Measures workspace line coverage using cargo-tarpaulin"
 mode = "fail"
 command = "cargo deny"
 args = ["check", "advisories", "licenses", "sources"]
-diff-trigger = [".cargo/deny.toml", "control-rs-ci/Cargo.toml", "control-rs-compare/Cargo.toml", "control-rs-ets/Cargo.toml", "control-rs-ets-host/Cargo.toml", "control-rs-macros/Cargo.toml", "control-rs-tui/Cargo.toml", "control-rs-verification/Cargo.toml"]
+diff-trigger = [".cargo/deny.toml", "control-rs-ci/Cargo.toml", "control-rs-compare/Cargo.toml", "control-rs-ets/Cargo.toml", "control-rs-macros/Cargo.toml", "control-rs-verification/Cargo.toml"]
 timeout_secs = 300
 description = "Audits dependencies for security advisories, licenses and sources"
 
@@ -181,16 +179,14 @@ mode = "fail"
 command = "cargo deny"
 args = [
     "--workspace",
-    "--exclude", "control-rs-tui",
     "--exclude", "control-rs-ci",
     "--exclude", "control-rs-compare",
-    "--exclude", "control-rs-ets-host",
     "--exclude", "control-rs-verification",
     "--exclude-dev",
     "--all-features",
     "check", "bans",
 ]
-diff-trigger = [".cargo/deny.toml", "control-rs-ci/Cargo.toml", "control-rs-compare/Cargo.toml", "control-rs-ets/Cargo.toml", "control-rs-ets-host/Cargo.toml", "control-rs-macros/Cargo.toml", "control-rs-tui/Cargo.toml", "control-rs-verification/Cargo.toml"]
+diff-trigger = [".cargo/deny.toml", "control-rs-ci/Cargo.toml", "control-rs-compare/Cargo.toml", "control-rs-ets/Cargo.toml", "control-rs-macros/Cargo.toml", "control-rs-verification/Cargo.toml"]
 timeout_secs = 300
 description = "Holds the crates that ship to one version per dependency"
 
@@ -224,8 +220,6 @@ args = [
     "src",
     "control-rs-ets",
     "control-rs-macros",
-    "control-rs-ets-host",
-    "control-rs-tui",
     "control-rs-ci",
     "control-rs-compare",
     "control-rs-verification",
@@ -233,21 +227,9 @@ args = [
     "examples",
     "--glob=!**/target/**",
 ]
-diff-trigger = ["README.md", "CONTRIBUTING.md", "documentation/", ".vale.ini", ".vale/", "src/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-tui/", "control-rs-verification/"]
+diff-trigger = ["README.md", "CONTRIBUTING.md", "documentation/", ".vale.ini", ".vale/", "src/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-macros/", "control-rs-verification/"]
 timeout_secs = 300
 description = "Lints documentation and doc comments for prose style conformity"
-
-# ==============================================================================
-# Target Lane Gates
-# ==============================================================================
-
-[virtual-ets]
-mode = "fail"
-command = "cargo run"
-args = ["--package", "control-rs-ci", "--bin", "ets", "--", "--timeout", "120", "qemu", "all", "--release"]
-diff-trigger = ["src/", "examples/qemu/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-ci/"]
-timeout_secs = 2400
-description = "Builds QEMU ETS firmware and runs every suite headless on each target"
 
 # ==============================================================================
 # Audit and Verify Lane Gates (geiger and valgrind: audit; cross-compare: verify)
@@ -258,7 +240,7 @@ mode = "fail"
 command = "cargo geiger"
 args = ["--output-format", "Json"]
 env = { CARGO_TARGET_DIR = "target/geiger" }
-diff-trigger = ["src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-ets-host/", "control-rs-macros/", "control-rs-tui/", "control-rs-verification/"]
+diff-trigger = ["src/", "tests/", "benches/", "examples/", "control-rs-ci/", "control-rs-compare/", "control-rs-ets/", "control-rs-macros/", "control-rs-verification/"]
 timeout_secs = 900
 description = "Scans workspace crates for unsafe code blocks and functions"
 
@@ -501,7 +483,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "replace terminate_child_only with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--exclude-re", "replace && with \\|\\| in LinkGraph<'a, Acyclic>::render", "--exclude-re", "replace (children_of|stop_tree|terminate_tree|signal)\\b", "--exclude-re", " in (children_of|stop_tree|terminate_tree|signal)$", "--shard", "0/2", "--output", "target/ci-artifacts/mutants-ci-0.out"]
-diff-trigger = ["control-rs-ci/", "control-rs-ets/", "control-rs-ets-host/", ".cargo/trace.toml", ".cargo/compare.toml", ".cargo/regression.toml"]
+diff-trigger = ["control-rs-ci/", "control-rs-ets/", ".cargo/trace.toml", ".cargo/compare.toml", ".cargo/regression.toml"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ci, chunk 1 of 2"
 
@@ -510,7 +492,7 @@ mode = "fail"
 default = false
 command = "cargo mutants"
 args = ["--json", "--no-config", "--package", "control-rs-ci", "--exclude-re", "with true in strip_string_literals", "--exclude-re", "replace > with >= in Gate::spawn_and_log", "--exclude-re", "replace < with <= in drain_pumps", "--exclude-re", "replace terminate_child_only with \\(\\)", "--exclude-re", "replace > with >= in ReportAggregator::generate_markdown", "--exclude-re", "replace && with \\|\\| in LinkGraph<'a, Acyclic>::render", "--exclude-re", "replace (children_of|stop_tree|terminate_tree|signal)\\b", "--exclude-re", " in (children_of|stop_tree|terminate_tree|signal)$", "--shard", "1/2", "--output", "target/ci-artifacts/mutants-ci-1.out"]
-diff-trigger = ["control-rs-ci/", "control-rs-ets/", "control-rs-ets-host/", ".cargo/trace.toml", ".cargo/compare.toml", ".cargo/regression.toml"]
+diff-trigger = ["control-rs-ci/", "control-rs-ets/", ".cargo/trace.toml", ".cargo/compare.toml", ".cargo/regression.toml"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-ci, chunk 2 of 2"
 
@@ -531,19 +513,6 @@ args = ["--json", "--no-config", "--package", "control-rs-compare", "--exclude-r
 diff-trigger = ["control-rs-compare/"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-compare"
-
-# control-rs-ets-host exclusions are behaviorally equivalent mutants: `>=` on two
-# instants (a wall-clock comparison that cannot tie) and `RunEnd::drained`, which
-# already returns `Default::default()`.
-
-[mutants-ets-host]
-mode = "fail"
-default = false
-command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-ets-host", "--exclude-re", "replace RunEnd::drained -> Self with Default::default\\(\\)", "--exclude-re", "replace > with >= in HeadlessRun<'t>::(drive|retry_discovery)", "--output", "target/ci-artifacts/mutants-ets-host.out"]
-diff-trigger = ["control-rs-ets-host/", "control-rs-ets/"]
-timeout_secs = 19800
-description = "Mutation testing: control-rs-ets-host"
 
 # control-rs-ets exclusions: `|` versus `^` joins two bytes with disjoint bits;
 # a frame buffer shorter than six bytes cannot hold a payload either way; the
@@ -567,15 +536,6 @@ args = ["--json", "--no-config", "--package", "control-rs-macros", "--output", "
 diff-trigger = ["control-rs-macros/"]
 timeout_secs = 19800
 description = "Mutation testing: control-rs-macros"
-
-[mutants-tui]
-mode = "fail"
-default = false
-command = "cargo mutants"
-args = ["--json", "--no-config", "--package", "control-rs-tui", "--output", "target/ci-artifacts/mutants-tui.out"]
-diff-trigger = ["control-rs-tui/", "control-rs-ets-host/", "control-rs-ets/"]
-timeout_secs = 19800
-description = "Mutation testing: control-rs-tui"
 
 [regression]
 mode = "fail"
