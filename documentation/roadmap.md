@@ -126,7 +126,7 @@ The authoritative lead design document for the target-side runtime is
     - Branch: `mdsdev/ets-1-suites-profiler` (combining ETS-1 and ETS-2)
     - Design: `ets/embedded-test-server-design.md`, `ets/cpu-profiler-design.md`,
       `ets/test-suite-design.md`, `ets/macros-design.md`, `ets/host-comm-design.md`
-    - Scope: Suites, macros, profiler backends (Cortex-M and RISC-V), server runtime
+    - Scope: Suites, macros, profiler backends (Cortex-M and RISC-V), ETS executive
       context/dispatch, `HostComms` wire framing, and isolated component examples
 - [ ] **ETS-2**: Target Executive, Host Session & Frontends (`control-rs-ets`,
   `control-rs-ets-host`, `control-rs-ci`, `control-rs-tui`)

@@ -1,6 +1,6 @@
 # CPUProfiler (cpu-profiler)
 
-![Date Badge](https://img.shields.io/badge/Date-November_8,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_29,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 ![Design Status Badge](https://img.shields.io/badge/Design%20Status-Draft-orange)
 
@@ -24,6 +24,7 @@ reference backends for ARM Cortex-M, RISC-V, and host targets.
 - **FR-4 — Stack High-Watermark Measurement**: The profiler must determine peak stack memory consumption during execution by painting unused stack memory with a sentinel pattern and detecting the deepest watermark displacement. Painting must remain bounded between the stack boundary and the frame safety threshold.
 - **FR-7 — Test Interrupt Isolation**: The profiler must support scoped interrupt disabling (`disable_interrupts`) during critical test execution and permanent interrupt disabling (`disable_interrupts_permanently`) upon panic or fatal failure.
 - **FR-8 — Target Lifecycle Control**: The profiler must provide target control hooks to initiate a warm system reset (`reset`) or terminate execution in virtualized environments (`exit`).
+- **FR-9 — Composed Test Profiling**: The profiler must provide composed execution runners: `run_profiled` (combining stack tracking with interrupt-isolated cycle/nanosecond timing) and `run_profiled_unmasked` (combining stack tracking with unmasked cycle/nanosecond timing), returning `TestMetrics` containing elapsed cycles, peak stack depth, and duration in microseconds.
 
 #### 2.2 Non-Functional Requirements
 
@@ -39,9 +40,10 @@ reference backends for ARM Cortex-M, RISC-V, and host targets.
 
 ### 3. Technical Overview
 
-A caller paints the stack and samples the `CPUProfiler` hooks before and after a
-measured region within an interrupt-isolated critical section (`disable_interrupts`),
-then reads peak stack usage (`read_stack_peak`) and computes cycle and nanosecond deltas.
+The profiler packages hardware hooks and timing primitives into composed test runners.
+A caller invokes `run_profiled` for interrupt-isolated profiling, `run_profiled_unmasked`
+for profiling with interrupts active, or directly uses `run_clock` and `run_stack` primitives.
+All composed profiling runs return `TestMetrics`.
 
 ```mermaid
 flowchart TD
@@ -49,6 +51,12 @@ flowchart TD
 
     subgraph Profiler ["control-rs-ets::profiler"]
         TR["CPUProfiler trait"]
+        TM["TestMetrics"]
+        RC["run_clock / run_stack"]
+        RP["run_profiled / run_profiled_unmasked"]
+        TR --> RC
+        RC --> RP
+        RP --> TM
     end
 
     subgraph Backends ["Implementations"]
@@ -57,7 +65,7 @@ flowchart TD
         HOST["HostCPUProfiler (mock)"]
     end
 
-    RUN -->|"disable_interrupts / paint_stack / get_cycles / get_nanos / read_stack_peak"| TR
+    RUN -->|"run_profiled / run_profiled_unmasked"| TR
     TR -.-> ARM
     TR -.-> RV
     TR -.-> HOST
@@ -67,11 +75,27 @@ flowchart TD
 
 ### 4. Architecture
 
-#### 4.1. The CPUProfiler Trait
+#### 4.1. The CPUProfiler Trait and TestMetrics
 
-Serves: FR-1, FR-2, FR-3, FR-4, FR-7, FR-8, NFR-1, NFR-2, C-1
+Serves: FR-1, FR-2, FR-3, FR-4, FR-7, FR-8, FR-9, NFR-1, NFR-2, C-1
 
-The core of the abstraction is the `CPUProfiler` trait, defined in
+Performance metrics measured during test execution are recorded in `TestMetrics`, defined
+in `control-rs-ets::profiler`:
+
+```rust
+/// Performance metrics measured during a test execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TestMetrics {
+    /// Number of elapsed CPU cycles.
+    pub cycles: u64,
+    /// Peak stack usage in bytes.
+    pub stack_peak: u32,
+    /// Elapsed wall-clock time in microseconds.
+    pub time_us: u64,
+}
+```
+
+The core of the hardware execution abstraction is the `CPUProfiler` trait, defined in
 `control-rs-ets::profiler`:
 
 ```rust
@@ -119,6 +143,55 @@ pub trait CPUProfiler {
     /// Resets the CPU/system.
     fn reset(&self) -> ! {
         loop {}
+    }
+
+    /// Runs a test function and returns elapsed (cycles, nanoseconds).
+    #[inline(never)]
+    fn run_clock(&self, f: fn()) -> (u64, u64) {
+        let c0 = self.get_cycles();
+        let t0 = self.get_nanos();
+        f();
+        let t1 = self.get_nanos();
+        let c1 = self.get_cycles();
+        (c1.saturating_sub(c0), t1.saturating_sub(t0))
+    }
+
+    /// Executes a closure inside a stack-painted bracket, returning the closure result and peak stack usage in bytes.
+    fn run_stack<F, R>(&self, f: F) -> (R, u32)
+    where
+        F: FnOnce() -> R,
+    {
+        let sp = self.get_sp();
+        // SAFETY: paint_stack enforces safety margins to protect active stack frames.
+        unsafe {
+            self.paint_stack(sp);
+        }
+        let res = f();
+        // SAFETY: read_stack_peak queries relative to the same sp reference point.
+        let peak = unsafe { self.read_stack_peak(sp) };
+        (res, peak)
+    }
+
+    /// Runs a test function within a stack-painted and interrupt-isolated bracket, returning `TestMetrics`.
+    fn run_profiled(&self, f: fn()) -> TestMetrics {
+        let ((cycles, nanos), stack_peak) =
+            self.run_stack(|| self.disable_interrupts(|| self.run_clock(f)));
+        TestMetrics {
+            cycles,
+            stack_peak,
+            time_us: nanos / 1000,
+        }
+    }
+
+    /// Runs a test function within a stack-painted bracket with interrupts unmasked, returning `TestMetrics`.
+    fn run_profiled_unmasked(&self, f: fn()) -> TestMetrics {
+        let ((cycles, nanos), stack_peak) =
+            self.run_stack(|| self.run_clock(f));
+        TestMetrics {
+            cycles,
+            stack_peak,
+            time_us: nanos / 1000,
+        }
     }
 }
 ```
@@ -305,6 +378,8 @@ after the host sends `Command::TryReset`; on Cortex-M it is
 | VC-4.4    | FR-4        | `libtest` | `control_rs_ets::profiler::tests::test_default_profiler_methods`                                 | Untouched sentinel words remain intact during high-watermark scanning, reporting zero usage when no frames are displaced |
 | VC-7.1    | FR-7        | `libtest` | `control_rs_ets::profiler::tests::test_default_profiler_methods`                                 | `disable_interrupts` executes the supplied closure and returns its value, and `disable_interrupts_permanently` completes without panic |
 | VC-7.2    | FR-7        | `gate`    | `virtual-ets`                                                                                   | On target, `disable_interrupts` masks hardware interrupts during test execution and restores interrupt state upon return |
+| VC-7.3    | FR-9        | `libtest` | `control_rs_ets::profiler::tests::test_run_profiled_composition`                                 | `run_profiled` verifies call order, asserts interrupts disabled across `run_clock`, and returns accurate `TestMetrics` |
+| VC-7.4    | FR-9        | `libtest` | `control_rs_ets::profiler::tests::test_run_profiled_unmasked_composition`                        | `run_profiled_unmasked` verifies call order, asserts interrupts remain unmasked across `run_clock`, and returns accurate `TestMetrics` |
 | VC-8.1    | FR-8        | `libtest` | `control_rs_ets::util::tests::test_handle_failure_comms_disabled`                               | Target reset and exit hooks are invoked on catastrophic failure and virtual runner teardown |
 | VC-8.2    | FR-8        | `gate`    | `virtual-ets`                                                                                   | On target under QEMU, `exit` and `reset` hooks cleanly terminate or restart the virtual target |
 | VC-10.1   | NFR-1       | `gate`    | `virtual-ets` | Cycle and nanosecond hooks execute deterministically without dynamic allocation or unbounded loops across target architectures |
@@ -383,6 +458,7 @@ same reason the overhead itself is bounded.
 | 2. Architecture Compatibility & Fallback | ARMv6-M (`has_clock` false), RISC-V, ARMv7-M, ARMv8-M support | FR-1, C-2 | 2 days | Shipped |
 | 3. Hardware SysTick Resolution & Rollover Hardening | `calculate_systick_nanos`, pending IRQ rollover detection | FR-2, NFR-1 | 2 days | Shipped |
 | 4. Stack High-Watermark Painting & Bounds Inspection | `paint_stack`, `read_stack_peak`, safety margin bounds | FR-3, FR-4, NFR-2 | 2 days | Shipped |
+| 5. Composed Execution Runners | `run_profiled`, `run_profiled_unmasked`, and `TestMetrics` in profiler | FR-9 | 1 day | Planned |
 
 ---
 
@@ -392,6 +468,7 @@ same reason the overhead itself is bounded.
 |:---------|:-------------------|:----------------|:-------------------------------------------------------------------|
 | 1.0      | August 29, 2026    | @MitchellDScott | `CPUProfiler` trait with DWT and `mcycle` cycle counters.          |
 | 2.0 | November 8, 2026 | @MitchellDScott, Claude Opus 5.5, Antigravity | Bound strictly to hardware CPUProfiler hooks (cycles, nanoseconds, stack painting/bounds, interrupt isolation, target reset/exit). Pruned CycleClock, JitterStats, and ProfileStats to ETS-3. Affects FR-1, FR-5, FR-6, FR-7, FR-8. |
+| 3.0 | November 17, 2026 | Antigravity | Add TestMetrics and composed run_profiled runners to CPUProfiler. Affects FR-9. |
 
 ---
 

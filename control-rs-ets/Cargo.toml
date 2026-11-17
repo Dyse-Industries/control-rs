@@ -23,8 +23,10 @@ postcard = { version = "1.0", default-features = false, features = ["alloc"] }
 control-rs-macros = { path = "../control-rs-macros" }
 
 [features]
-default = ["stack-paint"]
+default = ["stack-paint", "diagnostics"]
 stack-paint = []
+diagnostics = []
+diagnostics-fault = []
 
 [target.'cfg(target_arch = "arm")'.dependencies]
 cortex-m = "0.7"

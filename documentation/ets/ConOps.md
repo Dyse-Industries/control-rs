@@ -47,8 +47,6 @@ flowchart LR
 
 ### 3.1 Algorithm & Unit Test Execution
 
-Serves the initial Model-in-the-Loop (MIL) and algorithm prototyping stage of autonomy development. Conducted on developer workstations and continuous integration (CI) runners, this mode provides rapid mathematical verification of control laws, state estimators, and kinematic transforms against reference specifications before cross-compilation or physical target deployment.
-
 ```mermaid
 flowchart LR
     HOST["Host Environment<br/>(Automated Runner)"]
@@ -63,11 +61,10 @@ flowchart LR
     ETS -->|" 3. Verdict & Failure Record "| HOST
 ```
 
-*Figure 3.1: Algorithm & Unit Test Execution — Host-native algorithmic verification during early stage control design and continuous integration.*
+*Figure 3.1: Algorithm & Unit Test Execution — Host-native algorithmic
+verification during early stage control design and continuous integration.*
 
 ### 3.2 Target Emulation (QEMU)
-
-Serves pre-silicon verification and cross-architecture target qualification within automated build and CI pipelines. By executing within a virtualized core before physical hardware is available or when bench access is constrained, this mode verifies ISA-specific compilation, numerical consistency, and register-level target behavior across supported processor architectures.
 
 ```mermaid
 flowchart LR
@@ -83,11 +80,10 @@ flowchart LR
     end
 ```
 
-*Figure 3.2: Target Emulation (QEMU) — Pre-silicon cross-architecture validation in automated build and regression pipelines.*
+*Figure 3.2: Target Emulation (QEMU) — Pre-silicon cross-architecture validation
+in automated build and regression pipelines.*
 
 ### 3.3 Hardware Benchmarking (Silicon DUT)
-
-Serves board bring-up and real-time resource budgeting milestones on target microcontroller silicon. By profiling bare-metal execution on physical evaluation boards, this mode establishes empirical timing closure—measuring execution overhead, jitter, and peak stack depth to guarantee that periodic autonomy control loops satisfy strict hard real-time deadlines and memory constraints.
 
 ```mermaid
 flowchart LR
@@ -104,17 +100,16 @@ flowchart LR
     S3 -->|" Metrics Telemetry Frame "| HOST
 ```
 
-*Figure 3.3: Hardware Benchmarking — Empirical timing closure and stack budget validation on physical microcontroller silicon.*
+*Figure 3.3: Hardware Benchmarking — Empirical timing closure and stack budget
+validation on physical microcontroller silicon.*
 
 ### 3.4 Hardware-in-the-Loop Simulation (Closed-Loop Control)
 
-Serves system integration and safety qualification between isolated firmware verification and physical vehicle deployment. By coupling embedded controllers with simulated dynamic environments in real time, this mode validates closed-loop stability, state transitions, and fault-handling fail-safes without risking physical actuators or autonomy platforms.
-
-Closed-loop verification separates into two distinct configurations depending on whether the device under test (DUT) integrates ETS or runs unmodified production firmware:
+Closed-loop verification separates into two distinct configurations depending on
+whether the device under test (DUT) integrates ETS or runs unmodified production
+firmware:
 
 #### 3.4.1 Modified DUT (Internal Plant Simulation)
-
-Serves rapid benchtop prototyping and iterative desk-side testing. Developers inject simulated plant dynamics directly into firmware test harnesses to verify controller convergence and transient response before external test fixtures are constructed.
 
 ```mermaid
 flowchart LR
@@ -131,11 +126,10 @@ flowchart LR
     ETS -->|" 4. Control Response "| HOST
 ```
 
-*Figure 3.4.1: Modified DUT Simulation — Benchtop closed-loop control and transient verification via target-injected plant dynamics.*
+*Figure 3.4.1: Modified DUT Simulation — Benchtop closed-loop control and
+transient verification via target-injected plant dynamics.*
 
 #### 3.4.2 Unmodified DUT (External ETS Rig)
-
-Serves formal qualification and flight-readiness certification. The test rig stimulates physical sensor inputs and captures electrical actuator signals on production-representative avionics, validating unmodified release binaries under strict operational conditions.
 
 ```mermaid
 flowchart LR
@@ -155,11 +149,10 @@ flowchart LR
     RIG -->|" 4. Telemetry Frame "| HOST
 ```
 
-*Figure 3.4.2: Unmodified DUT Rig — Flight-representative qualification testing of release binaries against electrical interface hardware.*
+*Figure 3.4.2: Unmodified DUT Rig — Flight-representative qualification testing
+of release binaries against electrical interface hardware.*
 
 ### 3.5 Telemetry & Data Acquisition
-
-Serves physical plant bring-up, empirical system identification, and model validation when electronics first interface with physical mechanisms. By streaming synchronized, high-rate physical sensor measurements during controlled excitation, this mode provides empirical datasets to estimate plant parameters and refine simulation models against observed dynamics.
 
 ```mermaid
 flowchart LR
@@ -174,11 +167,10 @@ flowchart LR
     MCU -->|" Telemetry "| HOST
 ```
 
-*Figure 3.5: Telemetry & Data Acquisition — Real-time sensor stream ingestion for system identification and physical plant characterization.*
+*Figure 3.5: Telemetry & Data Acquisition — Real-time sensor stream ingestion
+for system identification and physical plant characterization.*
 
 ### 3.6 Live Parameter Tuning
-
-Serves the final operational stage of vehicle commissioning, calibration, and test-track validation. Controls and field engineers interactively adjust feedback gains, filter bandwidths, and estimator weights during active operation without recompilation or reflashing, accelerating vehicle stabilization and field adaptation.
 
 ```mermaid
 flowchart LR
@@ -195,5 +187,6 @@ flowchart LR
     C -->|" Telemetry Response "| HOST
 ```
 
-*Figure 3.6: Live Parameter Tuning — In-situ controller calibration and gain adjustment during active vehicle field commissioning.*
+*Figure 3.6: Live Parameter Tuning — In-situ controller calibration and gain
+adjustment during active vehicle field commissioning.*
 

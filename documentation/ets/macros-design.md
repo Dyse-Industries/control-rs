@@ -1,6 +1,6 @@
 # Procedural Macros for Distributed Test Discovery (macros)
 
-![Date Badge](https://img.shields.io/badge/Date-November_8,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_29,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
 ![Design Status Badge](https://img.shields.io/badge/Design%20Status-Draft-orange)
 
@@ -14,13 +14,15 @@ and generating the underlying test registry metadata and target runtime hooks.
 This design document establishes the architecture for `control-rs-macros`, a
 procedural macro library containing `#[ets_suite]`, `#[ets_setup]`,
 `ets_entrypoint!`, `ets_panic!`, and `ets_exception!`. `#[ets_suite]` enables
-developers to declare ETS tests and configurable parameters directly in their
+developers to declare ETS tests, compile-time constants, and configurable parameters directly in their
 modules with zero boilerplate. Rather than requiring explicit per-item marker
 attributes on every declaration, `#[ets_suite]` operates under an
 inference-first contract: the suite contains what the user defines in the module
-(plus the ETS wrapping), promoting primitive `static` items into lock-free
-atomic settings and identifying zero-argument functions as test cases. It
-generates all registration hooks and places them in custom linker sections,
+(plus the ETS wrapping), identifying zero-argument functions as test cases,
+promoting primitive `const` items into inspectable compile-time constants, and
+promoting primitive `static` items into lock-free triple-buffer settings. It
+generates all registration hooks, wraps descriptors into a static `SuiteDescriptor`,
+and places its pointer in a custom linker section,
 permitting automated discovery without a centralized registry. `#[ets_setup]`
 (an attribute procedural macro) and its companion function-like procedural macros
 (`ets_entrypoint!`, `ets_panic!`, `ets_exception!`) generate the bare-metal `main`
@@ -35,25 +37,37 @@ entrypoint, wire the server context, and register panic and hardware fault handl
 - **FR-1 — Distributed Module Annotation (#[ets_suite])**: Developers declare a suite by
   tagging a module with `#[ets_suite]`, generating a `SuiteDescriptor` and registering it in `.ets_test_suites`.
 - **FR-2 — Inferred Test Case Identification**: The macro automatically identifies zero-argument
-  functions within the module and generates `ExecDescriptor` entries with doc-comment metadata.
+  functions within the module, parses optional `#[ets_profile(...)]` attributes (`unmasked`,
+  `off`, defaulting to `Full`), and generates `ExecDescriptor` entries capturing name,
+  doc-comment metadata, callable entry point, and profile arm.
+- **FR-3 — Inferred Compile-Time Constant Identification**: The macro automatically identifies
+  module `const` items of supported primitive types (`bool`, `u8`, `u16`, `u32`, `u64`, `i8`, `i32`, `f32`)
+  and generates `ConstantDescriptor` entries with doc-comment metadata and compiled `SettingValue` values,
+  registered in the suite's `constants` slice.
 - **FR-4 — Static Parameter Promotion**: The macro identifies module `static` items of supported
   primitive types (`bool`, `u8`, `u16`, `u32`, `u64`, `i8`, `i32`, `f32`), rewriting them into
-  `Atomic*Setting` wrappers registered in the suite's `settings` slice while passing `const` items and non-setting items through unchanged.
+  `TripleBuffer<T>` statics registered in the suite's `settings` slice via `Setting::new` descriptors
+  while passing non-primitive statics through unchanged.
 - **FR-5 — Target Entrypoint and Fault Handler Generation (`#[ets_setup]`, `ets_entrypoint!`, `ets_panic!`, `ets_exception!`)**: The macro crate must provide `#[ets_setup]` and its companion macros (`ets_entrypoint!`, `ets_panic!`, `ets_exception!`) to generate the bare-metal `main` entrypoint, bind the `ETS_SERVER` atomic pointer, and register panic and hardware exception handlers that route diagnostics through `control-rs-ets::util`.
 - **FR-6 — Ignored Module Functions**: The macro excludes functions with a leading underscore
   or parameters from test case generation, allowing internal helper functions within the module.
-- **FR-7 — Compile Error Reporting**: Invalid syntax, non-inline modules, and invalid `#[ets_setup]` signatures produce
+- **FR-7 — Compile Error Reporting**: Invalid syntax, non-inline modules, invalid `#[ets_setup]` signatures, and unrecognized `#[ets_profile(...)]` arguments produce
   spanned compiler errors pointing to the offending code without macro panics.
+- **FR-8 — Collision-free suite expansion**: Separate `#[ets_suite]` modules may declare constants
+  with identical identifiers. Generated symbols and descriptors must remain distinct and compile without collisions.
+- **FR-9 — Direct-item inference boundary**: `#[ets_suite]` must generate descriptors only for
+  supported items declared directly within the annotated module. Imported items and items from
+  enclosing or nested scopes must not be inferred.
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 — Zero Static RAM at Idle**: Emitted test descriptors and registration
+- **NFR-1 — Zero Static RAM at Idle**: Emitted test descriptors, constant descriptors, and registration
   tables reside entirely in read-only Flash/ROM (`.ets_test_suites`), consuming
   0 bytes of static RAM at idle.
 - **NFR-2 — Linker Retention Safety**: Generated descriptors survive aggressive
   linker garbage collection (`--gc-sections`) via `KEEP` directives and link section attributes.
 - **NFR-3 — Rust 2024/2027 Compliance**: Generated structures eliminate
-  `static mut` usage in favor of type-safe atomic `Atomic*Setting` wrappers and `AtomicPtr`.
+  `static mut` usage in favor of type-safe `TripleBuffer<T>` interior mutability and `AtomicPtr`.
 
 #### 2.3 Constraints
 
@@ -93,7 +107,7 @@ flowchart TD
 
 #### 4.1. `#[ets_suite]` Module Inference and Code Generation
 
-Serves: FR-1, FR-2, FR-4, FR-6, FR-7, NFR-1, NFR-3, C-1, C-2
+Serves: FR-1, FR-2, FR-3, FR-4, FR-6, FR-7, FR-8, FR-9, NFR-1, NFR-3, C-1, C-2
 
 When the compiler encounters `#[ets_suite]` on an inline module, the macro operates on
 an inference contract: the generated suite contains what the user declared
@@ -101,37 +115,65 @@ in the module, with wrapping for ETS runtime registration. Developers do not nee
 to decorate items with specific markers; the macro infers semantics from item types
 and positions:
 
-1. **Test Case Inference**: The macro scans functions within the module. Every function
+1. **Test Case Inference & Profiling Arms**: The macro scans functions within the module. Every function
    without a leading underscore and without parameters is recognized as an executable test case.
-   The macro wraps the function pointer into an `ExecDescriptor`, capturing the function
-   name and doc comments as the test description.
-2. **Ignored Helper Functions**: Functions prefixed with a leading underscore `_` or defining
-   parameters are excluded from test case generation and treated as internal helper routines.
+   The macro inspects the function attributes for `#[ets_profile(...)]`:
+   - `#[ets_profile(unmasked)]`: maps to `::control_rs_ets::Profile::Unmasked`.
+   - `#[ets_profile(off)]`: maps to `::control_rs_ets::Profile::Off`.
+   - Unannotated functions default to `::control_rs_ets::Profile::Full`.
+   - Any other attribute argument emits a spanned `compile_error!`.
+   The macro strips the `#[ets_profile(...)]` helper attribute before emitting the module items and wraps the
+   function pointer, profile arm, function name, and doc comments into an `ExecDescriptor`.
+2. **Compile-Time Constant Inference**: The macro scans `const` items within the module.
+   Constants of supported primitive types (`bool`, `u8`, `u16`, `u32`, `u64`, `i8`, `i32`, `f32`)
+   are mapped into `ConstantDescriptor` entries with their name, doc comments, and compiled
+   `SettingValue` representation.
 3. **Static Parameter Promotion**: The macro scans `static` items in the module
    (for example, `pub static KP: f32 = 1.2;` or `pub static TIMEOUT_MS: u32 = 500;`).
    Statics of supported primitive types (`bool`, `u8`, `u16`, `u32`, `u64`, `i8`, `i32`, `f32`)
-   are rewritten into `::control_rs_ets::settings::Atomic*Setting` statics (`AtomicBoolSetting`,
-   `AtomicU8Setting`, `AtomicU16Setting`, `AtomicU32Setting`, `AtomicU64Setting`,
-   `AtomicI8Setting`, `AtomicI32Setting`, `AtomicF32Setting`) and registered
-   in the suite's `SETTINGS` slice with their initial values and doc comments. `const` items
-   and non-primitive statics pass through unchanged.
-4. **Registry Pointer Emission**: The macro emits a static `SuiteDescriptor` that
-   aggregates the inferred `ExecDescriptor`s and `Setting` references, placing a
-   `&'static SuiteDescriptor` in the `.ets_test_suites` linker section (or `__DATA,__ets_suites` on Apple targets):
+   are rewritten into `::control_rs_ets::settings::TripleBuffer<T>` statics (`TripleBuffer::new(init)`)
+   and registered in the suite's `settings` slice via `::control_rs_ets::settings::Setting::new(name, description, &NAME)`.
+   Non-primitive statics pass through unchanged.
+4. **Ignored Helper Functions**: Functions prefixed with a leading underscore `_` or defining
+   parameters are excluded from test case generation and treated as internal helper routines.
+5. **Registry Pointer Emission**: The macro emits static arrays for `CASES: [ExecDescriptor; N]`,
+   `CONSTANTS: [ConstantDescriptor; M]`, and `SETTINGS: [Setting; K]`, constructs a static
+   `SuiteDescriptor`, and places a `&'static SuiteDescriptor` in the `.ets_test_suites` linker section
+   (or `__DATA,__ets_suites` on Apple targets):
     ```rust
+    static CASES: [::control_rs_ets::ExecDescriptor; N] = [ ... ];
+    static CONSTANTS: [::control_rs_ets::ConstantDescriptor; M] = [ ... ];
+    static SETTINGS: [::control_rs_ets::Setting; K] = [ ... ];
+
+    static SUITE: ::control_rs_ets::SuiteDescriptor = ::control_rs_ets::SuiteDescriptor {
+        constants: &CONSTANTS,
+        description: #suite_doc,
+        executables: &CASES,
+        name: #suite_name,
+        settings: &SETTINGS,
+    };
+
     #[cfg_attr(not(target_vendor = "apple"), unsafe(link_section = ".ets_test_suites"))]
     #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__ets_suites"))]
     #[used]
-    pub static SUITE_DESCRIPTOR_PTR: &::control_rs_ets::SuiteDescriptor = &SUITE_DESCRIPTOR;
+    pub static SUITE_DESCRIPTOR_PTR: &::control_rs_ets::SuiteDescriptor = &SUITE;
     ```
+6. **Direct-Item Inference & Collision Safety**: The macro inspects only
+   top-level items declared directly within the annotated module body
+   (`item_mod.content`). `Item::Use` imports, items within nested blocks or
+   modules, and enclosing scope items are ignored (`FR-9`). Emitted static
+   items (`CASES`, `CONSTANTS`, `SETTINGS`, `SUITE`, `SUITE_DESCRIPTOR_PTR`)
+   remain module-scoped, allowing separate `#[ets_suite]` modules with identical
+   constant identifiers to expand and compile cleanly without symbol collision
+   (`FR-8`).
 
 #### 4.2. Conformance to the Suites Section ABI
 
 Serves: FR-1, NFR-2
 
 The expansion of `#[ets_suite]` is equivalent to the hand-written suite form of
-`test-suite-design.md` §4.6. The section name, element type, linker fragment and
-retention strategy are owned by `test-suite-design.md` §4.1 and §4.2; the macro
+`test-suite-design.md` §4.5. The section name, element type, linker fragment and
+retention strategy are owned by `test-suite-design.md` §4.3 and §4.4; the macro
 emits only the `#[used]` pointer static with `#[unsafe(link_section)]`. The
 attribute is unsafe because it "allows users to place data and code into
 sections of memory not expecting them" [3], which is why the macro never
@@ -172,15 +214,19 @@ To eliminate target startup and trap boilerplate on bare-metal builds (`#[cfg(ta
 | Condition | Requirement | Method    | Target                                                                                                                | Criterion                                                                                                         |
 |:----------|:------------|:----------|:----------------------------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------|
 | VC-1.1    | FR-1        | `libtest` | `control_rs_macros::tests::generate_suite_descriptors_emits_four_items`, `control_rs_macros::tests::ets_suite_impl_expands_inline_module_and_rejects_external` | `#[ets_suite]` generates valid `SuiteDescriptor` and places pointer in `.ets_test_suites` section                  |
-| VC-2.1    | FR-2        | `libtest` | `control_rs_macros::tests::process_test_fn_skips_helpers_and_keeps_docs`, `control_rs_macros::tests::extract_doc_string_strips_and_truncates` | Zero-argument functions in the module are identified as test cases and populate `ExecDescriptor` fields with doc comments |
-| VC-4.1    | FR-4        | `libtest` | `control_rs_macros::tests::process_static_setting_rewrites_supported_types`                                           | Module `static` items of supported primitive types are rewritten into `Atomic*Setting` wrappers and registered in the suite's settings slice |
-| VC-4.2    | FR-4        | `libtest` | `control_rs_macros::tests::qualified_self_types_are_not_settings`, `control_rs_macros::tests::atomic_wrapper_names_cover_supported_types` | `const` items and non-setting types pass through unchanged without false setting registration |
+| VC-2.1    | FR-2        | `libtest` | `control_rs_macros::tests::process_test_fn_skips_helpers_and_keeps_docs`, `control_rs_macros::tests::extract_doc_string_strips_and_truncates` | Zero-argument functions in the module are identified as test cases and populate `ExecDescriptor` fields with doc comments and default `Profile::Full` |
+| VC-2.2    | FR-2        | `libtest` | `control_rs_macros::tests::process_test_fn_profile_attributes`                                                         | `#[ets_profile(unmasked)]` and `#[ets_profile(off)]` map to expected `Profile` variants, and helper attributes are stripped from emitted functions |
+| VC-3.1    | FR-3        | `libtest` | `control_rs_macros::tests::process_const_descriptor_matches_supported_types`                                          | Module `const` items of supported primitive types are converted to `ConstantDescriptor` entries in the constants slice |
+| VC-4.1    | FR-4        | `libtest` | `control_rs_macros::tests::process_static_setting_rewrites_supported_types`                                           | Module `static` items of supported primitive types are rewritten into `TripleBuffer` statics and registered as `Setting` entries |
+| VC-4.2    | FR-4        | `libtest` | `control_rs_macros::tests::qualified_self_types_are_not_settings`, `control_rs_macros::tests::atomic_wrapper_names_cover_supported_types` | Non-setting types pass through unchanged without false setting registration |
 | VC-5.1    | FR-5        | `libtest` | `control_rs_macros::tests::ets_setup_and_helper_macros_expand`, `control_rs_macros::tests::extract_context_generics_parses_context_path` | `#[ets_setup]`, `ets_entrypoint!`, `ets_panic!`, and `ets_exception!` extract `Context<C, P>` generics and emit bare-metal entrypoint, panic, and exception handlers |
 | VC-6.1    | FR-6        | `libtest` | `control_rs_macros::tests::process_test_fn_skips_parameterized_helpers`                                                | Functions prefixed with an underscore or taking parameters are excluded from test case registration                |
-| VC-7.1    | FR-7        | `libtest` | `control_rs_macros::tests::ets_suite_impl_expands_inline_module_and_rejects_external`, `control_rs_macros::tests::ets_setup_and_helper_macros_expand` | Invalid syntax, non-inline module declarations, and invalid `#[ets_setup]` signatures produce `compile_error!` tokens pointing to the offending code |
+| VC-7.1    | FR-7        | `libtest` | `control_rs_macros::tests::ets_suite_impl_expands_inline_module_and_rejects_external`, `control_rs_macros::tests::ets_setup_and_helper_macros_expand` | Invalid syntax, non-inline module declarations, invalid `#[ets_setup]` signatures, and unrecognized `#[ets_profile]` arguments produce `compile_error!` tokens pointing to the offending code |
+| VC-8.1    | FR-8        | `libtest` | `control_rs_macros::tests::duplicate_const_names_in_separate_suites_compile`                                         | Separate `#[ets_suite]` modules with identical constant identifiers compile with distinct descriptors and no symbol collision |
+| VC-8.2    | FR-9        | `libtest` | `control_rs_macros::tests::suite_inference_ignores_outer_scope_items`                                                  | Generated descriptors contain only supported items declared directly within the annotated module             |
 | VC-9.1    | NFR-1       | `libtest` | `control_rs_macros::tests::test_zero_static_ram_descriptors`                                                           | Generated descriptors reside entirely in read-only Flash, consuming zero bytes of static RAM at idle             |
 | VC-10.1   | NFR-2       | `gate`    | `build`                                                                                                               | Emitted descriptors survive `--gc-sections` under release profile linking                                         |
-| VC-11.1   | NFR-3       | `gate`    | `clippy`                                                                                                              | Generated macro code eliminates `static mut` usage across all emitted structures                                  |
+| VC-11.1   | NFR-3       | `gate`    | `clippy`                                                                                                              | Generated macro code eliminates `static mut` usage across all emitted structures in favor of `TripleBuffer<T>` and `AtomicPtr` |
 | VC-12.1   | C-1         | `gate`    | `clippy`                                                                                                              | Generated code compiles cleanly in `#![no_std]` bare-metal targets without heap allocation                        |
 | VC-13.1   | C-2         | `gate`    | `build`                                                                                                               | Generated code compiles across all supported target architectures                                                 |
 
@@ -192,6 +238,8 @@ To eliminate target startup and trap boilerplate on bare-metal builds (`#[cfg(ta
 | Retention under GC | Same ELF linked with `--gc-sections` | Descriptors present | Unchanged from the non-GC link |
 | Diagnostic quality | Invalid macro inputs in unit tests | Emitted `compile_error!` token stream | Contains descriptive message, spans the offending token, no panic text |
 | Allocation freedom | Disassembly of a target build | Allocator symbols reachable from generated code | 0 |
+| Cross-suite collision safety | Distinct `#[ets_suite]` modules declaring identical constants | Build and symbol emission | Compiles cleanly with independent descriptors, zero collision |
+| Direct-item inference scope | Module containing `use` imports and nested items | Inferred descriptors in `SuiteDescriptor` | Only direct module items are present in descriptor slices |
 
 #### 6.3 Limits
 
@@ -223,9 +271,9 @@ To eliminate target startup and trap boilerplate on bare-metal builds (`#[cfg(ta
 | Phase | Delivers | Requirements | Effort | Status |
 |:---|:---|:---|:---|:---|
 | 1. Parser Core | `syn` parser implementation for `#[ets_suite]` | FR-1 | 2 days | Shipped |
-| 2. Code Generation | AST templates for `SuiteDescriptor`, `ExecDescriptor`, and atomic wrappers | FR-1, FR-2, FR-6, NFR-1, NFR-3, C-1 | 2 days | Shipped |
+| 2. Code Generation | AST templates for `SuiteDescriptor`, `ExecDescriptor`, `ConstantDescriptor`, and `TripleBuffer` settings | FR-1, FR-2, FR-3, FR-6, FR-8, FR-9, NFR-1, NFR-3, C-1 | 2 days | Shipped |
 | 3. Section Emission | `#[used]` pointer static conforming to the suites section ABI | FR-1, NFR-2, C-2 | 1 day | Shipped |
-| 4. Static Settings, Entrypoint Macros & Diagnostics | Static parameter promotion, `#[ets_setup]`/`ets_entrypoint!`/`ets_panic!`/`ets_exception!`, and spanned diagnostics | FR-4, FR-5, FR-7 | 2 days | Shipped |
+| 4. Static Settings, Entrypoint Macros & Diagnostics | Static parameter promotion via `TripleBuffer<T>`, `#[ets_setup]`/`ets_entrypoint!`/`ets_panic!`/`ets_exception!`, and spanned diagnostics | FR-4, FR-5, FR-7 | 2 days | Shipped |
 
 ---
 
@@ -235,6 +283,7 @@ To eliminate target startup and trap boilerplate on bare-metal builds (`#[cfg(ta
 |:---------|:-------------------|:----------------|:-----------------------------------------------------------------------------------------|
 | 1.0      | August 29, 2026    | @MitchellDScott | Test registration and discovery macros; linker-section codegen and span diagnostics.     |
 | 2.0 | November 8, 2026 | @MitchellDScott, Claude Opus 5.5, Antigravity | Requirement traceability matrix, #[ets_suite] static setting promotion, ExecDescriptor codegen, #[ets_setup]/ets_entrypoint!/ets_panic!/ets_exception! target macros, and spanned diagnostics. Affects C-2, FR-2, FR-3, FR-4, FR-5, FR-7, FR-8. |
+| 3.0 | November 17, 2026 | Antigravity | Add ets_profile attribute parsing and Profile arm emission to ets_suite macro. Affects FR-3, FR-7, FR-8, FR-9, NFR-1. |
 
 ---
 

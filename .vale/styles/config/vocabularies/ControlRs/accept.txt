@@ -480,8 +480,10 @@ ptr
 px
 rdesarz
 reachability
+readback
 reconnections
 recurse
+recurses
 reentrancy
 reflashing
 reimplement

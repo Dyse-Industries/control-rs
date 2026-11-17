@@ -2,7 +2,7 @@
 
 ![Date Badge](https://img.shields.io/badge/Date-August_29,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
-![Design Status Badge](https://img.shields.io/badge/Design%20Status-Ready-brightgreen)
+![Design Status Badge](https://img.shields.io/badge/Design%20Status-Draft-orange)
 
 ### 1. Introduction
 
@@ -30,21 +30,23 @@ run, measured and reported is specified in the lead ETS design
 #### 2.1 Functional Requirements
 
 - **FR-1 — Self-describing suite grouping**: Related test cases, fixed
-  parameters, and adjustable parameters must be grouped under a named,
+  parameters and adjustable parameters must be grouped under a named,
   documented unit that can be inspected at runtime. Without suite-level
   grouping and metadata, an external runner cannot discover which tests and
   parameters belong together or what the suite verifies without parsing source
   files or debug symbols.
 - **FR-2 — Individually addressable test cases**: Each test or benchmark case
-  must expose its name, documentation, and callable entry point for on-demand
-  execution. Without per-case metadata paired with an entry point, a runner
-  cannot list available tests, report their purpose, or invoke a single case in
-  isolation.
+  must expose its name, documentation, callable entry point, and execution
+  profiling
+  policy (`Profile::Full`, `Profile::Unmasked`, `Profile::Off`) for on-demand
+  execution. Without per-case metadata paired with an entry point and profiling
+  arm,
+  a runner cannot discover, invoke, or measure a single case in isolation.
 - **FR-3 — Inspectable compile-time constants**: Fixed suite parameters must
-  expose their name, documentation, type, and value for runtime inspection
+  expose their name, documentation, type and value for runtime inspection
   while remaining ordinary compile-time constants in Rust code. Requiring a
   runtime wrapper around constants would prevent their use in `const` contexts,
-  array bounds, and compile-time evaluation.
+  array bounds and compile-time evaluation.
 - **FR-4 — Runtime-tunable parameters**: Adjustable suite parameters must be
   readable by executing test code as their native static type and updatable at
   runtime only with values of the matching type. Parameter updates must not
@@ -56,11 +58,18 @@ run, measured and reported is specified in the lead ETS design
   central table couples the application entry point to every test module and
   risks omitting suites enabled through conditional compilation or Cargo
   features.
+- **FR-6 — Suite-scoped constant naming**: Distinct suites may expose constants
+  with identical names. Each constant must resolve independently by suite
+  identity and constant name without collision.
+- **FR-7 — Explicit suite membership**: A suite descriptor must include only
+  constants and settings declared directly within that suite. Test cases may
+  use imported or crate-global state, but such state must not be discovered or
+  reported as suite-owned metadata.
 
 #### 2.2 Non-Functional Requirements
 
 - **NFR-1 — Zero static RAM for immutable metadata**: Suite metadata, test case
-  metadata, and compile-time constant metadata must consume zero bytes of static
+  metadata and compile-time constant metadata must consume zero bytes of static
   RAM, residing entirely in read-only non-volatile memory. Allocating static RAM
   for test descriptions and constant manifests would exhaust bare-metal memory
   budgets as the suite library grows.
@@ -90,7 +99,7 @@ run, measured and reported is specified in the lead ETS design
 flowchart TD
     SEC[".ets_test_suites (Flash)<br/>&'static SuiteDescriptor ..."]
     SD["SuiteDescriptor (Flash)"]
-    EX["ExecDescriptor[] (Flash)<br/>name, description, fn()"]
+    EX["ExecDescriptor[] (Flash)<br/>name, description, fn(), profile"]
     CD["ConstantDescriptor[] (Flash)<br/>name, description, SettingValue"]
     SS["Setting[] (Flash)<br/>name, description, get/set fn"]
     TB[("TripleBuffer&lt;T&gt; (RAM)<br/>lock-free parameter")]
@@ -109,7 +118,7 @@ flowchart TD
 
 `ConstantDescriptor`)
 
-Serves: FR-1, FR-2, FR-3, NFR-1, C-1
+Serves: FR-1, FR-2, FR-3, FR-6, FR-7, NFR-1, C-1
 
 - Module: `control_rs_ets` (`ConstantDescriptor`, `ExecDescriptor`,
   `SuiteDescriptor`, `SettingsSlice`).
@@ -120,13 +129,38 @@ Serves: FR-1, FR-2, FR-3, NFR-1, C-1
   compiled `SettingValue` in Flash without wrapping the source `const` item.
 - `SuiteDescriptor` holds separate static slices for `executables`, `constants`,
   and concrete `settings` without `dyn` trait objects or vtables.
+- Each `SuiteDescriptor` defines an independent namespace for its `constants`
+  and `settings`; identical constant names in distinct suites resolve
+  independently by `(suite_name, const_name)` without collision (`FR-6`). Test
+  cases may reference external global or imported state, but only items
+  declared directly within the suite and placed in its descriptor slices are
+  exposed as suite metadata (`FR-7`).
 
 ```rust
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize
+)]
+#[repr(u8)]
+pub enum Profile {
+    #[default]
+    Full = 0,
+    Unmasked = 1,
+    Off = 2,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub struct ExecDescriptor {
     pub description: &'static str,
     pub name: &'static str,
     pub test_fn: fn(),
+    pub profile: Profile,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -168,7 +202,7 @@ Serves: FR-4, C-1, C-2, C-3
       directly without `SettingValue` matching.
     - Host updates call `Setting::set(&self, value: SettingValue) -> SetResult`,
       which converts `SettingValue` via `TryFrom<SettingValue>` (returning `Err`
-      on variant mismatch), writes the incoming value into the write slot, and
+      on variant mismatch), writes the incoming value into the write slot and
       atomically swaps the write and back slot indices in `state`.
 
 ```rust
@@ -318,6 +352,7 @@ static CASES: [ExecDescriptor; 1] = [ExecDescriptor {
     description: "Checks that the plant model integrates.",
     name: "integrates",
     test_fn: test_system_integrates,
+    profile: Profile::Full,
 }];
 
 static CONSTANTS: [ConstantDescriptor; 1] = [ConstantDescriptor {
@@ -368,7 +403,6 @@ static SUITE_PTR: &SuiteDescriptor = &SUITE;
   work.
 * **`static mut` for state tracking**: Rejected. Violates Rust's strict aliasing
   rules, introduces data race risks and is deprecated in current Rust editions.
-  Interior mutability is achieved via atomic `Atomic*Setting` wrappers.
 
 ---
 
@@ -376,19 +410,21 @@ static SUITE_PTR: &SuiteDescriptor = &SUITE;
 
 #### 6.1 Verification
 
-| Condition | Requirement | Method    | Target                                                                 | Criterion                                                                                                                     |
-|:----------|:------------|:----------|:-----------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------|
-| VC-1.1    | FR-5        | `libtest` | `control_rs_ets::util::tests::test_get_suites_fn`                      | Descriptors in `.ets_test_suites` match the set of declared suites across modules and crates                                  |
-| VC-2.1    | FR-2        | `libtest` | `control_rs_ets::tests::test_exec_descriptor_metadata`                 | `ExecDescriptor` metadata (name, description, function pointer) reflects source declarations                                  |
-| VC-5.1    | FR-4        | `libtest` | `control_rs_ets::server::tests::test_server_set_setting`               | `Setting` safely gets and sets typed parameter values by suite and setting name                                               |
-| VC-5.2    | FR-4        | `libtest` | `control_rs_ets::server::tests::test_server_set_setting_type_mismatch` | `Setting::set` rejects mismatched `SettingValue` variants and unknown suite or setting names, leaving stored values unchanged |
-| VC-5.3    | FR-4        | `libtest` | `control_rs_ets::server::tests::test_setting_value_partial_eq`         | Setting value equality comparison differentiates distinct types and magnitudes without type confusion                         |
-| VC-9.1    | NFR-1       | `gate`    | `clippy`                                                               | Clippy verification passes without dynamic heap allocation (`alloc`) on target paths                                          |
-| VC-9.2    | NFR-1       | `libtest` | `control_rs_ets::tests::test_flash_descriptor_sizes`                   | Descriptors and static metadata reside entirely in Flash (ROM), consuming zero static RAM at idle                             |
-| VC-10.1   | NFR-2       | `gate`    | `build`                                                                | Target firmware builds cleanly with `--gc-sections`, retaining `.ets_test_suites` via `KEEP` directives                       |
-| VC-11.1   | C-1         | `gate`    | `clippy`                                                               | The `clippy` quality gate passes, enforcing `#![no_std]` and zero dynamic heap allocation                                     |
-| VC-12.1   | C-2         | `gate`    | `clippy`                                                               | The codebase contains zero occurrences of `static mut`                                                                        |
-| VC-13.1   | C-3         | `gate`    | `build`                                                                | The test suite framework compiles across Cortex-M (v6-M, v7-M, v8-M) and RISC-V targets                                       |
+| Condition | Requirement | Method    | Target                                                                    | Criterion                                                                                                                          |
+|:----------|:------------|:----------|:--------------------------------------------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------|
+| VC-1.1    | FR-5        | `libtest` | `control_rs_ets::util::tests::test_get_suites_fn`                         | Descriptors in `.ets_test_suites` match the set of declared suites across modules and crates                                       |
+| VC-2.1    | FR-2        | `libtest` | `control_rs_ets::tests::test_exec_descriptor_metadata`                    | `ExecDescriptor` metadata (name, description, function pointer, profile arm) reflects source declarations                          |
+| VC-5.1    | FR-4        | `libtest` | `control_rs_ets::server::tests::test_server_set_setting`                  | `Setting` safely gets and sets typed parameter values by suite and setting name                                                    |
+| VC-5.2    | FR-4        | `libtest` | `control_rs_ets::server::tests::test_server_set_setting_type_mismatch`    | `Setting::set` rejects mismatched `SettingValue` variants and unknown suite or setting names, leaving stored values unchanged      |
+| VC-5.3    | FR-4        | `libtest` | `control_rs_ets::server::tests::test_setting_value_partial_eq`            | Setting value equality comparison differentiates distinct types and magnitudes without type confusion                              |
+| VC-6.1    | FR-6        | `libtest` | `control_rs_ets::tests::test_duplicate_constant_names_in_distinct_suites` | Two suites declaring constants with identical names resolve distinct values by suite identity and constant name.                   |
+| VC-7.1    | FR-7        | `libtest` | `control_rs_ets::tests::test_external_globals_are_not_suite_metadata`     | A test may reference external global state while discovery reports only constants and settings declared directly within its suite. |
+| VC-9.1    | NFR-1       | `gate`    | `clippy`                                                                  | Clippy verification passes without dynamic heap allocation (`alloc`) on target paths                                               |
+| VC-9.2    | NFR-1       | `libtest` | `control_rs_ets::tests::test_flash_descriptor_sizes`                      | Descriptors and static metadata reside entirely in Flash (ROM), consuming zero static RAM at idle                                  |
+| VC-10.1   | NFR-2       | `gate`    | `build`                                                                   | Target firmware builds cleanly with `--gc-sections`, retaining `.ets_test_suites` via `KEEP` directives                            |
+| VC-11.1   | C-1         | `gate`    | `clippy`                                                                  | The `clippy` quality gate passes, enforcing `#![no_std]` and zero dynamic heap allocation                                          |
+| VC-12.1   | C-2         | `gate`    | `clippy`                                                                  | The codebase contains zero occurrences of `static mut`                                                                             |
+| VC-13.1   | C-3         | `gate`    | `build`                                                                   | The test suite framework compiles across Cortex-M (v6-M, v7-M, v8-M) and RISC-V targets                                            |
 
 #### 6.2 Acceptance
 
@@ -400,6 +436,8 @@ static SUITE_PTR: &SuiteDescriptor = &SUITE;
 | Retention under GC            | The same ELF linked with `--gc-sections`           | Descriptors present                                     | Unchanged                                      |
 | Type safety                   | A descriptor of the wrong type                     | Build outcome                                           | Compile error, not a runtime mismatch          |
 | Allocation freedom            | Disassembly of a target build                      | Allocator symbols on the registration or discovery path | 0                                              |
+| Constant resolution           | Two suites declaring identical constant names      | Discovery and retrieval by `(suite, name)`              | Distinct values resolved without collision     |
+| Metadata boundary             | A test case accessing external global state        | Descriptors reported for that suite                     | External state absent from constants/settings  |
 
 #### 6.3 Limits
 
@@ -439,7 +477,7 @@ static SUITE_PTR: &SuiteDescriptor = &SUITE;
 | Phase                            | Delivers                                                             | Requirements                             | Effort | Status  |
 |:---------------------------------|:---------------------------------------------------------------------|:-----------------------------------------|:-------|:--------|
 | 1. Core Suite & Case Descriptors | `SuiteDescriptor`, `ExecDescriptor`, and distributed slice discovery | FR-1, FR-2, FR-5, NFR-1, NFR-2, C-1, C-3 | 3 days | Shipped |
-| 2. Read-Only Constant Manifest   | Read-only constant descriptors in Flash                              | FR-3, NFR-1                              | 2 days | Planned |
+| 2. Read-Only Constant Manifest   | Read-only constant descriptors in Flash                              | FR-3, FR-6, FR-7, NFR-1                  | 2 days | Planned |
 | 3. Triple-Buffer Setting Wrapper | Triple-buffered dynamic settings                                     | FR-4, C-2                                | 2 days | Planned |
 
 ---
@@ -450,7 +488,8 @@ static SUITE_PTR: &SuiteDescriptor = &SUITE;
 |:---------|:------------------|:----------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | 1.0      | August 29, 2026   | @MitchellDScott                               | Initial exportable test suite design with linker-section discovery.                                                                                                                                                                 |
 | 2.0      | November 14, 2026 | @MitchellDScott, Antigravity, Claude Opus 5.5 | Replace suite and setting requirements with suite descriptors, read-only constants, triple-buffer dynamic settings, and distributed discovery. Affects C-1, C-2, C-3, FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, NFR-1, NFR-2. |
-| 3.0 | November 14, 2026 | @MitchellDScott, Antigravity | State suite, case, constant, setting, and discovery requirements as testable needs rather than architectural features. Affects C-1, C-2, C-3, FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, NFR-1, NFR-2. |
+| 3.0      | November 14, 2026 | @MitchellDScott, Antigravity                  | State suite, case, constant, setting, and discovery requirements as testable needs rather than architectural features. Affects C-1, C-2, C-3, FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, NFR-1, NFR-2.                               |
+| 3.1      | November 17, 2026 | Antigravity                                   | Add Profile arm to ExecDescriptor and test suite requirements. Affects FR-6, FR-7.                                                                                                                                                  |
 
 ---
 
