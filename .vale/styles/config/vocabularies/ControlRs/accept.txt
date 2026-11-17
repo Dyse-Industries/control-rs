@@ -11,6 +11,7 @@ Bai
 Batselier
 Bayraktar
 Bellotto
+Benchtop
 Bengolea
 Benner
 Bischof
@@ -114,6 +115,7 @@ IDEs
 IRQ
 ISR
 Igual
+Inspectable
 Ioannidis
 Isaev
 JUnit
@@ -233,6 +235,7 @@ Uncontended
 Unmqr
 Unnormalized
 Uno
+Unrequested
 Upscaling
 Vandebril
 Vandermonde
@@ -278,6 +281,7 @@ az
 backend's
 backpropagation
 backtraces
+benchtop
 bijective
 biproper
 biquad
@@ -333,6 +337,7 @@ discretization
 discretizations
 discretize
 discretized
+docstrings
 doctest
 doctests
 doi
@@ -478,6 +483,7 @@ reachability
 reconnections
 recurse
 reentrancy
+reflashing
 reimplement
 reimplementing
 representability
@@ -548,7 +554,9 @@ underflows
 unevaluable
 unexecuted
 unfused
+uninstrumented
 unquantized
+unreferenced
 unresearched
 unstabilized
 unstored
@@ -556,6 +564,7 @@ unsynchronized
 untraited
 untyped
 uom
+updatable
 uplink
 uplo
 usize
@@ -571,6 +580,7 @@ virtualenv
 virtualized
 vpetrigo
 vtable
+vtables
 wgpu
 workspace's
 xorshift

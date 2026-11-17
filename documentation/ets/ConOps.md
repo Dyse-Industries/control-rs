@@ -1,5 +1,4 @@
 # Concept of Operations (ConOps): Embedded Test Server (ETS)
-
 ---
 
 ## 1. System Topology
@@ -7,8 +6,8 @@
 ```mermaid
 flowchart LR
     subgraph HOST ["Host Environment (Workstation or CI Runner)"]
-        CONSOLE["Interactive Terminal (control-rs-tui)"]
-        RUNNER["Headless Runner (control-rs-ci)"]
+        CONSOLE["Interactive Terminal"]
+        RUNNER["Headless Runner"]
     end
 
     subgraph TARGET ["Target System (Silicon or QEMU)"]
@@ -31,43 +30,24 @@ flowchart LR
 
 ---
 
-## 2. Interface Allocations
-
-```mermaid
-flowchart TD
-    subgraph CLIENTS ["Operational Interfaces"]
-        TUI_BOX["Interactive Dashboard (control-rs-tui)"]
-        CI_BOX["Headless Automation (control-rs-ci)"]
-    end
-
-    subgraph SYSTEM_LAYERS ["Target Verification Scope"]
-        MATH_LAYER["Layer 1: Numerics & Math Core<br/>(Fixed-Point, Complex, Realization)"]
-        CONTROL_LAYER["Layer 2: Discrete Control<br/>(PID, State-Space Estimators)"]
-        RT_LAYER["Layer 3: Real-Time Execution<br/>(Periodic Tasks, Parameter Groups)"]
-        HW_LAYER["Layer 4: Target Architecture<br/>(Interrupts, Cycle Counters, Stack RAM)"]
-    end
-
-    TUI_BOX -->|" Live Tuning & Telemetry "| CONTROL_LAYER
-    TUI_BOX -->|" Step Profiling "| RT_LAYER
-    TUI_BOX -->|" Stack & Clock Inspection "| HW_LAYER
-    CI_BOX -->|" Deterministic Assertions "| MATH_LAYER
-    CI_BOX -->|" Boundary & Execution Gates "| CONTROL_LAYER
-```
+## 2. Stakeholders
 
 ---
 
 ## 3. Operational Scenarios
 
-| #     | Scenario                 | Configuration                                        | Interface Boundary                                      | Operational Objective                            |
-|:------|:-------------------------|:-----------------------------------------------------|:--------------------------------------------------------|:-------------------------------------------------|
-| **1** | **Unit Test**            | Host Native                                          | Test selection → Pass/fail verdict                      | Verify mathematical algorithms and realization   |
-| **2** | **Emulator**             | Host + QEMU                                          | Semihosting link commands → Summary telemetry           | Pre-silicon execution on target ISA targets      |
-| **3** | **Device Under Test**    | Physical Silicon (USB CDC / UART)                    | Benchmark command → Cycle count, duration, stack peak   | Verify execution bounds on target hardware       |
-| **4** | **Hardware in the Loop** | Modified DUT (Plant Sim) or Unmodified DUT (ETS Rig) | State injection ↔ Actuator commands & step telemetry    | Validate closed-loop timing and safe state fault |
-| **5** | **Data Acquisition**     | Silicon with Plant Peripherals                       | Stimulus pattern → High-rate telemetry stream           | Stream high-rate state for model identification  |
-| **6** | **Live Tuning**          | Interactive Session                                  | Parameter mutation command ↔ Verification telemetry     | Update controller gains during live execution    |
+| #     | Scenario                 | Configuration                                        | Interface Boundary                                    | Operational Objective                            |
+|:------|:-------------------------|:-----------------------------------------------------|:------------------------------------------------------|:-------------------------------------------------|
+| **1** | **Unit Test**            | Host Native                                          | Test selection → Pass/fail verdict                    | Verify mathematical algorithms and realization   |
+| **2** | **Emulator**             | Host + QEMU                                          | Semihosting link commands → Summary telemetry         | Pre-silicon execution on target ISA targets      |
+| **3** | **Device Under Test**    | Physical Silicon (USB CDC / UART)                    | Benchmark command → Cycle count, duration, stack peak | Verify execution bounds on target hardware       |
+| **4** | **Hardware in the Loop** | Modified DUT (Plant Sim) or Unmodified DUT (ETS Rig) | State injection ↔ Actuator commands & step telemetry  | Validate closed-loop timing and safe state fault |
+| **5** | **Data Acquisition**     | Silicon with Plant Peripherals                       | Stimulus pattern → High-rate telemetry stream         | Stream high-rate state for model identification  |
+| **6** | **Live Tuning**          | Interactive Session                                  | Parameter mutation command ↔ Verification telemetry   | Update controller gains during live execution    |
 
 ### 3.1 Algorithm & Unit Test Execution
+
+Serves the initial Model-in-the-Loop (MIL) and algorithm prototyping stage of autonomy development. Conducted on developer workstations and continuous integration (CI) runners, this mode provides rapid mathematical verification of control laws, state estimators, and kinematic transforms against reference specifications before cross-compilation or physical target deployment.
 
 ```mermaid
 flowchart LR
@@ -83,12 +63,16 @@ flowchart LR
     ETS -->|" 3. Verdict & Failure Record "| HOST
 ```
 
+*Figure 3.1: Algorithm & Unit Test Execution — Host-native algorithmic verification during early stage control design and continuous integration.*
+
 ### 3.2 Target Emulation (QEMU)
+
+Serves pre-silicon verification and cross-architecture target qualification within automated build and CI pipelines. By executing within a virtualized core before physical hardware is available or when bench access is constrained, this mode verifies ISA-specific compilation, numerical consistency, and register-level target behavior across supported processor architectures.
 
 ```mermaid
 flowchart LR
     subgraph SERVER ["Host Execution (CI / Development Container)"]
-        RUNNER["Headless Runner (control-rs-ci)<br/>1. Spawns QEMU · 4. Collects Artifacts"]
+        RUNNER["Headless Runner<br/>1. Spawns QEMU · 4. Collects Artifacts"]
 
         subgraph SIM ["Virtual Machine"]
             VCHIP[["Firmware Image + ETS<br/>2. Emulates Core & Peripherals<br/>3. Runs Suites & Terminates"]]
@@ -99,7 +83,11 @@ flowchart LR
     end
 ```
 
+*Figure 3.2: Target Emulation (QEMU) — Pre-silicon cross-architecture validation in automated build and regression pipelines.*
+
 ### 3.3 Hardware Benchmarking (Silicon DUT)
+
+Serves board bring-up and real-time resource budgeting milestones on target microcontroller silicon. By profiling bare-metal execution on physical evaluation boards, this mode establishes empirical timing closure—measuring execution overhead, jitter, and peak stack depth to guarantee that periodic autonomy control loops satisfy strict hard real-time deadlines and memory constraints.
 
 ```mermaid
 flowchart LR
@@ -116,65 +104,81 @@ flowchart LR
     S3 -->|" Metrics Telemetry Frame "| HOST
 ```
 
+*Figure 3.3: Hardware Benchmarking — Empirical timing closure and stack budget validation on physical microcontroller silicon.*
+
 ### 3.4 Hardware-in-the-Loop Simulation (Closed-Loop Control)
 
-Closed-loop verification separates into two distinct configurations depending
-on whether the device under test (DUT) integrates ETS or runs unmodified
-production firmware:
+Serves system integration and safety qualification between isolated firmware verification and physical vehicle deployment. By coupling embedded controllers with simulated dynamic environments in real time, this mode validates closed-loop stability, state transitions, and fault-handling fail-safes without risking physical actuators or autonomy platforms.
+
+Closed-loop verification separates into two distinct configurations depending on whether the device under test (DUT) integrates ETS or runs unmodified production firmware:
 
 #### 3.4.1 Modified DUT (Internal Plant Simulation)
+
+Serves rapid benchtop prototyping and iterative desk-side testing. Developers inject simulated plant dynamics directly into firmware test harnesses to verify controller convergence and transient response before external test fixtures are constructed.
 
 ```mermaid
 flowchart LR
     HOST["Host Environment<br/>(Plant Simulation & Step Orchestrator)"]
 
-    subgraph MCU ["Target Microcontroller (Modified DUT)"]
+    subgraph MCU ["Target (Modified DUT)"]
         ETS[["Embedded Test Server (ETS)<br/>State Injection & Telemetry Streaming"]]
         CTRL["Discrete Controller<br/>Step Computation & Timing Guard"]
     end
 
-    HOST -->|" 1. Step Command & Injected Plant State "| ETS
+    HOST -->|" 1. Step Command & Plant State "| ETS
     ETS -->|" 2. State Input "| CTRL
     CTRL -->|" 3. Actuator Output "| ETS
-    ETS -->|" 4. Control Response Telemetry "| HOST
+    ETS -->|" 4. Control Response "| HOST
 ```
 
+*Figure 3.4.1: Modified DUT Simulation — Benchtop closed-loop control and transient verification via target-injected plant dynamics.*
+
 #### 3.4.2 Unmodified DUT (External ETS Rig)
+
+Serves formal qualification and flight-readiness certification. The test rig stimulates physical sensor inputs and captures electrical actuator signals on production-representative avionics, validating unmodified release binaries under strict operational conditions.
 
 ```mermaid
 flowchart LR
     HOST["Host Environment<br/>(Test Orchestration & Telemetry Capture)"]
 
-    subgraph RIG ["Test Rig Microcontroller (ETS Harness)"]
-        ETS[["Embedded Test Server (ETS)<br/>Signal Generation & Sensor Sampling"]]
+    subgraph RIG ["Test Rig (ETS Harness)"]
+        ETS[["Signal Generation & Sensor Sampling Core"]]
     end
 
     subgraph DUT ["Device Under Test (Unmodified Target)"]
         CTRL["Production Firmware<br/>(Closed-Loop Controller Execution)"]
     end
 
-    HOST -->|" 1. Scenario Command (Host Link) "| ETS
-    ETS ==>|" 2. Electrical Stimulus & Sensor Emulation "| CTRL
+    HOST -->|" 1. Command "| RIG
+    ETS ==>|" 2. Stimulus & Sensor Emulation "| CTRL
     CTRL ==>|" 3. Physical Actuation & Control Signals "| ETS
-    ETS -->|" 4. Telemetry Frame Stream (Host Link) "| HOST
+    RIG -->|" 4. Telemetry Frame "| HOST
 ```
 
-### 3.5 High-Rate Telemetry & Data Acquisition
+*Figure 3.4.2: Unmodified DUT Rig — Flight-representative qualification testing of release binaries against electrical interface hardware.*
+
+### 3.5 Telemetry & Data Acquisition
+
+Serves physical plant bring-up, empirical system identification, and model validation when electronics first interface with physical mechanisms. By streaming synchronized, high-rate physical sensor measurements during controlled excitation, this mode provides empirical datasets to estimate plant parameters and refine simulation models against observed dynamics.
 
 ```mermaid
 flowchart LR
     PLANT["Physical Sensors & Plant<br/>Current, Velocity, Position"]
 
-    subgraph MCU ["Target Microcontroller + ETS"]
-        DAQ[["Data Acquisition Runtime<br/>Sample Ingestion & Frame Streaming"]]
+    subgraph MCU ["Target + ETS"]
+        DAQ[["Data Acquisition Runtime"]]
     end
 
-    HOST["Host Session<br/>Dataset Recording & Analysis"]
+    HOST["Dataset Recording & Analysis"]
     PLANT -->|" Sensor Ingestion "| DAQ
-    DAQ -->|" Telemetry Stream "| HOST
+    MCU -->|" Telemetry "| HOST
 ```
 
+*Figure 3.5: Telemetry & Data Acquisition — Real-time sensor stream ingestion for system identification and physical plant characterization.*
+
 ### 3.6 Live Parameter Tuning
+
+Serves the final operational stage of vehicle commissioning, calibration, and test-track validation. Controls and field engineers interactively adjust feedback gains, filter bandwidths, and estimator weights during active operation without recompilation or reflashing, accelerating vehicle stabilization and field adaptation.
 
 ```mermaid
 flowchart LR
@@ -190,4 +194,6 @@ flowchart LR
     HOST -->|" Set Parameter Request "| V
     C -->|" Telemetry Response "| HOST
 ```
+
+*Figure 3.6: Live Parameter Tuning — In-situ controller calibration and gain adjustment during active vehicle field commissioning.*
 
