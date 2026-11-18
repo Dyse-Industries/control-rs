@@ -191,8 +191,7 @@ impl<C: HostComms, P: crate::profiler::CPUProfiler> Context<C, P> {
     {
         let sp = self.cpu_utils.get_sp();
         // SAFETY: The active stack pointer `sp` is retrieved immediately before painting.
-        // The implementation of `paint_stack` handles bounds calculations and enforces a safety
-        // margin to protect active call frames.
+        // `paint_stack` paints from `stack_end` up to `sp` without allocating a frame below `sp`.
         unsafe {
             self.cpu_utils.paint_stack(sp);
         }

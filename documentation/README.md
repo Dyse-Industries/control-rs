@@ -134,12 +134,6 @@ record and its status.
 |:------------------------------------------------|:-------|:-----------------------|
 | [Host ETS Library](ets-host/ets-host-design.md) | Stale  | `control-rs-ets-host/` |
 
-## tui
-
-| Design                                       | Status | Implementation    |
-|:---------------------------------------------|:-------|:------------------|
-| [Terminal User Interface](tui/tui-design.md) | Stale  | `control-rs-tui/` |
-
 ## ci
 
 | Design                                                                  | Status | Implementation                                                   |

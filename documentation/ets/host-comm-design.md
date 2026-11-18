@@ -17,7 +17,7 @@ mechanics (such as UART, USB CDC, TCP or debug probes) from test execution and
 telemetry dispatch.
 Host-side demultiplexing, session management and decoding are owned by
 `control-rs-ets-host::Session` (`ets-host-design.md`), while user presentation
-is handled by `control-rs-tui` (`tui/tui-design.md`).
+is handled by host dashboards or CLI frontends.
 
 ---
 
@@ -100,8 +100,7 @@ execution environment:
    serial terminal interaction.
 4. **Host Counterpart**: The target-side stream is consumed on the PC host by
    `control-rs-ets-host::Session` (`ets-host-design.md`), which
-   feeds decoded events to `control-rs-tui` (`tui/tui-design.md`) or automated
-   CI runners.
+   feeds decoded events to host frontends or automated CI runners.
 
 ```mermaid
 graph TD
@@ -326,7 +325,16 @@ integrity validation:
 * **Postcard Payload**: The serialized data block (limited to a maximum of 512
   bytes).
 * **Integrity Check**: A 2-byte (big-endian) CRC-16 checksum (calculated using
-  `CRC_16_IBM_SDLC`) appended at the end of the frame payload.
+  `CRC_16_IBM_SDLC` [3], [7]) appended at the end of the frame payload, computed
+  strictly over the `postcard` payload slice (`payload[..len]`).
+* **Error Detection Scope & Bounds**: By the burst-detection theorem [6, Theorem 2],
+  CRC-16 detects all burst errors of length $b \le 16\text{ bits}$. For random bit
+  inversions over payloads up to 512 bytes (4,096 bits), the 0x1021 polynomial
+  guarantees a minimum Hamming Distance of 4 ($HD \ge 4$), detecting all 1-, 2-, and
+  3-bit errors [5]. Header errors outside the CRC span are detected and rejected by
+  reader state validation: byte sequence desynchronization in the sync header resets
+  the reader to `WaitStart1`, and corrupted length prefixes that exceed the buffer
+  ceiling ($> 512\text{ B}$) immediately abort the frame.
 * **Single-Pass Decoding**: The host `FrameReader` processes incoming streams
   statefully byte-by-byte, checking for the sync header, validating lengths and
   confirming the CRC-16 checksum before deserializing. Stream bytes received
@@ -454,10 +462,12 @@ Target: 90% line coverage of the `comms` module, measured with
   combination
   of sync headers and CRC-16 ensures corrupted packets are dropped rather than
   executed.
-* **False Frame from Log Text**: Firmware log text that happens to contain the
-  two-byte sequence `0xAA 0x55` starts a false frame. The CRC-16 check rejects
-  it, but the reader swallows the bytes it read as that frame's length and
-  payload.
+* **Interleaved Log Stream Separation**: A `HostComms` implementation may carry
+  firmware log text and telemetry packets across a single shared stream. If raw
+  log text contains the two-byte sequence `0xAA 0x55`, CRC-16 verification
+  rejects the false frame start and the reader resynchronizes cleanly, ensuring
+  an interleaved byte stream emerges as exactly the original log text and exactly
+  the valid telemetry frames.
 
 ---
 
@@ -476,7 +486,7 @@ Target: 90% line coverage of the `comms` module, measured with
 |:---------|:------------------|:----------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | 1.0      | August 29, 2026   | @MitchellDScott | `HostComms` transport trait, telemetry framing and the `serial2` host transport.                                                                                   |
 | 2.0      | November 8, 2026  | @MitchellDScott | Requirement traceability matrix, PROTOCOL_VERSION and TargetInfo wire contract, and golden wire vectors. Affects C-2, FR-2, FR-3, FR-6, FR-9, NFR-1, NFR-2, NFR-3. |
-| 3.0      | November 17, 2026 | Antigravity     | Add Profile arm to TestInfo schema and bump PROTOCOL_VERSION to 2. Affects FR-7.                                                                                   |
+| 3.0 | November 18, 2026 | Antigravity | Clarify CRC-16 payload coverage, burst error and Hamming distance detection bounds. Affects FR-7. |
 
 ---
 
@@ -496,3 +506,14 @@ Sep. 9, 2026.
 [4] L. L. Peterson and B. S. Davie, *Computer Networks: A Systems Approach*, 6th
 ed., 2024. [Online].
 Available: https://book.systemsapproach.org/. Accessed: Jun. 27, 2026.
+
+[5] P. Koopman, "CRC Polynomial Zoo: 16-bit CRCs," Carnegie Mellon University, 2026.
+[Online]. Available: https://users.ece.cmu.edu/~koopman/crc/crc16.html. Accessed:
+Nov. 18, 2026.
+
+[6] W. W. Peterson and D. T. Brown, "Cyclic codes for error detection," *Proc. IRE*,
+vol. 49, no. 1, pp. 228-235, Jan. 1961, doi: 10.1109/JRPROC.1961.287814.
+
+[7] G. Cook, "Catalogue of parametrised CRC algorithms: Legend," SourceForge, 2026.
+[Online]. Available: https://reveng.sourceforge.io/crc-catalogue/legend.htm.
+Accessed: Nov. 18, 2026.

@@ -11,7 +11,7 @@ work follows both tracks.
 
 - [x] **PR1**: Workspace Foundations & Strict Lint Baseline
 - [x] **PR2**: ETS Host Extraction & Terminal Dashboard
-  ([#55](https://github.com/Dyse-Industries/control-rs/pull/55); [ets-host](ets/ets-host-design.md), [tui](tui/tui-design.md))
+  ([#55](https://github.com/Dyse-Industries/control-rs/pull/55); [ets-host](ets/ets-host-design.md))
 - [x] **PR3**: CI Quality Gate Infrastructure (`control-rs-ci`)
   ([#58](https://github.com/Dyse-Industries/control-rs/pull/58); [ci](ci/ci-design.md))
     - [x] **PR3-1**: Multi-Oracle Differential Test Harness
@@ -129,10 +129,10 @@ The authoritative lead design document for the target-side runtime is
     - Scope: Suites, macros, profiler backends (Cortex-M and RISC-V), ETS executive
       context/dispatch, `HostComms` wire framing, and isolated component examples
 - [ ] **ETS-2**: Target Executive, Host Session & Frontends (`control-rs-ets`,
-  `control-rs-ets-host`, `control-rs-ci`, `control-rs-tui`)
+  `control-rs-ets-host`, `control-rs-ci`)
     - Branch: `mdsdev/ets-3-target-server` (combining ETS-3, ETS-4, and ETS-5; base: `main` after ETS-1)
     - Design: `adr/0002-single-job-executive-for-ets-and-hil.md`,
-      `ets/ets-executive-design.md`, `ets/ets-host-design.md`, `tui/tui-design.md`
+      `ets/ets-executive-design.md`, `ets/ets-host-design.md`
     - Scope: Single-job target executive, simplified host `Session<L>` with hardcoded
       transport choices, headless runner, and terminal dashboard directly driving `Session`;
       integration examples covering ConOps scenarios in QEMU and mock targets

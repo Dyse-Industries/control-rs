@@ -146,13 +146,31 @@ pub trait CPUProfiler {
     /// * `usize` - The memory address representing the bottom of the stack area.
     fn get_stack_end(&self) -> usize;
 
-    /// Paints the stack below the given stack pointer.
+    /// Paints the stack from `get_stack_end()` up to the given stack pointer `sp`.
     ///
     /// Writes a sentinel value (`0xCDCD_CDCD`) to unused stack space from the bottom (end) of the stack
-    /// up to a safety threshold below the current stack pointer.
+    /// up to the active stack pointer `sp` (zero-floor watermarking).
     ///
     /// # Arguments
     /// * `sp` - The active stack pointer.
+    ///
+    /// # Critical Implementor Pattern & Safety Notice
+    ///
+    /// **WARNING TO TARGET IMPLEMENTORS:**
+    /// Custom target implementations of `paint_stack` **MUST NOT** allocate a stack frame below `sp`
+    /// while writing sentinels up to `sp`.
+    ///
+    /// If an implementation pushes registers (such as return address `LR` on ARM or `ra` on RISC-V, or
+    /// callee-saved registers) to the stack below `sp` via standard function prologues (for example, `#[inline(never)]`),
+    /// painting memory up to `sp` will overwrite its own return address with `0xCDCD_CDCD`. When the function
+    /// attempts to return, the CPU will branch to `0xCDCD_CDCD` and trigger an immediate `HardFault` or trap!
+    ///
+    /// Bare-metal target implementations (such as `CortexMProfiler` and `RiscvProfiler`) MUST follow the
+    /// zero-frame inline assembly pattern:
+    /// - Mark the implementation `#[inline(always)]`.
+    /// - Use inline assembly (`core::arch::asm!`) with `options(nostack)`.
+    /// - Restrict assembly operations to scratch registers.
+    /// - Or implement as a dedicated naked/assembly routine.
     ///
     /// # Safety
     ///
@@ -160,16 +178,12 @@ pub trait CPUProfiler {
     ///
     /// * The stack pointer `sp` is valid and represents the active stack pointer.
     /// * The stack bounds returned by `get_stack_end()` map to a valid memory region allocated for the stack.
-    /// * The safety margin is sufficient to prevent overwriting active frames.
-    /// * The stack memory below `sp` (down to the stack end) is painted with the sentinel value `0xCDCD_CDCD`.
-    /// * Current CPU register states and active stack frames remain unmodified.
-    /// * The memory range is mutable and can be safely written to using volatile writes without triggering memory faults.
-    #[inline(never)] // Crucial for predictable stack frame analysis
+    /// * The stack memory between `get_stack_end()` and `sp` is safe to overwrite with sentinel values (`0xCDCD_CDCD`).
+    /// * The memory range is mutable and can be safely written to using volatile writes or store instructions without triggering memory faults.
+    #[inline(always)]
     unsafe fn paint_stack(&self, sp: usize) {
         let stack_end_ptr = self.get_stack_end();
-        // Leave a 32-byte safety margin below the current stack pointer to avoid
-        // overwriting active stack frames (like paint_stack's own frame and return address).
-        let limit = sp.saturating_sub(32);
+        let limit = sp;
 
         if limit > stack_end_ptr {
             let mut ptr = stack_end_ptr as *mut u32;
@@ -178,7 +192,7 @@ pub trait CPUProfiler {
             while ptr < limit_ptr {
                 // SAFETY: The safety invariant of `paint_stack` guarantees that `ptr` to `limit_ptr`
                 // falls within the bounds of the allocated stack and does not overlap with any active
-                // stack frames. Using `write_volatile` prevents the compiler from optimizing out these writes.
+                // stack frames above `sp`. Using `write_volatile` prevents the compiler from optimizing out these writes.
                 unsafe {
                     core::ptr::write_volatile(ptr, 0xCDCD_CDCD);
                     ptr = ptr.add(1);
@@ -404,6 +418,34 @@ impl CPUProfiler for CortexMProfiler {
     fn reset(&self) -> ! {
         cortex_m::peripheral::SCB::sys_reset();
     }
+
+    #[inline(always)]
+    unsafe fn paint_stack(&self, sp: usize) {
+        let stack_end = self.get_stack_end();
+        if sp <= stack_end {
+            return;
+        }
+        let sentinel: u32 = 0xCDCD_CDCD;
+        let ptr = stack_end;
+        // Zero-frame stack painting:
+        // CRITICAL: Uses `options(nostack)` and scratch registers so that no stack frame
+        // is pushed below `sp`. Memory from `stack_end` up to `sp` is painted with sentinels.
+        unsafe {
+            core::arch::asm!(
+                "2:",
+                "cmp {ptr}, {sp}",
+                "bhs 3f",
+                "str {sentinel}, [{ptr}]",
+                "adds {ptr}, {ptr}, #4",
+                "b 2b",
+                "3:",
+                ptr = inout(reg) ptr => _,
+                sp = in(reg) sp,
+                sentinel = in(reg) sentinel,
+                options(nostack),
+            );
+        }
+    }
 }
 
 /// Target-specific implementation of `CPUProfiler` for RISC-V targets.
@@ -496,6 +538,33 @@ impl CPUProfiler for RiscvProfiler {
         }
         core::ptr::addr_of!(_profiler_stack_start) as usize
     }
+
+    #[inline(always)]
+    unsafe fn paint_stack(&self, sp: usize) {
+        let stack_end = self.get_stack_end();
+        if sp <= stack_end {
+            return;
+        }
+        let sentinel: u32 = 0xCDCD_CDCD;
+        let ptr = stack_end;
+        // Zero-frame stack painting:
+        // CRITICAL: Uses `options(nostack)` and scratch registers so that no stack frame
+        // is pushed below `sp`. Memory from `stack_end` up to `sp` is painted with sentinels.
+        unsafe {
+            core::arch::asm!(
+                "2:",
+                "bgeu {ptr}, {sp}, 3f",
+                "sw {sentinel}, 0({ptr})",
+                "addi {ptr}, {ptr}, 4",
+                "j 2b",
+                "3:",
+                ptr = inout(reg) ptr => _,
+                sp = in(reg) sp,
+                sentinel = in(reg) sentinel,
+                options(nostack),
+            );
+        }
+    }
 }
 
 /// FPU capability bits for the given target properties: bit 0 is set for a
@@ -529,14 +598,9 @@ pub fn calculate_systick_nanos(
         ms
     };
     let cycles = reload.saturating_sub(reading.current);
-    let cycles_per_us = u64::from(clock_frequency_hz)
-        .checked_div(1_000_000)
-        .unwrap_or(1);
-    let fractional_us = if cycles_per_us > 0 {
-        u64::from(cycles).checked_div(cycles_per_us).unwrap_or(0)
-    } else {
-        0
-    };
+    let cycles_per_us = u64::from(clock_frequency_hz) / 1_000_000;
+    let fractional_us =
+        u64::from(cycles).checked_div(cycles_per_us).unwrap_or(0);
     let us = adjusted_ms
         .saturating_mul(1000)
         .saturating_add(fractional_us);
@@ -581,6 +645,10 @@ mod tests {
     fn test_default_profiler_methods() {
         let mut profiler = TestProfiler::new();
 
+        assert!(profiler.has_clock());
+        assert_eq!(profiler.board_id(), 0);
+        assert_eq!(profiler.core_clock_hz(), 0);
+
         let val = profiler.disable_interrupts(|| 42);
         assert_eq!(val, 42);
 
@@ -592,12 +660,37 @@ mod tests {
         }
 
         let peak = unsafe { profiler.read_stack_peak(sp) };
-        assert_eq!(peak, 32);
+        assert_eq!(peak, 0);
+
+        // Incremental stack clobbers test 4-byte resolution and zero floor:
+        profiler.write_stack(47, 0);
+        let peak_1word = unsafe { profiler.read_stack_peak(sp) };
+        assert_eq!(peak_1word, 4);
+
+        profiler.write_stack(46, 0);
+        let peak_2words = unsafe { profiler.read_stack_peak(sp) };
+        assert_eq!(peak_2words, 8);
 
         profiler.write_stack(20, 0);
 
         let peak2 = unsafe { profiler.read_stack_peak(sp) };
         assert_eq!(peak2, 112);
+    }
+
+    #[test]
+    fn test_host_cpu_profiler_defaults() {
+        let profiler = HostCPUProfiler;
+        assert_eq!(profiler.get_cycles(), 0);
+        assert_eq!(profiler.get_nanos(), 0);
+        assert_eq!(profiler.get_sp(), 0);
+        assert_eq!(profiler.get_stack_end(), 0);
+        assert!(profiler.has_clock());
+        assert_eq!(profiler.board_id(), 0);
+        assert_eq!(profiler.core_clock_hz(), 0);
+        unsafe {
+            profiler.paint_stack(0);
+            assert_eq!(profiler.read_stack_peak(0), 0);
+        }
     }
 
     #[test]
@@ -766,5 +859,30 @@ mod tests {
             clock_freq,
         );
         assert_eq!(wrap_after_read, 5_999_000);
+
+        // Exact mid-point rollover boundary case (current == reload / 2, pending true):
+        // Must NOT treat current == reload / 2 as post-rollover (strict > required).
+        let at_mid_point = calculate_systick_nanos(
+            5,
+            SysTickReading {
+                current: reload / 2,
+                pending: true,
+            },
+            reload,
+            clock_freq,
+        );
+        assert_eq!(at_mid_point, 5_500_000);
+
+        // Sub-1MHz clock frequency where cycles_per_us evaluates to 0
+        let sub_1mhz = calculate_systick_nanos(
+            5,
+            SysTickReading {
+                current: 50,
+                pending: false,
+            },
+            100,
+            500_000,
+        );
+        assert_eq!(sub_1mhz, 5_000_000);
     }
 }

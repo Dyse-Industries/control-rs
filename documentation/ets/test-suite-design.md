@@ -380,6 +380,21 @@ static SUITE: SuiteDescriptor = SuiteDescriptor {
 static SUITE_PTR: &SuiteDescriptor = &SUITE;
 ```
 
+#### 4.6. Memory Layout and Descriptor Size Bounds
+
+Serves: FR-1, FR-4, NFR-1
+
+To guarantee zero static RAM consumption at idle and bounded Flash ROM overhead, descriptors and parameter cells follow deterministic Rust type layout rules [7], [8]:
+
+* **Dynamically Sized Types & Fat Pointers**: Under standard Rust layout, slice references (`&[T]`) and string slices (`&str`) are fat pointers composed of two machine words: address and length [7]. Function pointers (`fn()`) have the ABI, size, and alignment of a single C function pointer (`usize`) [8].
+* **Descriptor Size Invariants (Excluding Strings)**:
+  - `ExecDescriptor` (name, desc, `fn()`, `Profile`): At 32-bit: $2 \times 8\text{ B}$ (two fat pointers) + 4 B (`fn()` pointer) + 1 B (`Profile` enum) + 3 B padding $\le 24\text{ B}$. At 64-bit: $2 \times 16\text{ B} + 8\text{ B} + 1\text{ B} + 7\text{ B} \le 48\text{ B}$.
+  - `ConstantDescriptor` (name, desc, `SettingValue`): At 32-bit: $\le 32\text{ B}$; at 64-bit: $\le 48\text{ B}$.
+  - `SettingDescriptor` (name, desc, `Setting` wrapper): At 32-bit: $\le 28\text{ B}$; at 64-bit: $\le 56\text{ B}$.
+  - `SuiteDescriptor` (name, desc, 3 slice references + section pointer): At 32-bit: $\le 44\text{ B}$; at 64-bit: $\le 88\text{ B}$.
+* **`TripleBuffer<T>` Bounds**: Holds three contiguous slots of type `T` plus an atomic state byte (`AtomicU8`), rounded up to the alignment of `T`:
+  $$\text{size\_of::<TripleBuffer<T>>()} \le 3 \cdot \text{size\_of::<T>()} + 1,\quad \text{rounded up to } \text{align\_of::<T>()}$$
+
 ---
 
 ### 5. Alternatives
@@ -395,7 +410,7 @@ static SUITE_PTR: &SuiteDescriptor = &SUITE;
 * **`static_init` runtime initialization**: Rejected. `static_init` is `no_std`
   only on Linux or Redox using futex system calls [6], which is not viable on
   bare metal.
-* **`linkme::DistributedSlice`**: Not adopted. `linkme` 0.3.37 is `#![no_std]`
+* **`linkme::DistributedSlice`**: Not adopted. `linkme` 0.3.37 [1] is `#![no_std]`
   and handles `target_os = "none"` through ELF symbols, but the hand-rolled
   mechanism is a linker fragment and two boundary symbols, already shipped; on
   bare metal a custom `SECTIONS` script must still place the section explicitly,
@@ -412,19 +427,21 @@ static SUITE_PTR: &SuiteDescriptor = &SUITE;
 
 | Condition | Requirement | Method    | Target                                                                    | Criterion                                                                                                                          |
 |:----------|:------------|:----------|:--------------------------------------------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------|
-| VC-1.1    | FR-5        | `libtest` | `control_rs_ets::util::tests::test_get_suites_fn`                         | Descriptors in `.ets_test_suites` match the set of declared suites across modules and crates                                       |
-| VC-2.1    | FR-2        | `libtest` | `control_rs_ets::tests::test_exec_descriptor_metadata`                    | `ExecDescriptor` metadata (name, description, function pointer, profile arm) reflects source declarations                          |
-| VC-5.1    | FR-4        | `libtest` | `control_rs_ets::server::tests::test_server_set_setting`                  | `Setting` safely gets and sets typed parameter values by suite and setting name                                                    |
+| VC-1.1    | FR-5        | `libtest` | `control_rs_ets::util::tests::test_get_suites_fn`                         | Discovered suites equal declared suites; section holds exactly 1 pointer per suite                                                 |
+| VC-2.1    | FR-2        | `libtest` | `control_rs_ets::tests::test_exec_descriptor_metadata`                    | Metadata matches source; invoking a case is 1 call through its `fn()` pointer                                                      |
+| VC-5.1    | FR-4        | `libtest` | `control_rs_ets::server::tests::test_server_set_setting`                  | Values read back equal values set; 0 torn reads                                                                                    |
 | VC-5.2    | FR-4        | `libtest` | `control_rs_ets::server::tests::test_server_set_setting_type_mismatch`    | `Setting::set` rejects mismatched `SettingValue` variants and unknown suite or setting names, leaving stored values unchanged      |
 | VC-5.3    | FR-4        | `libtest` | `control_rs_ets::server::tests::test_setting_value_partial_eq`            | Setting value equality comparison differentiates distinct types and magnitudes without type confusion                              |
+| VC-5.4    | FR-4        | `libtest` | `control_rs_ets::settings::tests::test_triple_buffer_size_bounds`         | For every `SettingValue` type, `size_of::<TripleBuffer<T>>()` ≤ 3·`size_of::<T>()` + 1, rounded up to `align_of::<T>()`           |
 | VC-6.1    | FR-6        | `libtest` | `control_rs_ets::tests::test_duplicate_constant_names_in_distinct_suites` | Two suites declaring constants with identical names resolve distinct values by suite identity and constant name.                   |
 | VC-7.1    | FR-7        | `libtest` | `control_rs_ets::tests::test_external_globals_are_not_suite_metadata`     | A test may reference external global state while discovery reports only constants and settings declared directly within its suite. |
 | VC-9.1    | NFR-1       | `gate`    | `clippy`                                                                  | Clippy verification passes without dynamic heap allocation (`alloc`) on target paths                                               |
-| VC-9.2    | NFR-1       | `libtest` | `control_rs_ets::tests::test_flash_descriptor_sizes`                      | Descriptors and static metadata reside entirely in Flash (ROM), consuming zero static RAM at idle                                  |
-| VC-10.1   | NFR-2       | `gate`    | `build`                                                                   | Target firmware builds cleanly with `--gc-sections`, retaining `.ets_test_suites` via `KEEP` directives                            |
+| VC-9.2    | NFR-1       | `libtest` | `control_rs_ets::tests::test_flash_descriptor_sizes`                      | 0 B static RAM; 32-bit / 64-bit, excluding strings: suite with section pointer ≤ 44 / 88 B, case ≤ 24 / 48 B, constant ≤ 32 / 48 B |
+| VC-10.1   | NFR-2       | `gate`    | `virtual-ets`                                                             | 100% of declared suites retained at every `opt-level` with `--gc-sections`                                                         |
 | VC-11.1   | C-1         | `gate`    | `clippy`                                                                  | The `clippy` quality gate passes, enforcing `#![no_std]` and zero dynamic heap allocation                                          |
 | VC-12.1   | C-2         | `gate`    | `clippy`                                                                  | The codebase contains zero occurrences of `static mut`                                                                             |
 | VC-13.1   | C-3         | `gate`    | `build`                                                                   | The test suite framework compiles across Cortex-M (v6-M, v7-M, v8-M) and RISC-V targets                                            |
+| VC-14.1   | FR-1        | `libtest` | `control_rs_ets::tests::test_descriptor_string_bounds`                     | Names ≤ 64 B and descriptions ≤ 384 B are accepted                                                                                 |
 
 #### 6.2 Acceptance
 
@@ -451,8 +468,9 @@ static SUITE_PTR: &SuiteDescriptor = &SUITE;
 ### 7. Performance & Resource Considerations
 
 * **ROM/RAM Overhead**: To operate within strict bare-metal budgets, all suite
-  and case metadata resides strictly in Flash. `Atomic*Setting` wrappers
-  allocate no dynamic heap and require only the underlying atomic word in RAM.
+  and case metadata resides strictly in Flash. `TripleBuffer<T>` setting wrappers
+  allocate no dynamic heap and require only static triple-buffer slots and a
+  single atomic state byte (or a single `UnsafeCell<T>` slot on ARMv6-M) in RAM.
 
 ---
 
@@ -465,10 +483,9 @@ static SUITE_PTR: &SuiteDescriptor = &SUITE;
   `#[used]` statics in `.rlib` archives if no direct symbol reference exists.
   Workspace
   suites are linked via root-crate module inclusion.
-* **Architecture & Verification Update for FR-1, FR-3 and FR-4**: §4 and §6.1
-  require updating from `Atomic*Setting` to read-only constant descriptors and
-  triple-buffer setting wrappers, along with verification conditions for FR-1
-  and FR-3.
+* **Architecture & Verification Update for FR-1, FR-3 and FR-4**: §4 specifies
+  read-only constant descriptors and lock-free `TripleBuffer<T>` setting
+  wrappers, eliminating legacy mutable setting alternatives.
 
 ---
 
@@ -522,3 +539,13 @@ Available: https://github.com/dtolnay/inventory. Accessed: Aug. 7, 2026.
 
 2026. [Online]. Available: https://crates.io/crates/static_init. Accessed: Aug.
       7, 2026.
+
+[7] The Rust Project Developers, "Dynamically Sized Types," *The Rust Reference*,
+2026. [Online]. Available:
+https://doc.rust-lang.org/reference/dynamically-sized-types.html. Accessed:
+Nov. 18, 2026.
+
+[8] Rust Unsafe Code Guidelines Working Group, "Representation of function
+pointers," *Unsafe Code Guidelines Reference*, 2026. [Online]. Available:
+https://rust-lang.github.io/unsafe-code-guidelines/layout/function-pointers.html.
+Accessed: Nov. 18, 2026.

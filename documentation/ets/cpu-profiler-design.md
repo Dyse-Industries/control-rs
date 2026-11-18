@@ -210,7 +210,24 @@ maximum stack depth a task has reached" [3]. The approach is "very
 common in embedded systems and is used by both FreeRTOS and Zephyr RTOS"
 [4], and Zephyr exposes the same idea through
 `k_thread_stack_space_get`, which reports unused stack when its init-stacks
-options are enabled [5].
+options are enabled [5]. Stack painting operates within `[stack_end, sp]`.
+To eliminate artificial measurement dead-zones and report true zero-floor stack
+usage for leaf operations, target implementations (`CortexMProfiler`, `RiscvProfiler`)
+use zero-frame inline assembly with `options(nostack)` and scratch registers.
+Because no stack frame or return address is pushed below `sp`, sentinels can safely
+fill unused memory up to `sp` without risking overwriting return addresses.
+
+**Critical Implementor Pattern**: Implementors of custom bare-metal profilers must
+follow the zero-frame pattern (`#[inline(always)]` with `options(nostack)` inline
+assembly, or a dedicated naked/assembly routine). If an implementation allocates a
+conventional stack frame (saving `LR` or callee-saved registers below `sp`) and
+paints up to `sp`, it will overwrite its own return address with sentinels and trigger
+an immediate `HardFault` or trap upon return.
+
+On cores with an active hardware FPU, hardware exception entry pushes an extended
+frame of 26 words (104 or 108 B) [13, §B1.5.7]; full exception stack safety is
+verified statically via `cargo-call-stack` [9] rather than assuming the profiler
+guard covers an in-flight FPU exception.
 
 #### 4.2. Default Architecture Profilers and Dependency Gating
 
@@ -374,8 +391,8 @@ after the host sends `Command::TryReset`; on Cortex-M it is
 | VC-3.1    | FR-3        | `gate`    | `virtual-ets`                                                                                   | On target, `get_sp` lies within the linker stack limits  |
 | VC-4.1    | FR-4        | `libtest` | `control_rs_ets::profiler::tests::test_default_profiler_methods`                                 | Stack sentinel painting and peak scanning on synthetic buffer detects watermark displacement without corruption |
 | VC-4.2    | FR-4        | `gate`    | `virtual-ets`                                                                                   | On target, the measured peak covers real call frames      |
-| VC-4.3    | FR-4, NFR-2 | `libtest` | `control_rs_ets::profiler::tests::test_stack_paint_exhaustion_clamp` | When `sp` minus the safety margin is at or below `stack_end`, `paint_stack` writes no memory and `read_stack_peak` returns 0 |
-| VC-4.4    | FR-4        | `libtest` | `control_rs_ets::profiler::tests::test_default_profiler_methods`                                 | Untouched sentinel words remain intact during high-watermark scanning, reporting zero usage when no frames are displaced |
+| VC-4.3    | FR-4, NFR-2 | `libtest` | `control_rs_ets::profiler::tests::test_stack_paint_exhaustion_clamp` | When `sp` is at or below `stack_end`, `paint_stack` writes no memory and `read_stack_peak` returns 0 |
+| VC-4.4    | FR-4        | `libtest` | `control_rs_ets::profiler::tests::test_default_profiler_methods`                                 | Untouched sentinel words remain intact during high-watermark scanning, reporting zero usage (0 B) when no frames are displaced |
 | VC-7.1    | FR-7        | `libtest` | `control_rs_ets::profiler::tests::test_default_profiler_methods`                                 | `disable_interrupts` executes the supplied closure and returns its value, and `disable_interrupts_permanently` completes without panic |
 | VC-7.2    | FR-7        | `gate`    | `virtual-ets`                                                                                   | On target, `disable_interrupts` masks hardware interrupts during test execution and restores interrupt state upon return |
 | VC-7.3    | FR-9        | `libtest` | `control_rs_ets::profiler::tests::test_run_profiled_composition`                                 | `run_profiled` verifies call order, asserts interrupts disabled across `run_clock`, and returns accurate `TestMetrics` |
@@ -383,7 +400,7 @@ after the host sends `Command::TryReset`; on Cortex-M it is
 | VC-8.1    | FR-8        | `libtest` | `control_rs_ets::util::tests::test_handle_failure_comms_disabled`                               | Target reset and exit hooks are invoked on catastrophic failure and virtual runner teardown |
 | VC-8.2    | FR-8        | `gate`    | `virtual-ets`                                                                                   | On target under QEMU, `exit` and `reset` hooks cleanly terminate or restart the virtual target |
 | VC-10.1   | NFR-1       | `gate`    | `virtual-ets` | Cycle and nanosecond hooks execute deterministically without dynamic allocation or unbounded loops across target architectures |
-| VC-11.1   | NFR-2       | `libtest` | `control_rs_ets::profiler::tests::test_default_profiler_methods`                                 | Sentinel writes never exceed the safety margin below the current stack pointer                                  |
+| VC-11.1   | NFR-2       | `libtest` | `control_rs_ets::profiler::tests::test_default_profiler_methods`                                 | Sentinel writes operate strictly within `[stack_end, sp]`, never writing above `sp`                                  |
 | VC-12.1   | C-1         | `gate`    | `clippy`                                                                                        | The `clippy` quality gate outcome reports `Pass`, verifying `#![no_std]` without heap allocation                |
 | VC-13.1   | C-2         | `gate`    | `build`, `virtual-ets` | `control-rs-ets` compiles for the host and links into the QEMU firmware for `thumbv7em-none-eabihf`, `thumbv7em-none-eabi`, `riscv32imac-unknown-none-elf` and `riscv64gc-unknown-none-elf` |
 
@@ -392,8 +409,8 @@ after the host sends `Command::TryReset`; on Cortex-M it is
 | Claim | Oracle | Measure | Bound |
 |:------|:-------|:--------|:------|
 | Cycle and time agreement | `cortex_m::asm::delay(n)` at a known core frequency | Relative error between the cycle delta and the derived nanoseconds | ≤ 1% over intervals ≥ 10,000 cycles |
-| Stack bounds | Linker symbols `_stack_start`, `_stack_end` queried | Addresses touched by paint and scan | All within `[_stack_end, _stack_start]` |
-| Peak monotonicity | Calibrated call chains of increasing known depth | Reported peak | Non-decreasing with depth, matching frame bounds |
+| Stack bounds | Linker symbols `_stack_start`, `_stack_end` queried | Addresses touched by paint and scan | All within `[_stack_end, _stack_start]`, paint stops at `sp` |
+| Peak monotonicity | Calibrated call chains of increasing known depth | Reported peak | Non-decreasing with depth, matching frame bounds with 4 B resolution and 0 B untouched baseline |
 | Wrapper overhead | Empty measured region on target | Cycles attributed to the wrapper | ≤ 50 clock cycles |
 
 The cycle bound applies only above 10,000 cycles because at shorter intervals
@@ -497,3 +514,7 @@ same reason the overhead itself is bounded.
 [11] rtic-rs, *rtic-monotonics* (Version 2.2.1). [Online]. Available: https://docs.rs/rtic-monotonics/latest/rtic_monotonics/systick/. Accessed: Aug. 7, 2026.
 
 [12] SEGGER Microcontroller GmbH, "What is SystemView?," *SEGGER product documentation*. [Online]. Available: https://www.segger.com/products/development-tools/systemview/technology/what-is-systemview/. Accessed: Aug. 7, 2026.
+
+[13] Arm Limited, "Armv7-M Architecture Reference Manual," ARM DDI 0403E.e, 2021.
+[Online]. Available: https://developer.arm.com/documentation/ddi0403/latest.
+Accessed: Oct. 13, 2026.

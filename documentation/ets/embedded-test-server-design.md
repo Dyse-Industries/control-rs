@@ -17,7 +17,7 @@ that interact with sensors and actuators requires executing directly on the
 target processor.
 
 Modern test harnesses [1] support distributed testing and HIL integration
-pipelines [4], [5]. However, they either: do not provide CPU profiling [3]
+pipelines [3], [4]. However, they either: do not provide CPU profiling [2]
 or require using an RTOS.
 
 This document is the lead architectural design document for the Embedded Test
@@ -100,8 +100,8 @@ usage and scenarios described in [ConOps](ConOps.md).
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 - Bounded control-loop telemetry jitter**: $\le 2\ \text{ms}$
-  timing jitter in a 1 kHz control loop.
+- **NFR-1 - Bounded control-loop telemetry jitter**: $\le 10\ \mu\text{s}$
+  (6,000 cycles at 600 MHz) timing jitter in a 1 kHz control loop deadline.
 - **NFR-2 - Zero static RAM for immutable suite metadata**: Compiled suite,
   case and constant metadata must reside in read-only non-volatile memory
   (`Flash`), consuming zero bytes of static RAM at idle.
@@ -113,7 +113,8 @@ usage and scenarios described in [ConOps](ConOps.md).
   RISC-V (`RV32`, `RV64`) targets.
 - **C-2 - On-Chip Memory Ceiling**: Target microcontrollers provide fixed
   on-chip memory budgets, bounding the target runtime (excluding user test
-  payloads) to at most 32KB Flash and 8KB static RAM.
+  payloads) to at most 32KB Flash and 8KB RAM, with zero-suite core baseline
+  static RAM $\le 2\text{ KB}$ and peak stack $\le 2\text{ KB}$.
 
 ---
 
@@ -252,14 +253,14 @@ Serves: FR-1, FR-2, FR-3, FR-5, FR-6, FR-7, FR-8, FR-9, FR-11, FR-12, FR-13
 The subsystem maps the six operational use cases from [ConOps.md](ConOps.md)
 across its constituent components:
 
-| ConOps Mode                   | Target Stack                     | Host Stack       | Operational Flow                                                                                                    |
-|:------------------------------|:---------------------------------|:-----------------|:--------------------------------------------------------------------------------------------------------------------|
-| **§3.1 Unit Test**            | `ets-executive` + `test-suite`   | `control-rs-ci`  | Host selects test index; server dispatches case and returns `Pass`/`Fail` verdict.                                  |
-| **§3.2 Virtual Chip**         | `ets-executive` (QEMU target)    | `control-rs-ci`  | Headless automated runner boots QEMU, runs suites, and exits cleanly via exit trap.                                 |
-| **§3.3 Silicon Benchmarking** | `ets-executive` + `cpu-profiler` | `control-rs-tui` | Server measures elapsed CPU clock cycles, microsecond duration, and peak stack RAM under IRQ masking.               |
-| **§3.4 Closed-Loop HIL**      | *Deferred*                       | *Deferred*       | Deferred to Layer 1/2+ HIL harness (`roadmap.md`); external rig harness and plant streaming outside ETS core scope. |
-| **§3.5 Data Acquisition**     | `host-comm` + peripheral drivers | `ETSBridge`      | MCU samples physical sensors and streams high-rate telemetry records to host without frame loss.                    |
-| **§3.6 Hand-Tuning**          | `ets-executive` + `test-suite`   | `control-rs-tui` | Operator adjusts parameter in TUI; server validates limits and applies mutation live without pausing loop.          |
+| ConOps Mode                   | Target Stack                                      | Host Stack       | Operational Flow                                                                                                    |
+|:------------------------------|:--------------------------------------------------|:-----------------|:--------------------------------------------------------------------------------------------------------------------|
+| **§3.1 Unit Test**            | `ets-executive` + `test-suite`                    | `control-rs-ci`  | Host selects test index; server dispatches case and returns `Pass`/`Fail` verdict.                                  |
+| **§3.2 Virtual Chip**         | `ets-executive` (QEMU target)                     | `control-rs-ci`  | Headless automated runner boots QEMU, runs suites, and exits cleanly via exit trap.                                 |
+| **§3.3 Silicon Benchmarking** | `ets-executive` + `cpu-profiler`                  | `control-rs-tui` | Server measures elapsed CPU clock cycles, microsecond duration, and peak stack RAM under IRQ masking.               |
+| **§3.4 Closed-Loop HIL**      | *Deferred*                                        | *Deferred*       | Deferred to Layer 1/2+ HIL harness (`roadmap.md`); external rig harness and plant streaming outside ETS core scope. |
+| **§3.5 Data Acquisition**     | `ets-executive` +`host-comm` + peripheral drivers | `Session` + USB  | MCU samples physical sensors and streams high-rate telemetry records to host without frame loss.                    |
+| **§3.6 Hand-Tuning**          | `ets-executive` + `test-suite`                    | `control-rs-tui` | Operator adjusts parameter in TUI; server validates limits and applies mutation live without pausing loop.          |
 
 #### 4.4. Component Interface Contracts
 
@@ -279,8 +280,7 @@ pub struct Server<'a, C: HostComms, P: CPUProfiler> {
 * `HostComms` decouples the server from UART, RTT or simulated socket hardware.
 * `CPUProfiler` decouples the server from Cortex-M, RISC-V, or mock host timer
   registers.
-* `SuiteDescriptor` decouples the server from how suites are included in
-  binaries.
+* `SuiteDescriptor` decouples the server from the actual tests.
 
 #### 4.5. Safety, Fail-Safe & Resource Allocation
 
@@ -296,8 +296,7 @@ Serves: FR-3, FR-6, FR-7, FR-8, FR-9, FR-10, FR-13, FR-15, NFR-1
 
 To validate on-target runtime behavior, isolate harness overhead and verify
 hardware capabilities without external user suites, the target runtime exposes
-a built-in self-diagnostic suite (`__ets_diagnostics`) reserved at
-`suite_id = 0`.
+a built-in self-diagnostic suite reserved at `suite_id = 0`.
 
 ##### 4.6.1. Feature Gating & Zero-Cost Policy
 
@@ -360,25 +359,25 @@ $$\Delta c_{\text{tare}} = \delta_{\text{cyc}} + 2\,\delta_{\text{ns}} + \delta_
 $$\Delta t_{\text{ns,tare}} = \delta_{\text{ns}} + \delta_{\text{dispatch}}$$
 
 Because `tare_noop` shares identical calling conventions, stack-painting,
-interrupt-masking, and framing paths with user test cases, the host subtracts
+interrupt-masking and framing paths with user test cases, the host subtracts
 this baseline from measured metrics to isolate true net payload performance:
 $c_{\text{net}} = \Delta c_{\text{measured}} - \Delta c_{\text{tare}}$ and
 $t_{\text{net}} = \Delta t_{\text{measured}} - \Delta t_{\text{tare}}$.
 
 ##### 4.6.4. Diagnostic Case Manifest
 
-| Case | Feature | Operational Verification | Serves |
-|:---|:---|:---|:---|
-| `tare` | `diagnostics` | Runs `tare_noop` ($\delta_{\text{fn}} = 0$); emits `Running`, `Passed`, and baseline `MetricReport` | FR-15 |
-| `spin` | `diagnostics` | Loops `spin_iters` times; confirms cycle scaling linearity ($R^2 \ge 0.999$), clock agreement, and 32-bit rollover | FR-7, FR-9 |
-| `stack` | `diagnostics` | Recurses `stack_depth` frames; confirms stack painting reports peak usage within $\le \pm 4$ bytes per level | FR-8 |
-| `encode` | `diagnostics` | Frames `encode_records` telemetry records in a stack buffer; isolates serialization cost and jitter without I/O | NFR-1 |
-| `irq_masked` | `diagnostics` | Inspects core interrupt registers; confirms interrupts are masked during `Profile::Full` execution | FR-9 |
-| `fpu` | `diagnostics` | Executes floating-point instructions; confirms coprocessor is active matching `TargetInfo.fpu_flags` | FR-10 |
-| `settings` | `diagnostics` | Asserts bit-for-bit fidelity across 8 probe types, including edge value `0x8000_0000_0000_0001` on `probe_u64` | FR-13 |
-| `panic` | `diagnostics-fault` | Controlled panic; verifies forensic location formatting in `FailureBufWriter`, test attribution, and soft reset | FR-3, FR-6 |
-| `exception` | `diagnostics-fault` | Executes illegal instruction; verifies hardware fault trap handling and crash reporting | FR-3 |
-| `hang` | `diagnostics-fault` | Masked infinite loop; verifies target recovery via hardware watchdog timer | FR-6 |
+| Case         | Feature             | Operational Verification                                                                                           | Serves     |
+|:-------------|:--------------------|:-------------------------------------------------------------------------------------------------------------------|:-----------|
+| `tare`       | `diagnostics`       | Runs `tare_noop` ($\delta_{\text{fn}} = 0$); emits `Running`, `Passed`, and baseline `MetricReport`                | FR-15      |
+| `spin`       | `diagnostics`       | Loops `spin_iters` times; confirms cycle scaling linearity ($R^2 \ge 0.999$), clock agreement, and 32-bit rollover | FR-7, FR-9 |
+| `stack`      | `diagnostics`       | Recurses `stack_depth` frames; confirms stack painting reports peak usage within $\le \pm 4$ bytes per level       | FR-8       |
+| `encode`     | `diagnostics`       | Frames `encode_records` telemetry records in a stack buffer; isolates serialization cost and jitter without I/O    | NFR-1      |
+| `irq_masked` | `diagnostics`       | Inspects core interrupt registers; confirms interrupts are masked during `Profile::Full` execution                 | FR-9       |
+| `fpu`        | `diagnostics`       | Executes floating-point instructions; confirms coprocessor is active matching `TargetInfo.fpu_flags`               | FR-10      |
+| `settings`   | `diagnostics`       | Asserts bit-for-bit fidelity across 8 probe types, including edge value `0x8000_0000_0000_0001` on `probe_u64`     | FR-13      |
+| `panic`      | `diagnostics-fault` | Controlled panic; verifies forensic location formatting in `FailureBufWriter`, test attribution, and soft reset    | FR-3, FR-6 |
+| `exception`  | `diagnostics-fault` | Executes illegal instruction; verifies hardware fault trap handling and crash reporting                            | FR-3       |
+| `hang`       | `diagnostics-fault` | Masked infinite loop; verifies target recovery via hardware watchdog timer                                         | FR-6       |
 
 ##### 4.6.5. Diagnostic Probe Settings
 
@@ -393,6 +392,93 @@ across primitive variants using boundary conditions:
   `probe_u64`
   uses edge values such as `0x8000_0000_0000_0001` to catch truncation on 32-bit
   targets (the F-T1 bug).
+
+#### 4.7. Derivation of Numerical Budgets & Protocol Bounds
+
+Serves: FR-1, FR-3, FR-6, FR-7, FR-8, FR-9, FR-11, FR-13, FR-15, NFR-1, C-2
+
+To establish clear engineering rationales and avoid arbitrary constants, the
+numerical bounds in this specification derive from physical hardware limits,
+standard protocol timing and mathematical safety margins:
+
+##### 4.7.1. Packet, Discovery and Diagnostics Sizing
+
+* **512 B Payload Limit**: Chosen in `host-comm` C-2 to fit entirely within
+  standard microcontroller stack allocations while accommodating a full
+  diagnostic record.
+* **Name (64 B) and Description (384 B) Budget**: Derived by partitioning the
+  512 B payload: 64 B suite/case name + 384 B human description + 16 B IDs and
+  metadata leaves 48 B of headroom, ensuring single-frame discovery responses.
+* **Forensic Fault Records**: 128 B path string + 256 B error message
+  (`FailureBufWriter`) + 16 B telemetry metadata fits within a single 512 B
+  packet, guaranteeing zero-allocation crash reporting before reboot.
+* **Suite Limits (65,534 Suites, 65,535 Records)**: Derived from 16-bit IDs
+  (`u16`), reserving index 0 for the built-in diagnostic suite
+  (`__ets_diagnostics`).
+
+##### 4.7.2. Bus Timing and Margins
+
+* **Idle Poll Interval (100 µs)**: Balances host command response latency with
+  target CPU polling overhead during idle loops, ensuring rapid reaction to
+  incoming frames without starving background tasks.
+* **Discovery Duration (1 s for 256 Records)**: Transmitting 256 records
+  ($\sim 132\text{ KB}$) over serial/CDC transports with host OS scheduling and
+  framing overhead comfortably fits within 1.0 s, providing ample margin without
+  blocking test startup.
+* **Fault Record Transmission (1 ms) and Target Halt (1 s)**: Record
+  transmission begins immediately ($\le 1.0\text{ ms}$) upon capturing a fault;
+  target halts or resets within 1.0 s if no host acknowledgment is received.
+* **Reset Latency (10 ms request, 1 s ready)**: CPU software reset
+  (`SCB::sys_reset`) executes in $\le 10\text{ ms}$; target accepts incoming
+  commands $\le 1\text{ s}$ post-boot (excluding host USB enumeration).
+
+##### 4.7.3. Hardware Profiling, Timing Agreement and Stack Margins
+
+* **Target Operating Frequencies**: The primary reference platform (NXP i.MX
+  RT1060 on Teensy 4.1) operates at 600 MHz in Overdrive Run
+  mode [6, Table 13-1].
+* **Encoding Jitter (10 µs / 6,000 cycles)**: A 1 kHz control loop has
+  a $1,000\ \mu\text{s}$ deadline. Allocating $\le 1\%$ of the deadline yields a
+  maximum acceptable serialization and framing jitter of $\le 10\ \mu\text{s}$
+  ($6,000\text{ cycles}$ at 600 MHz), satisfying NFR-1.
+* **Cycle Counter Rollover**: Hardware cycle counting uses the ARMv7-M DWT
+  `CYCCNT` 32-bit free-running counter [5, §C1.8.3], which wraps modulo $2^{32}$
+  (every $7.158\text{ s}$ at 600 MHz).
+* **Clock Agreement (≤ 1% over ≥ 10,000 cycles)**: Due to quartz crystal
+  tolerances ($\pm 20\text{ ppm}$) and timer interrupt jitter, agreement between
+  CPU cycles and wall-clock duration is evaluated as relative error ($\le 1\%$)
+  over intervals $\ge 10,000\text{ cycles}$, with timebase measurement
+  resolution $\le 1\ \mu\text{s}$.
+* **Zero-Floor Stack Painting and Hardware Profiling**: Stack painting fills
+  unused
+  stack memory from `stack_end` up to `sp` with sentinel words (`0xCDCD_CDCD`).
+  To avoid the artificial 32 B dead-zone of software call frames, bare-metal
+  targets (`CortexMProfiler`, `RiscvProfiler`) use zero-frame inline assembly
+  with
+  `options(nostack)` and scratch registers, guaranteeing that no stack frame or
+  return
+  address is allocated below `sp`. Untouched leaf functions report true 0 B
+  usage,
+  with 4 B scan resolution (`u32` word alignment). On cores with active
+  floating-point
+  units (FPU), hardware exception entry pushes an extended frame of 26 words
+  ($104/108\text{ B}$) [5, §B1.5.7]; exception stack margins are verified
+  statically
+  via `cargo-call-stack`. Custom profiler implementors must follow the
+  zero-frame
+  pattern to prevent overwriting their own return addresses and hard faulting.
+* **Tare Offset (≤ 50 cycles, spread ≤ 4 cycles)**: Baseline tare execution
+  isolates dispatch overhead ($< 50\text{ cycles}$) with minimal jitter across
+  1,000 iterations.
+
+##### 4.7.4. Memory Ceiling and Core Footprint
+
+* **Zero-Suite Core Baseline**: Target executive without user suites
+  consumes $\le 2\text{ KB}$ static RAM (`.data` + `.bss`) and $\le 2\text{ KB}$
+  peak stack, verifying C-2 on constrained microcontrollers.
+* **Total Runtime Ceiling**: Bounded to $\le 32\text{ KB}$ Flash
+  and $\le 8\text{ KB}$ static RAM to allow execution on resource-constrained
+  microcontrollers.
 
 ---
 
@@ -431,71 +517,127 @@ across primitive variants using boundary conditions:
 
 #### 6.1 Verification
 
-| Condition | Requirement | Method    | Target                                                                                                                                                   | Criterion                                                                                                                                                   |
-|:----------|:------------|:----------|:---------------------------------------------------------------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| VC-1.1    | FR-1        | `link`    | `test-suite#FR-1`, `test-suite#FR-2`, `test-suite#FR-3`, `macros#FR-1`, `macros#FR-2`, `ets-executive#FR-2`, `host-comm#FR-2`                            | Component suite, case, constant, macro, executive discovery, and framing requirements hold; FR-1 holds iff all conditions hold                              |
-| VC-1.2    | FR-1        | `libtest` | `control_rs_ets::server::tests::test_server_discovery`                                                                                                   | Executive discovery streams all registered suites, cases, settings, and docstrings over the transport without reading ELF symbols                           |
-| VC-2.1    | FR-2        | `link`    | `test-suite#FR-2`, `ets-executive#FR-1`, `ets-executive#FR-2`, `host-comm#FR-2`                                                                          | Component case descriptor, command loop, dispatch, and framing requirements hold; FR-2 holds iff all conditions hold                                        |
-| VC-2.2    | FR-2        | `libtest` | `control_rs_ets::server::tests::test_server_run_test`                                                                                                    | Executive remains idle until commanded and dispatches only the requested suite and case index                                                               |
-| VC-3.1    | FR-3        | `link`    | `ets-executive#FR-3`, `ets-executive#FR-6`, `host-comm#FR-6`                                                                                             | Component lifecycle tracking, failure handler, and panic wire schema requirements hold; FR-3 holds iff all conditions hold                                  |
-| VC-3.2    | FR-3        | `libtest` | `control_rs_ets::util::tests::test_handle_failure_comms_active`                                                                                          | Active test failure captures source location and diagnostic payload attributed to the running suite and case before reset                                   |
-| VC-4.1    | FR-4        | `link`    | `test-suite#FR-5`, `macros#FR-1`                                                                                                                         | Component decentralized inclusion and suite macro requirements hold; FR-4 holds iff all conditions hold                                                     |
-| VC-4.2    | FR-4        | `libtest` | `control_rs_ets::util::tests::test_get_suites_fn`                                                                                                        | Suites enabled by the build configuration appear in the reconstructed suite slice without a central registration table                                      |
-| VC-5.1    | FR-5        | `link`    | `ets-executive#FR-1`, `host-comm#FR-1`                                                                                                                   | Component event loop and transport abstraction requirements hold; FR-5 holds iff all conditions hold                                                        |
-| VC-5.2    | FR-5        | `gate`    | `build`                                                                                                                                                  | Target test firmware builds and executes on emulated target architectures over the byte-stream transport                                                    |
-| VC-6.1    | FR-6        | `link`    | `ets-executive#FR-7`, `cpu-profiler#FR-8`                                                                                                                | Component target lifecycle and profiler reset/exit hook requirements hold; FR-6 holds iff all conditions hold                                               |
-| VC-6.2    | FR-6        | `libtest` | `control_rs_ets::server::tests::test_server_exit`, `control_rs_ets::server::tests::test_server_ok_to_reset`                                              | Host reset and exit commands flush telemetry and invoke the target reset or emulator exit hook                                                              |
-| VC-7.1    | FR-7        | `link`    | `cpu-profiler#FR-1`, `cpu-profiler#FR-2`, `ets-executive#FR-4`                                                                                           | Component cycle counter, wall-clock timer, and executive profiling bracket requirements hold; FR-7 holds iff all conditions hold                            |
-| VC-7.2    | FR-7        | `libtest` | `control_rs_ets::server::tests::test_host_cpu_profile_utils`                                                                                             | Profiled test dispatch reports elapsed CPU cycles and microsecond duration for the executed case                                                            |
-| VC-8.1    | FR-8        | `link`    | `cpu-profiler#FR-3`, `cpu-profiler#FR-4`, `ets-executive#FR-4`                                                                                           | Component stack boundary, watermark painting, and executive profiling bracket requirements hold; FR-8 holds iff all conditions hold                         |
-| VC-8.2    | FR-8        | `libtest` | `control_rs_ets::profiler::tests::test_stack_paint_exhaustion_clamp`                                                                                     | Stack high-water mark measurement reports peak stack displacement within bounded stack limits                                                               |
-| VC-9.1    | FR-9        | `link`    | `cpu-profiler#FR-7`, `ets-executive#FR-4`                                                                                                                | Component interrupt isolation and executive profiling bracket requirements hold; FR-9 holds iff all conditions hold                                         |
-| VC-9.2    | FR-9        | `libtest` | `control_rs_ets::profiler::tests::test_default_profiler_methods`                                                                                         | Profiled execution wraps the measured test body inside the scoped interrupt-masking bracket                                                                 |
-| VC-10.1   | FR-10       | `link`    | `ets-executive#FR-7`, `host-comm#FR-5`                                                                                                                   | Component hardware identification and environment telemetry requirements hold; FR-10 holds iff all conditions hold                                          |
-| VC-10.2   | FR-10       | `libtest` | `control_rs_ets::comms::tests::test_golden_wire_vector_target_info`                                                                                      | Target identity and clock metadata round-trip cleanly through the wire telemetry schema                                                                     |
-| VC-11.1   | FR-11       | `link`    | `host-comm#FR-2`, `host-comm#NFR-3`                                                                                                                      | Component framed packet exchange and stream resynchronization requirements hold; FR-11 holds iff all conditions hold                                        |
-| VC-11.2   | FR-11       | `libtest` | `control_rs_ets::comms::tests::test_frame_telemetry_round_trip_and_corruption`                                                                           | Corrupted wire bytes are rejected by CRC-16 and the frame reader resynchronizes on the next valid telemetry frame                                           |
-| VC-12.1   | FR-12       | `link`    | `host-comm#FR-7`                                                                                                                                         | Component multiplexed firmware log stream requirement holds; FR-12 holds iff this condition holds                                                           |
-| VC-12.2   | FR-12       | `libtest` | `control_rs_ets::comms::tests::test_frame_reader_interleaved_log_stream_and_telemetry`                                                                   | A byte stream mixing log text and frames comes out as exactly that text plus exactly those frames                                                           |
-| VC-13.1   | FR-13       | `link`    | `test-suite#FR-4`, `macros#FR-4`, `ets-executive#FR-5`                                                                                                   | Component runtime-tunable parameter, macro promotion, and executive setting mutation requirements hold; FR-13 holds iff all conditions hold                 |
-| VC-13.2   | FR-13       | `libtest` | `control_rs_ets::server::tests::test_server_set_setting`, `control_rs_ets::server::tests::test_server_set_setting_type_mismatch`                         | Executive applies valid live setting updates and rejects mismatched setting types without mutating stored values                                            |
-| VC-14.1   | FR-14       | `gate`    | `build`                                                                                                                                                  | Host crates and procedural macros build cleanly with `std` without leaking host dependencies into target builds; FR-14 holds iff this condition holds       |
-| VC-15.1   | FR-15       | `link`    | `ets-executive#FR-2`, `test-suite#FR-2`, `host-comm#FR-2`                                                                                                | Component diagnostic suite discovery, descriptor, and framed protocol requirements hold; FR-15 holds iff all conditions hold                               |
-| VC-15.2   | FR-15       | `libtest` | `control_rs_ets::server::tests::test_server_diagnostic_suite_discovery`                                                                                  | Discovery always emits the built-in diagnostic suite at `suite_id = 0` followed by user suites at indices `1..=N` when `diagnostics` is enabled, even when the user suite slice is empty |
-| VC-15.3   | FR-15       | `libtest` | `control_rs_ets::server::tests::test_server_diagnostic_suite_zero_cost_when_disabled`                                                                    | When diagnostic features are disabled, `DIAGNOSTIC_SUITE` is omitted from `.rodata` with 0 bytes Flash and 0 bytes RAM, and user suites index directly from 0 |
-| VC-15.4   | FR-15       | `libtest` | `control_rs_ets::server::tests::test_server_user_suite_offset_dispatch_and_settings`                                                                     | Case dispatch and setting mutation resolve `suite_id = 0` to the built-in diagnostic suite, index `self.suites` via `suite_id.saturating_sub(1)` for `suite_id >= 1`, and report out-of-bounds indices without panicking |
-| VC-15.5   | FR-15       | `libtest` | `control_rs_ets::server::tests::test_server_diagnostic_case_tare`                                                                                         | `Command::RunExecutable { suite_id: 0, test_id: 0 }` executes the built-in `tare` no-op case and emits `Running`, `Passed`, and `MetricReport` telemetry frames |
-| VC-15.6   | FR-15       | `libtest` | `control_rs_ets::server::tests::test_server_tare_matches_empty_user_test`                                                                                | Executing `(suite_id: 0, test_id: 0)` and executing an empty user test at `suite_id = 1` invoke identical `CPUProfiler` hook sequences, context tracker transitions, and metric reports |
-| VC-15.7   | FR-15       | `libtest` | `control_rs_ets::server::tests::test_server_diagnostic_case_spin`                                                                                         | Executing `spin` across multiple `spin_iters` counts confirms cycle counts scale linearly ($R^2 \ge 0.999$), duration agrees with cycles, and long runs survive counter wrap |
-| VC-15.8   | FR-15       | `libtest` | `control_rs_ets::server::tests::test_server_diagnostic_case_stack`                                                                                        | Executing `stack` across varying `stack_depth` recursion levels confirms stack painting reports peak stack usage fitting depth within $\pm 4$ bytes per level |
-| VC-15.9   | FR-15       | `libtest` | `control_rs_ets::server::tests::test_server_diagnostic_case_encode`                                                                                       | Executing `encode` frames `encode_records` telemetry records into a stack buffer without transport I/O, isolating frame encoding overhead and jitter |
-| VC-15.10  | FR-15       | `libtest` | `control_rs_ets::server::tests::test_server_diagnostic_case_irq_masked`                                                                                  | Executing `irq_masked` asserts interrupts are disabled within the measured critical section |
-| VC-15.11  | FR-15       | `libtest` | `control_rs_ets::server::tests::test_server_diagnostic_case_fpu`                                                                                         | Executing `fpu` on hardware-FPU builds verifies floating-point operations succeed and match `TargetInfo` capability flags |
-| VC-15.12  | FR-15       | `libtest` | `control_rs_ets::server::tests::test_server_diagnostic_case_settings`                                                                                    | Asserts bit-for-bit equality and mutation across 8 probe setting types, including 64-bit edge value `0x8000_0000_0000_0001` for `probe_u64` without 32-bit truncation |
-| VC-15.13  | FR-15       | `libtest` | `control_rs_ets::server::tests::test_server_diagnostic_fault_cases`                                                                                       | Under `diagnostics-fault`, executing `panic` captures forensic record with case attribution before reset, executing `exception` captures illegal instruction, and executing `hang` times out and triggers watchdog recovery |
-| VC-16.1   | NFR-1       | `link`    | `host-comm#NFR-1`, `ets-executive#NFR-3`                                                                                                                 | Component single-pass framing latency and zero-allocation telemetry requirements hold; NFR-1 holds iff this condition holds                                 |
-| VC-17.1   | NFR-2       | `link`    | `test-suite#NFR-1`, `macros#NFR-1`                                                                                                                       | Component Flash placement requirements for suite, case, and constant descriptors hold; NFR-2 holds iff all conditions hold                                  |
-| VC-17.2   | NFR-2       | `libtest` | `control_rs_ets::tests::test_flash_descriptor_sizes`                                                                                                     | Suite and case descriptors reside in read-only memory and consume zero static RAM at idle                                                                   |
-| VC-18.1   | C-1         | `gate`    | `build`                                                                                                                                                  | Target crate `control-rs-ets` compiles for ARM Cortex-M and RISC-V targets under `#![no_std]` with zero heap allocation; C-1 holds iff this condition holds |
-| VC-18.2   | C-2         | `link`    | `ets-executive#C-2`, `test-suite#NFR-2`                                                                                                                  | Total static memory overhead remains within 32 KB Flash and 8 KB RAM bounds; C-2 holds iff both conditions hold                                             |
+| Condition | Requirement | Method    | Target                                                                                                                           | Criterion                                                                                                                                                                                                                                               |
+|:----------|:------------|:----------|:---------------------------------------------------------------------------------------------------------------------------------|:--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| VC-1.1    | FR-1        | `link`    | `test-suite#FR-1`, `test-suite#FR-2`, `test-suite#FR-3`, `macros#FR-1`, `macros#FR-2`, `ets-executive#FR-2`, `host-comm#FR-2`    | Component suite, case, constant, macro, executive discovery, and framing requirements hold; FR-1 holds iff all conditions hold                                                                                                                          |
+| VC-1.2    | FR-1        | `libtest` | `control_rs_ets::server::tests::test_server_discovery`                                                                           | Reported records equal declared records; every record with name ≤ 64 B and description ≤ 384 B encodes into one frame (payload ≤ 512 B)                                                                                                                 |
+| VC-1.3    | FR-1        | `gate`    | `ets-teensy4`                                                                                                                    | Discovery of 256 maximum-size records completes in ≤ 1 s over USB FS CDC with 0 records missing                                                                                                                                                         |
+| VC-1.4    | FR-1        | `libtest` | `control_rs_ets::server::tests::test_suite_limits`                                                                               | Indices resolve for 65,534 user suites and 65,535 records of each kind per suite; larger indices return an out-of-range report without panicking                                                                                                        |
+| VC-2.1    | FR-2        | `link`    | `test-suite#FR-2`, `ets-executive#FR-1`, `ets-executive#FR-2`, `host-comm#FR-2`                                                  | Component case descriptor, command loop, dispatch, and framing requirements hold; FR-2 holds iff all conditions hold                                                                                                                                    |
+| VC-2.2    | FR-2        | `libtest` | `control_rs_ets::server::tests::test_server_run_test`                                                                            | 0 cases execute without a command; each command executes exactly 1 case, the one requested                                                                                                                                                              |
+| VC-2.3    | FR-2        | `gate`    | `ets-teensy4`                                                                                                                    | Idle poll interval ≤ 100 µs over 10^5 loop iterations                                                                                                                                                                                                   |
+| VC-3.1    | FR-3        | `link`    | `ets-executive#FR-3`, `ets-executive#FR-6`, `host-comm#FR-6`                                                                     | Component lifecycle tracking, failure handler, and panic wire schema requirements hold; FR-3 holds iff all conditions hold                                                                                                                              |
+| VC-3.2    | FR-3        | `libtest` | `control_rs_ets::util::tests::test_handle_failure_comms_active`                                                                  | Each run yields exactly 1 verdict attributed to its suite and case; a fault record with location ≤ 128 B and message ≤ 256 B encodes into one frame                                                                                                     |
+| VC-3.3    | FR-3        | `gate`    | `ets-teensy4`                                                                                                                    | Diagnostic `panic` and `exception`: record transmission starts ≤ 1 ms after fault entry; with no host reset, target resets or halts ≤ 1 s after the record                                                                                              |
+| VC-4.1    | FR-4        | `link`    | `test-suite#FR-5`, `macros#FR-1`                                                                                                 | Component decentralized inclusion and suite macro requirements hold; FR-4 holds iff all conditions hold                                                                                                                                                 |
+| VC-4.2    | FR-4        | `libtest` | `control_rs_ets::util::tests::test_get_suites_fn`                                                                                | Suites enabled by the build configuration appear in the reconstructed suite slice without a central registration table                                                                                                                                  |
+| VC-5.1    | FR-5        | `link`    | `ets-executive#FR-1`, `host-comm#FR-1`                                                                                           | Component event loop and transport abstraction requirements hold; FR-5 holds iff all conditions hold                                                                                                                                                    |
+| VC-5.2    | FR-5        | `gate`    | `virtual-ets`                                                                                                                    | Discovery output differs from the same firmware on silicon by 0 B outside `TargetInfo`; every emulated metric carries the emulated flag                                                                                                                 |
+| VC-6.1    | FR-6        | `link`    | `ets-executive#FR-7`, `cpu-profiler#FR-8`                                                                                        | Component target lifecycle and profiler reset/exit hook requirements hold; FR-6 holds iff all conditions hold                                                                                                                                           |
+| VC-6.2    | FR-6        | `libtest` | `control_rs_ets::server::tests::test_server_exit`, `control_rs_ets::server::tests::test_server_ok_to_reset`                      | Reset and exit commands flush telemetry before the hook; emulator exit code is 0 iff every executed case passed                                                                                                                                         |
+| VC-6.3    | FR-6        | `gate`    | `ets-teensy4`                                                                                                                    | Reset ≤ 10 ms after the request; target accepts commands ≤ 1 s after reset, excluding USB enumeration                                                                                                                                                   |
+| VC-6.4    | FR-6        | `gate`    | `virtual-ets`                                                                                                                    | Emulator exits ≤ 100 ms after the exit request                                                                                                                                                                                                          |
+| VC-7.1    | FR-7        | `link`    | `cpu-profiler#FR-1`, `cpu-profiler#FR-2`, `ets-executive#FR-4`                                                                   | Component cycle counter, wall-clock timer, and executive profiling bracket requirements hold; FR-7 holds iff all conditions hold                                                                                                                        |
+| VC-7.2    | FR-7        | `libtest` | `control_rs_ets::server::tests::test_host_cpu_profile_utils`                                                                     | Cycle difference taken modulo 2^32 (start 2^32 − 1,000, end 9,000 reports 10,000); duration resolution ≤ 1 µs                                                                                                                                           |
+| VC-7.3    | FR-7        | `gate`    | `ets-teensy4`                                                                                                                    | Diagnostic `spin` at ≥ 3 counts up to 2^32 − 1 cycles, one spanning a wrap: cycles linear in iterations (R^2 ≥ 0.999); relative error between cycles / `f_clk` and duration ≤ 1% for intervals ≥ 10,000 cycles; duration resolution ≤ 1 µs              |
+| VC-8.1    | FR-8        | `link`    | `cpu-profiler#FR-3`, `cpu-profiler#FR-4`, `ets-executive#FR-4`                                                                   | Component stack boundary, watermark painting, and executive profiling bracket requirements hold; FR-8 holds iff all conditions hold                                                                                                                     |
+| VC-8.2    | FR-8        | `libtest` | `control_rs_ets::profiler::tests::test_stack_paint_exhaustion_clamp`                                                             | Paint and scan touch only `[stack_end, sp]`; untouched baseline reports 0 B; peak resolution 4 B                                                                                                                                                        |
+| VC-8.3    | FR-8        | `gate`    | `ets-teensy4`                                                                                                                    | Diagnostic `stack` at ≥ 3 depths: peak matches the fitted per-frame line with 0 B intercept (no artificial dead-zone); paint and scan ≤ 2 cycles per byte of free stack                                                                                 |
+| VC-9.1    | FR-9        | `link`    | `cpu-profiler#FR-7`, `ets-executive#FR-4`                                                                                        | Component interrupt isolation and executive profiling bracket requirements hold; FR-9 holds iff all conditions hold                                                                                                                                     |
+| VC-9.2    | FR-9        | `libtest` | `control_rs_ets::profiler::tests::test_default_profiler_methods`                                                                 | Profiled execution wraps the measured test body inside the scoped interrupt-masking bracket                                                                                                                                                             |
+| VC-9.3    | FR-9        | `gate`    | `ets-teensy4`                                                                                                                    | Diagnostic `tare`, 1,000 runs after the first: offset ≤ 50 cycles, spread ≤ 4 cycles; `irq_masked` passes                                                                                                                                               |
+| VC-10.1   | FR-10       | `link`    | `ets-executive#FR-7`, `host-comm#FR-5`                                                                                           | Component hardware identification and environment telemetry requirements hold; FR-10 holds iff all conditions hold                                                                                                                                      |
+| VC-10.2   | FR-10       | `libtest` | `control_rs_ets::comms::tests::test_golden_wire_vector_target_info`                                                              | `TargetInfo` round-trips core clock (Hz), counter width (bits, 0 when absent), time-base resolution (nanoseconds) and maximum valid interval (µs)                                                                                                       |
+| VC-10.3   | FR-10       | `gate`    | `ets-teensy4`                                                                                                                    | Reported core clock equals configured clock (0 Hz error); diagnostic `fpu` passes whenever the FPU flag is set                                                                                                                                          |
+| VC-11.1   | FR-11       | `link`    | `host-comm#FR-2`, `host-comm#NFR-3`                                                                                              | Component framed packet exchange and stream resynchronization requirements hold; FR-11 holds iff all conditions hold                                                                                                                                    |
+| VC-11.2   | FR-11       | `libtest` | `control_rs_ets::comms::tests::test_frame_telemetry_round_trip_and_corruption`                                                   | Every 1-bit, 2-bit, and 3-bit error and every burst ≤ 16 bits over the payload slice of frames ≤ 518 B is rejected by CRC-16 (HD ≥ 4); header sync and length corruption are rejected by framing parser validation; ≤ 1 frame lost per corruption event |
+| VC-11.3   | FR-11       | `gate`    | `ets-teensy4`                                                                                                                    | Stream fixture at ≥ 1,000 records/s of 16 `f32` over USB FS CDC: 0 sequence gaps in 10^6 records; with the host stalled, drops are counted and every received frame passes CRC                                                                          |
+| VC-12.1   | FR-12       | `link`    | `host-comm#FR-7`                                                                                                                 | Component multiplexed firmware log stream requirement holds; FR-12 holds iff this condition holds                                                                                                                                                       |
+| VC-12.2   | FR-12       | `libtest` | `control_rs_ets::comms::tests::test_frame_reader_interleaved_log_stream_and_telemetry`                                           | A byte stream mixing log text and frames comes out as exactly that text plus exactly those frames                                                                                                                                                       |
+| VC-13.1   | FR-13       | `link`    | `test-suite#FR-4`, `macros#FR-4`, `ets-executive#FR-5`                                                                           | Component runtime-tunable parameter, macro promotion, and executive setting mutation requirements hold; FR-13 holds iff all conditions hold                                                                                                             |
+| VC-13.2   | FR-13       | `libtest` | `control_rs_ets::server::tests::test_server_set_setting`, `control_rs_ets::server::tests::test_server_set_setting_type_mismatch` | A valid update is visible to the next read; a type mismatch is rejected with the stored value unchanged; 0 torn reads                                                                                                                                   |
+| VC-13.3   | FR-13       | `gate`    | `ets-teensy4`                                                                                                                    | Diagnostic `settings`: all 8 `SettingValue` types round-trip bit-exact; update applied ≤ 100 µs after frame receipt while idle; read ≤ 30 cycles for T ≤ 32 bits; rejection ≤ 1 ms after the frame                                                      |
+| VC-14.1   | FR-14       | `gate`    | `build`                                                                                                                          | Host crates and procedural macros build cleanly with `std` without leaking host dependencies into target builds; FR-14 holds iff this condition holds                                                                                                   |
+| VC-15.1   | FR-15       | `link`    | `ets-executive#FR-2`, `test-suite#FR-2`, `host-comm#FR-2`                                                                        | Component diagnostic suite discovery, descriptor, and framed protocol requirements hold; FR-15 holds iff all conditions hold                                                                                                                            |
+| VC-15.2   | FR-15       | `libtest` | `control_rs_ets::server::tests::test_server_diagnostic_suite_discovery`                                                          | Discovery always emits the built-in diagnostic suite at `suite_id = 0` followed by user suites at indices `1..=N` when `diagnostics` is enabled                                                                                                         |
+| VC-15.3   | FR-15       | `gate`    | `virtual-ets`                                                                                                                    | With diagnostics disabled, Flash and static RAM equal a build without suite 0 code (0 B difference)                                                                                                                                                     |
+| VC-16.1   | NFR-1       | `link`    | `host-comm#NFR-1`, `ets-executive#NFR-3`                                                                                         | Component single-pass framing latency and zero-allocation telemetry requirements hold; NFR-1 holds iff this condition holds                                                                                                                             |
+| VC-16.2   | NFR-1       | `gate`    | `ets-teensy4`                                                                                                                    | Diagnostic `encode`, 10^5 records ≤ 64 B: encode-and-frame spread ≤ 10 µs (6,000 cycles at 600 MHz)                                                                                                                                                     |
+| VC-17.1   | NFR-2       | `link`    | `test-suite#NFR-1`, `macros#NFR-1`                                                                                               | Component Flash placement requirements for suite, case, and constant descriptors hold; NFR-2 holds iff all conditions hold                                                                                                                              |
+| VC-17.2   | NFR-2       | `gate`    | `virtual-ets`                                                                                                                    | Suite, case and constant metadata add 0 B to `.data` and `.bss` in the post-link section map                                                                                                                                                            |
+| VC-18.1   | C-1         | `gate`    | `build`                                                                                                                          | Target crate `control-rs-ets` compiles for ARM Cortex-M and RISC-V targets under `#![no_std]` with zero heap allocation; C-1 holds iff this condition holds                                                                                             |
+| VC-18.2   | C-2         | `gate`    | `virtual-ets`                                                                                                                    | Zero-suite firmware: Flash ≤ 32 KB, static RAM ≤ 2 KB, peak executive stack ≤ 2 KB                                                                                                                                                                      |
+
+##### 6.1.1. Verification Gate Harness Architecture
+
+The verification matrix partitions validation across unit tests (`libtest`),
+target compilation checks (`build`), virtual target analysis (`virtual-ets`)
+and physical hardware benchmarking (`ets-teensy4`):
+
+* **Host-Driven Hardware Gate (`ets-teensy4`)**:
+  Discharges timing, real-time throughput, and physical target conditions
+  (VC-1.3, VC-2.3, VC-3.3, VC-6.3, VC-7.3, VC-8.3, VC-9.3, VC-10.3, VC-11.3,
+  VC-13.3, and VC-16.2).
+    - *Implementation*: A host-side test runner script connects to a physical
+      Teensy 4.0 or 4.1 development board over USB FS CDC (`/dev/ttyACM*`).
+      The runner initiates an interactive session, executes discovery,
+      dispatches
+      diagnostic cases (`tare`, `spin`, `stack`, `encode`, `irq_masked`, `fpu`,
+      `settings`, `panic`, and `exception`), exercises settings mutations and
+      captures streaming telemetry frames.
+    - *Result Persistence, Staleness Prevention and CI Decoupling*: Because
+      cloud
+      CI runners operate without attached USB hardware, the hardware session
+      records the transcript, timing measurements and verdicts into a structured
+      results file (`target/ci-artifacts/ets-teensy4.json`). When executed
+      within
+      the automated CI pipeline, the `ets-teensy4` gate reads these recorded
+      local
+      results from the hardware session and verifies that every measurement
+      satisfies its condition bounds.
+      To prevent stale execution logs from masking regressions, the gate
+      inspects
+      the results file timestamp and verifies it is strictly more recent than
+      the
+      commit timestamp of git `HEAD`. If the results file is missing or older
+      than
+      `HEAD`, the gate fails.
+    - *ETS-2 Runner Alignment*: Interactive session automation and automated
+      host
+      runners belong to ETS-2 (`control-rs-ci` / `Session`). In ETS-1, the gate
+      consumes and validates the structured results artifact produced by the
+      physical
+      runner, keeping the verification gate decoupled without conflicting with
+      the
+      ETS-2 CI runner scope.
+    - *Gate Verification*: The `ets-teensy4` gate verification logic is itself
+      verified in CI through synthetic wire traces and mock transport streams,
+      confirming that command framing, response decoding, CRC fault accounting
+      and bound checks operate correctly without requiring connected silicon.
+
+* **Virtual Target Simulation (`virtual-ets`)**:
+  Discharges emulation and binary footprint conditions (VC-5.2, VC-6.4, VC-15.3,
+  VC-17.2 and VC-18.2). Uses QEMU or native target simulation combined with
+  post-link section analysis (`llvm-size`, `llvm-objdump`) to verify `.data` and
+  `.bss` overhead, Flash consumption, and emulator exit codes.
 
 #### 6.2 Acceptance
 
-| Claim                       | Oracle                   | Measure                               | Bound                        |
-|:----------------------------|:-------------------------|:--------------------------------------|:-----------------------------|
-| Discovery completeness      | Source annotations       | Suites and cases reported to host     | Exact set equality           |
-| Persistent execution        | Suite of *n* cases       | Target restarts during suite          | 0, absent injected fault     |
-| Cycle telemetry attribution | Case boundaries          | Reports attributed to running case    | 1:1, no orphans              |
-| Panic capture               | Injected panic           | Forensic record received before reset | Received, with location      |
-| Cooperative reset           | Command listener         | Reset request serviced                | Acknowledged, clean reboot   |
-| Frame resynchronization     | Injected corrupted bytes | Frames lost before recovery           | At most one                  |
-| Allocation freedom          | Disassembly              | Dynamic allocator symbols             | 0                            |
-| `spin` scaling linearity    | Calibration runs         | Cycle correlation $R^2$ vs iterations | $R^2 \ge 0.999$              |
-| `stack` frame displacement  | Host fit                 | Residual of peak stack vs depth fit   | $\le \pm 4$ bytes per level  |
-| Settings bit fidelity       | Probe readback           | Bit-for-bit equality across 8 types   | 100%, 0 truncation on 32-bit |
-| Tare calibration offset     | Executable dispatch      | Hook sequence and metric equivalence  | Identical to empty user test |
-| Diagnostic suite zero cost  | Binary footprint         | Flash and RAM delta with features off | 0 bytes Flash, 0 bytes RAM   |
-| Diagnostic fault capture    | Injected panic/exception | Forensic record received before reset | Received, with location      |
+| Claim                       | Oracle                   | Measure                               | Bound                                                         |
+|:----------------------------|:-------------------------|:--------------------------------------|:--------------------------------------------------------------|
+| Discovery completeness      | Source annotations       | Suites and cases reported to host     | Exact set equality                                            |
+| Persistent execution        | Suite of *n* cases       | Target restarts during suite          | 0, absent injected fault                                      |
+| Cycle telemetry attribution | Case boundaries          | Reports attributed to running case    | 1:1, no orphans                                               |
+| Panic capture               | Injected panic           | Forensic record received before reset | Received, with location                                       |
+| Cooperative reset           | Command listener         | Reset request serviced                | Acknowledged, clean reboot                                    |
+| Frame resynchronization     | Injected corrupted bytes | Frames lost before recovery           | At most one                                                   |
+| Allocation freedom          | Disassembly              | Dynamic allocator symbols             | 0                                                             |
+| `spin` scaling linearity    | Calibration runs         | Cycle correlation $R^2$ vs iterations | $R^2 \ge 0.999$, agreement $\le 1\%$ over $\ge 10,000$ cycles |
+| `stack` frame displacement  | Host fit                 | Residual of peak stack vs depth fit   | $\le \pm 4$ bytes per level                                   |
+| Settings bit fidelity       | Probe readback           | Bit-for-bit equality across 8 types   | 100%, 0 truncation on 32-bit                                  |
+| Tare calibration offset     | Executable dispatch      | Hook sequence and metric equivalence  | Identical to empty user test                                  |
+| Diagnostic suite zero cost  | Binary footprint         | Flash and RAM delta with features off | 0 bytes Flash, 0 bytes RAM                                    |
+| Diagnostic fault capture    | Injected panic/exception | Forensic record received before reset | Received, with location                                       |
 
 #### 6.3 Limits
 
@@ -516,7 +658,8 @@ across primitive variants using boundary conditions:
 ### 7. Performance & Resource Considerations
 
 * **Flash/RAM Footprint**: Target-side `control-rs-ets` consumes less than 32 KB
-  Flash and 8 KB RAM. Descriptors reside in Flash ROM.
+  Flash and 8 KB RAM, with a zero-suite minimal runtime contributing under 2 KB
+  static RAM and 2 KB stack. Descriptors reside in Flash ROM.
 * **Zero Allocations**: All target telemetry paths operate with zero dynamic
   heap allocations.
 * **Control Loop Determinism**: Hot-path telemetry transmission is framed
@@ -539,8 +682,8 @@ across primitive variants using boundary conditions:
 |:--------------------------------------|:-----------------------------------------------------------------------------------|:-------------------------------------------------------|:-------|:--------|
 | 1. Test Discovery & Suite Model       | Test suite data model (`test-suite`) and procedural macros (`macros`) in `ETS-1`   | FR-4, NFR-2, C-1                                       | 5 days | Shipped |
 | 2. CPU Profiling & Measurement        | Hardware performance profiling and stack watermarking (`cpu-profiler`) in `ETS-1`  | FR-7, FR-8, FR-9, C-1                                  | 3 days | Shipped |
-| 3. Host Communications & Framing      | Packet-framed transport and Postcard serialization (`host-comm`) in `ETS-2`        | FR-10, FR-11, FR-12, NFR-1, C-1                        | 3 days | Planned |
-| 4. ETS Executive & Execution Platform | Persistent command loop, dispatch, lifecycle tracking (`ets-executive`) in `ETS-3` | FR-1, FR-2, FR-3, FR-5, FR-6, FR-12, FR-13, FR-15, C-2 | 4 days | Planned |
+| 3. Host Communications & Framing      | Packet-framed transport and Postcard serialization (`host-comm`) in `ETS-1`        | FR-10, FR-11, FR-12, NFR-1, C-1                        | 3 days | Shipped |
+| 4. ETS Executive & Execution Platform | Persistent command loop, dispatch, lifecycle tracking (`ets-executive`) in `ETS-1` | FR-1, FR-2, FR-3, FR-5, FR-6, FR-12, FR-13, FR-15, C-2 | 4 days | Shipped |
 
 ---
 
@@ -551,7 +694,7 @@ across primitive variants using boundary conditions:
 | 1.0      | August 29, 2026   | @MitchellDScott              | Embedded Test Server: linker-section discovery, CRC-16 `postcard` framing and the `control-rs-ets` crate.                                                                                                                                             |
 | 2.0      | November 8, 2026  | @MitchellDScott, Antigravity | Lead architecture coordinating ETS-1, ETS-2, and ETS-3; aligned high-level link conditions, phased development plan, and pure Platform data struct. Affects FR-7.                                                                                     |
 | 2.1      | November 15, 2026 | @MitchellDScott, Antigravity | Derive product requirements from ConOps scenarios and verify each through component links and integration tests. Affects C-1, C-2, C-3, FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, FR-9, FR-10, FR-11, FR-12, FR-13, FR-14, FR-15, NFR-1, NFR-2. |
-| 3.0 | November 17, 2026 | Antigravity | Align FR-8, FR-9 with 3-arm profiling model; relocate built-in diagnostic suite architecture, tare calibration model, and verification conditions from executive to lead. |
+| 3.0      | November 17, 2026 | Antigravity                  | Align FR-8, FR-9 with 3-arm profiling model; relocate built-in diagnostic suite architecture, tare calibration model, and verification conditions from executive to lead.                                                                             |
 
 ---
 
@@ -561,22 +704,28 @@ across primitive variants using boundary conditions:
 Available: https://docs.rs/embedded-test/latest/embedded_test/. Accessed: Aug.
 7, 2026.
 
-[2] David Tolnay, "linkme," *dtolnay/linkme*. [Online].
-Available: https://docs.rs/linkme/latest/linkme/struct.DistributedSlice.html.
-Accessed: Aug. 7, 2026.
-
-[3] Noah Pendleton, "Measuring Stack Usage the Hard Way," *Interrupt (Memfault
+[2] Noah Pendleton, "Measuring Stack Usage the Hard Way," *Interrupt (Memfault
 blog)*. [Online].
 Available: https://interrupt.memfault.com/blog/measuring-stack-usage. Accessed:
 Aug. 7, 2026.
 
-[4] Nick Miller, "How Golioth uses Hardware-in-the-Loop (HIL) Testing: Part 2,"
+[3] Nick Miller, "How Golioth uses Hardware-in-the-Loop (HIL) Testing: Part 2,"
 *The Golioth Developer Blog*, 2022. [Online].
 Available: https://blog.golioth.io/golioth-hil-testing-part2/. Accessed: Aug. 7,
 
 2026.
 
-[5] National Instruments (Emerson), "Hardware-in-the-Loop (HIL) Testing," *NI
+[4] National Instruments (Emerson), "Hardware-in-the-Loop (HIL) Testing," *NI
 solutions pages*, 2026. [Online].
 Available: https://www.ni.com/en/solutions/hardware-in-the-loop-testing.html.
 Accessed: Aug. 7, 2026.
+
+[5] Arm Limited, "Armv7-M Architecture Reference Manual," ARM DDI 0403E.e, 2021.
+[Online]. Available: https://developer.arm.com/documentation/ddi0403/latest.
+Accessed: Oct. 13, 2026.
+
+[6] NXP Semiconductors, "i.MX RT1060 Processor Reference Manual," Rev. 3, Jul.
+
+2021. [Online].
+      Available: https://www.nxp.com/docs/en/reference-manual/IMXRT1060RM.pdf.
+      Accessed: Oct. 13, 2026.

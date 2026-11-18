@@ -271,9 +271,9 @@ To eliminate target startup and trap boilerplate on bare-metal builds (`#[cfg(ta
 | Phase | Delivers | Requirements | Effort | Status |
 |:---|:---|:---|:---|:---|
 | 1. Parser Core | `syn` parser implementation for `#[ets_suite]` | FR-1 | 2 days | Shipped |
-| 2. Code Generation | AST templates for `SuiteDescriptor`, `ExecDescriptor`, `ConstantDescriptor`, and `TripleBuffer` settings | FR-1, FR-2, FR-3, FR-6, FR-8, FR-9, NFR-1, NFR-3, C-1 | 2 days | Shipped |
+| 2. Code Generation | AST templates for `SuiteDescriptor` and `ExecDescriptor` | FR-1, FR-2, FR-6, FR-8, FR-9, NFR-1, NFR-3, C-1 | 2 days | Shipped |
 | 3. Section Emission | `#[used]` pointer static conforming to the suites section ABI | FR-1, NFR-2, C-2 | 1 day | Shipped |
-| 4. Static Settings, Entrypoint Macros & Diagnostics | Static parameter promotion via `TripleBuffer<T>`, `#[ets_setup]`/`ets_entrypoint!`/`ets_panic!`/`ets_exception!`, and spanned diagnostics | FR-4, FR-5, FR-7 | 2 days | Shipped |
+| 4. Static Settings, Entrypoint Macros & Diagnostics | Static parameter promotion via `TripleBuffer<T>`, compile-time constants, and target entrypoints | FR-3, FR-4, FR-5, FR-7 | 2 days | Planned |
 
 ---
 

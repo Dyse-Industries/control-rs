@@ -131,6 +131,7 @@ Kincaid
 Kochenderfer
 Kolda
 Koo
+Koopman
 Krogh
 LAPACK's
 LLVM's
@@ -144,6 +145,7 @@ Liu
 Louvet
 Luenberger
 MCU's
+MCUs
 MLSys
 MSBs
 Maskable
@@ -193,6 +195,7 @@ Ramakrishnan
 Ratatui
 Redox
 Reitermarkus
+Renesas
 Renode
 Rierson
 Ronacher
@@ -331,6 +334,7 @@ deserialized
 deserializer
 deserializing
 dest
+desynchronization
 det
 dimforge
 discretization
@@ -538,6 +542,7 @@ teardown
 tf
 tickless
 tiering
+timebase
 toolchain
 toolchains
 transcendentals

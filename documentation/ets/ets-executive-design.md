@@ -79,7 +79,8 @@ parameter mutation.
   strictly zero dynamic heap allocation.
 - **C-2 - Bounded Flash and RAM Footprint**: The target executive implementation
   (excluding test payloads) must consume under 32 KB Flash memory and under 8 KB
-  RAM, with test suite descriptors residing in Flash ROM.
+  RAM, with zero-suite baseline static RAM under 2 KB and test suite descriptors
+  residing in Flash ROM.
 
 ---
 
@@ -403,7 +404,10 @@ pub fn handle_failure<C: HostComms, P: CPUProfiler>(
 
 `FailureBufWriter` guarantees zero dynamic heap allocation and enforces strict
 capacity limits, cleanly truncating messages that exceed 256 bytes without
-panicking or writing out of bounds.
+panicking or writing out of bounds. This 256-byte message buffer, combined with
+up to 128 bytes for forensic file/line location and 16 bytes for wire metadata,
+guarantees that forensic failure reports fit entirely within the 512-byte
+single-frame payload ceiling (`host-comm` C-2).
 
 #### 4.6. Platform Struct: Hardware Identity
 
@@ -441,8 +445,9 @@ the execution loop:
 2. Validates `setting_id < suite.settings.len()`.
 3. Verifies that the requested `SettingValue` matches the registered parameter's
    type (`SettingType`).
-4. On type match, applies the updated value using atomic or interior-mutable
-   descriptors and echoes the updated state via `Telemetry::SettingUpdate`.
+4. On type match, applies the updated value using `TripleBuffer<T>`
+   interior-mutable descriptors and echoes the updated state via
+   `Telemetry::SettingUpdate`.
 5. On type mismatch or invalid index, emits an error diagnostic telemetry log
    without corrupting setting memory or terminating the server.
 
@@ -529,9 +534,9 @@ the execution loop:
   stack or static buffers.
 - **Microsecond Clock Precision**: Profiling durations derive directly from
   hardware timer nanoseconds converted to microseconds.
-- **Footprint**: Compiled executive logic contributes fewer than 12 KB
-  Flash
-  and under 2 KB RAM overhead.
+- **Footprint**: Compiled executive logic contributes fewer than 12 KB Flash
+  and under 2 KB static RAM overhead; complete runtime with parameter buffers stays
+  bounded within 8 KB RAM.
 
 ---
 
@@ -564,11 +569,4 @@ the execution loop:
 
 ## References
 
-[1] embedded-test, "embedded_test," *docs.rs*. [Online].
-Available: https://docs.rs/embedded-test/latest/embedded_test/. Accessed: Aug.
-7, 2026.
-
-[2] Noah Pendleton, "Measuring Stack Usage the Hard Way," *Interrupt (Memfault
-blog)*. [Online].
-Available: https://interrupt.memfault.com/blog/measuring-stack-usage. Accessed:
-Aug. 7, 2026.
+None.

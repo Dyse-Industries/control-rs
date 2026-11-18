@@ -83,7 +83,7 @@ fn demonstrate_stack_painting() {
         "  Unused stack memory painted with sentinel bytes (0xCDCD_CDCD)."
     );
 
-    // 2. Measure initial baseline peak (relative to SP minus 32-byte safety margin)
+    // 2. Measure initial baseline peak (relative to SP: 0 bytes baseline when untouched)
     let initial_peak = unsafe { profiler.read_stack_peak(sp) };
     println!("  Initial Baseline Stack Peak: {initial_peak} bytes");
 
