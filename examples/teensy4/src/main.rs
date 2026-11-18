@@ -167,6 +167,41 @@ pub mod teensy_pid_suite {
         assert!((500..=5000).contains(&kp));
     }
 
+    /// Executes a discrete closed-loop PID step from the core control-rs library.
+    fn test_core_pid_closed_loop_step() {
+        use control_rs::classical_control::{AntiWindup, Pid, PidParams};
+
+        let kp = match PROPORTIONAL_GAIN.get() {
+            SettingValue::U32(v) => f64::from(v) / 1000.0,
+            _ => 1.5,
+        };
+        let ki = match INTEGRAL_GAIN.get() {
+            SettingValue::U32(v) => f64::from(v) / 1000.0,
+            _ => 0.4,
+        };
+        let kd = match DERIVATIVE_GAIN.get() {
+            SettingValue::U32(v) => f64::from(v) / 1000.0,
+            _ => 0.08,
+        };
+
+        let mut pid = Pid::new(PidParams {
+            kp,
+            ki,
+            kd,
+            tf: 0.01,
+            h: 0.001,
+            u_min: -10.0,
+            u_max: 10.0,
+            anti_windup: AntiWindup::Clamping,
+        })
+        .expect("valid PID parameters");
+
+        let u0 = pid.step(1.0, 0.0);
+        assert!(u0 > 0.0);
+        let u1 = pid.step(1.0, 0.5);
+        assert!(u1 < u0);
+    }
+
     fn test_intentional_failure() {
         panic!("Intentionally failed to demonstrate TUI state retention");
     }

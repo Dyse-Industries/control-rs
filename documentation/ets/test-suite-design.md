@@ -1,10 +1,8 @@
-# Exportable Test Suites (Design Document)
+# Exportable Test Suites (test-suite)
 
-![Date Badge](https://img.shields.io/badge/Date-September_24,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_29,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
-![Design Status Badge](https://img.shields.io/badge/Design%20Status-Stale-lightgrey)
-
----
+![Design Status Badge](https://img.shields.io/badge/Design%20Status-Draft-orange)
 
 ### 1. Introduction
 
@@ -16,8 +14,14 @@ mechanism to automatically discover, execute or report tests.
 
 This design document establishes the architecture for "Exportable Test Suites"
 designed natively for bare-metal embedded Rust. It enables developers to declare
-test or benchmark suites across multiple files without maintaining a central
+test and benchmark suites with dynamically configurable settings across multiple
+files without maintaining a central
 registry, requiring zero boilerplate and little runtime overhead.
+
+This design specifies the suites data model and its linker-section ABI only.
+It references no other ETS component. How suites are generated, discovered,
+run, measured and reported is specified in the lead ETS design
+([embedded-test-server-design.md](embedded-test-server-design.md)).
 
 ---
 
@@ -25,86 +29,248 @@ registry, requiring zero boilerplate and little runtime overhead.
 
 #### 2.1 Functional Requirements
 
-- **FR-1 - Distributed Suite Discovery**: Test suites and cases must be
-  discoverable across modules and crates at runtime without central registration
-  tables.
-- **FR-2 - Dynamic Parameter Configuration**: Settings on the target must be
-  adjustable from the host (`control-rs-tui`) via typed
-  get/set accessors.
-- **FR-3 - Embedded Metadata**: Test suites and cases must include descriptive
-  metadata and doc-strings stored directly in Flash memory.
+- **FR-1 — Self-describing suite grouping**: Related test cases, fixed
+  parameters and adjustable parameters must be grouped under a named,
+  documented unit that can be inspected at runtime. Without suite-level
+  grouping and metadata, an external runner cannot discover which tests and
+  parameters belong together or what the suite verifies without parsing source
+  files or debug symbols.
+- **FR-2 — Individually addressable test cases**: Each test or benchmark case
+  must expose its name, documentation, callable entry point, and execution
+  profiling
+  policy (`Profile::Full`, `Profile::Unmasked`, `Profile::Off`) for on-demand
+  execution. Without per-case metadata paired with an entry point and profiling
+  arm,
+  a runner cannot discover, invoke, or measure a single case in isolation.
+- **FR-3 — Inspectable compile-time constants**: Fixed suite parameters must
+  expose their name, documentation, type and value for runtime inspection
+  while remaining ordinary compile-time constants in Rust code. Requiring a
+  runtime wrapper around constants would prevent their use in `const` contexts,
+  array bounds and compile-time evaluation.
+- **FR-4 — Runtime-tunable parameters**: Adjustable suite parameters must be
+  readable by executing test code as their native static type and updatable at
+  runtime only with values of the matching type. Parameter updates must not
+  block the reader or produce torn reads during concurrent access, and type
+  mismatches must be rejected without modifying the stored value.
+- **FR-5 — No central suite registration**: Suites enabled by the build
+  configuration must appear in the firmware's available suite set without
+  maintaining a central registration list in the binary root. Requiring a
+  central table couples the application entry point to every test module and
+  risks omitting suites enabled through conditional compilation or Cargo
+  features.
+- **FR-6 — Suite-scoped constant naming**: Distinct suites may expose constants
+  with identical names. Each constant must resolve independently by suite
+  identity and constant name without collision.
+- **FR-7 — Explicit suite membership**: A suite descriptor must include only
+  constants and settings declared directly within that suite. Test cases may
+  use imported or crate-global state, but such state must not be discovered or
+  reported as suite-owned metadata.
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 - Zero Runtime Registration Overhead**: The test registry must be
-  constructed during the linking phase.
-- **NFR-2 - High ROM/RAM Efficiency**: Test descriptors must reside directly in
-  Flash memory (ROM) to conserve RAM.
-- **NFR-3 - Low-Overhead Execution**: Running an empty test function must return
-  immediately, costing only a few cycles.
+- **NFR-1 — Zero static RAM for immutable metadata**: Suite metadata, test case
+  metadata and compile-time constant metadata must consume zero bytes of static
+  RAM, residing entirely in read-only non-volatile memory. Allocating static RAM
+  for test descriptions and constant manifests would exhaust bare-metal memory
+  budgets as the suite library grows.
+- **NFR-2 — Retention under dead-code elimination**: Compiled test suites must
+  remain in the linked firmware image when dead-code elimination is enabled,
+  even when no symbol in the firmware entry point references them directly.
+  Standard embedded link passes strip unreferenced symbols, which would silently
+  discard self-registered suites from the binary.
 
 #### 2.3 Constraints
 
-- **C-1 - Strict `#![no_std]` Execution**: The target-side framework must
-  compile under `#![no_std]` with zero dynamic heap allocation.
-- **C-2 - Target Architecture Constraints**: ARM-V6/7/8 and RISC-V.
-- **C-3 - Eradication of `static mut`**: All global state and configurable
-  settings must use thread-safe interior mutability wrappers, not `static mut`.
+- **C-1 — `#![no_std]` and zero heap allocation**: The module must compile under
+  `#![no_std]` without `alloc` or dynamic heap allocation (conforms to
+  [embedded-test-server-design.md](embedded-test-server-design.md) C-1).
+- **C-2 — No `static mut`**: Shared mutable parameter state must use safe
+  interior mutability and must not use `static mut`.
+- **C-3 — Target architecture portability**: The module must compile across ARM
+  Cortex-M (`ARMv6-M`, `ARMv7-M`, `ARMv8-M`) and RISC-V (`RV32`, `RV64`) targets
+  (conforms to [embedded-test-server-design.md](embedded-test-server-design.md)
+  C-1).
 
 ---
 
 ### 3. Technical Overview
 
-The Exportable Test Suites framework consists of three main components:
-
-1. **Target-side Harness (`control-rs-ets`)**: The on-target interactive Server
-   that manages target execution, dynamic settings configuration and CPU
-   profiling.
-2. **Procedural Macros (`control-rs-macros`)**: Attributes (`#[ets_suite]` and
-   `#[ets_setup]`) that abstract the boilerplate of creating descriptors and
-   wrapping test main functions.
-3. **Host-side Tooling (`control-rs-ets-host` & `control-rs-ci`)**: Transport
-   library and gate binary that cross-compile firmware, discover suites over
-   the wire in a discovery-mode session (`Command::TryReset`, then
-   `Command::ListSuites`, answered by `TargetInfo`, then `SuiteInfo` / `TestInfo`
-   telemetry) and
-   drive test execution headlessly or via `control-rs-tui`. The host does not
-   parse the ELF.
-
 ```mermaid
 flowchart TD
-    Host <==>|UART or RTT| MCU
-
-    subgraph Host ["Host Environment"]
-        direction TB
-        TUI["control-rs-tui"]
-        Bridge["control-rs-ets-host (ETSBridge)"]
-        TUI <--> Bridge
-    end
-
-    subgraph MCU ["Target Microcontroller (control-rs-ets)"]
-        direction TB
-        Server["Server"]
-        Suites[".ets_test_suites"]
-        Settings["Atomic Settings Cache"]
-        Tests["fn() "]
-        Server --> Suites
-        Suites --> Settings
-        Suites --> Tests
-    end
+    SEC[".ets_test_suites (Flash)<br/>&'static SuiteDescriptor ..."]
+    SD["SuiteDescriptor (Flash)"]
+    EX["ExecDescriptor[] (Flash)<br/>name, description, fn(), profile"]
+    CD["ConstantDescriptor[] (Flash)<br/>name, description, SettingValue"]
+    SS["Setting[] (Flash)<br/>name, description, get/set fn"]
+    TB[("TripleBuffer&lt;T&gt; (RAM)<br/>lock-free parameter")]
+    SEC --> SD
+    SD --> EX
+    SD --> CD
+    SD --> SS
+    SS -.-> TB
 ```
 
 ---
 
 ### 4. Architecture
 
-#### 4.1. Linker-Based Distributed Test Discovery
+#### 4.1. Descriptors (`SuiteDescriptor`, `ExecDescriptor`,
+
+`ConstantDescriptor`)
+
+Serves: FR-1, FR-2, FR-3, FR-6, FR-7, NFR-1, C-1
+
+- Module: `control_rs_ets` (`ConstantDescriptor`, `ExecDescriptor`,
+  `SuiteDescriptor`, `SettingsSlice`).
+- `SuiteDescriptor`, `ExecDescriptor`, and `ConstantDescriptor` are immutable
+  value types constructed in `const` context and placed in `.rodata` (Flash),
+  consuming zero static RAM at idle.
+- `ConstantDescriptor` records a read-only constant's `name`, `description`, and
+  compiled `SettingValue` in Flash without wrapping the source `const` item.
+- `SuiteDescriptor` holds separate static slices for `executables`, `constants`,
+  and concrete `settings` without `dyn` trait objects or vtables.
+- Each `SuiteDescriptor` defines an independent namespace for its `constants`
+  and `settings`; identical constant names in distinct suites resolve
+  independently by `(suite_name, const_name)` without collision (`FR-6`). Test
+  cases may reference external global or imported state, but only items
+  declared directly within the suite and placed in its descriptor slices are
+  exposed as suite metadata (`FR-7`).
+
+```rust
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Serialize,
+    serde::Deserialize
+)]
+#[repr(u8)]
+pub enum Profile {
+    #[default]
+    Full = 0,
+    Unmasked = 1,
+    Off = 2,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ExecDescriptor {
+    pub description: &'static str,
+    pub name: &'static str,
+    pub test_fn: fn(),
+    pub profile: Profile,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct ConstantDescriptor {
+    pub description: &'static str,
+    pub name: &'static str,
+    pub value: SettingValue,
+}
+
+pub type SettingsSlice = &'static [Setting];
+
+pub struct SuiteDescriptor {
+    pub constants: &'static [ConstantDescriptor],
+    pub description: &'static str,
+    pub executables: &'static [ExecDescriptor],
+    pub name: &'static str,
+    pub settings: SettingsSlice,
+}
+```
+
+#### 4.2. Settings (`Setting`, `SettingValue`, `TripleBuffer<T>`)
+
+Serves: FR-4, C-1, C-2, C-3
+
+- Module: `control_rs_ets::settings`.
+- Dynamic settings are declared in suite modules as
+  `pub static NAME: TripleBuffer<T> = TripleBuffer::new(initial);`.
+- `Setting` is a concrete struct in Flash constructed via
+  `Setting::new(name, description, &NAME)`, pairing setting metadata (`name`,
+  `description`) with a type-erased pointer and `get`/`set` function pointers to
+  the `TripleBuffer<T>` static in RAM.
+- Under `#[cfg(target_has_atomic = "8")]`, `TripleBuffer<T>` stores three
+  `UnsafeCell<T>` slots and a single `AtomicU8` state byte in static RAM (`C-2`,
+  `C-3`); under `#[cfg(not(target_has_atomic = "8"))]` (ARMv6-M),
+  `TripleBuffer<T>` falls back to a single `UnsafeCell<T>` slot:
+    - Test functions call `TripleBuffer::<T>::get(&self) -> T` to swap the read
+      slot with the back slot when the dirty bit is set (or read the single slot
+      when `not(target_has_atomic = "8")`) and return the primitive value `T`
+      directly without `SettingValue` matching.
+    - Host updates call `Setting::set(&self, value: SettingValue) -> SetResult`,
+      which converts `SettingValue` via `TryFrom<SettingValue>` (returning `Err`
+      on variant mismatch), writes the incoming value into the write slot and
+      atomically swaps the write and back slot indices in `state`.
+
+```rust
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub enum SettingValue {
+    Bool(bool),
+    F32(f32),
+    I8(i8),
+    I32(i32),
+    U8(u8),
+    U16(u16),
+    U32(u32),
+    U64(u64),
+}
+
+pub type SetResult = Result<(), &'static str>;
+
+pub struct TripleBuffer<T: Copy> {
+    #[cfg(target_has_atomic = "8")]
+    buffers: [core::cell::UnsafeCell<T>; 3],
+    #[cfg(target_has_atomic = "8")]
+    state: core::sync::atomic::AtomicU8,
+    #[cfg(not(target_has_atomic = "8"))]
+    value: core::cell::UnsafeCell<T>,
+}
+
+unsafe impl<T: Copy + Send> Sync for TripleBuffer<T> {}
+
+impl<T: Copy> TripleBuffer<T> {
+    pub const fn new(initial_value: T) -> Self;
+    pub fn get(&self) -> T;
+    pub fn set(&self, value: T);
+}
+
+pub struct Setting {
+    pub description: &'static str,
+    pub name: &'static str,
+    data: *const (),
+    get_fn: fn(*const ()) -> SettingValue,
+    set_fn: fn(*const (), SettingValue) -> SetResult,
+}
+
+unsafe impl Sync for Setting {}
+
+impl Setting {
+    pub const fn new<T>(
+        name: &'static str,
+        description: &'static str,
+        buffer: &'static TripleBuffer<T>,
+    ) -> Self
+    where
+        T: Copy
+        + Into<SettingValue>
+        + TryFrom<SettingValue, Error=&'static str>
+        + 'static;
+    pub fn get(&self) -> SettingValue;
+    pub fn set(&self, value: SettingValue) -> SetResult;
+}
+```
+
+#### 4.3. Distributed Test Discovery
+
+Serves: FR-5, NFR-1, C-1, C-3
 
 Instead of building a dynamic test registry at runtime, the framework uses a
-linker-based distributed slice mechanism. Procedural macros generate one
-`SuiteDescriptor` static per suite and place a `&'static SuiteDescriptor`
-pointer to it (`SUITE_DESCRIPTOR_PTR`) in a custom ELF memory section named
-`.ets_test_suites` (`macros-design.md` §4.1).
+linker-based distributed slice mechanism. Each suite declares one
+`SuiteDescriptor` static and places a `&'static SuiteDescriptor` pointer to it
+in a custom ELF memory section named `.ets_test_suites` (§4.5).
 
 During compilation, the `control-rs-ets` build script (`build.rs`) generates a
 linker script fragment named `ets_suites.x` containing the following section
@@ -125,26 +291,27 @@ SECTIONS
 ```
 
 This forces the linker to aggregate the descriptor pointers contiguously
-inside Flash memory (ROM) bounded by the hidden start and end symbols, which
-the server reads as a `&'static [&'static SuiteDescriptor]`
-(`control-rs-ets::util`). The descriptors themselves stay in ordinary
+inside Flash memory (ROM) bounded by the hidden start and end symbols, exposed
+as `fn suites() -> &'static [&'static SuiteDescriptor]`. The descriptors
+themselves stay in ordinary
 read-only data.
-
 
 The mechanism this section specifies exists because cross-crate linker-section
 registration is not automatic. A distributed slice gathers "static elements
-into a contiguous section of the binary by the linker" and its elements "may be
+into a contiguous section of the binary by the linker" and its elements may be
 defined in the same crate that declares the distributed slice or in any
-downstream crate" [1]. In practice the dependency direction matters:
+downstream crate. In practice the dependency direction matters:
 entries declared in a dependency crate have been observed not to appear in the
 final slice [2], and the same asymmetry is reported for a plain
-`#[used] #[link_section]` static, whose behaviour "is different when the
+`#[used] #[link_section]` static, whose behavior "is different when the
 static is placed in a dependency or in the currently built crate"
 [3]. The `KEEP` directive and the `build.rs`-generated linker
-script below exist to close exactly that gap, and the descriptor-set
+script below exist to close that gap exactly, and the descriptor-set
 verification in §6.3 is what detects it if they fail.
 
-#### 4.2. Linker Garbage Collection Mitigation
+#### 4.4. Linker Garbage Collection Mitigation
+
+Serves: FR-5, NFR-2
 
 Embedded compilers invoke the linker with optimization flags like
 `--gc-sections` to perform dead code elimination. Since the target firmware does
@@ -160,147 +327,58 @@ To prevent this, the crate implements a multi-tiered retention strategy:
 2. **`KEEP` Linker Directive**: Wrapping the section wildcard as
    `KEEP (*(.ets_test_suites))` forces the linker to preserve these blocks
    regardless of references.
+
 Items 1 and 2 are the shipped strategy (`control-rs-ets/build.rs` emits the
-`KEEP` fragment and no linker flags). Two further mitigations are not used:
-`--gc-keep-exported` and undefined-symbol forcing (`-u`). Discovery runs over
-the wire, so no host tool resolves descriptor symbols by name, and `KEEP` plus
-the §6.3 descriptor-set check already cover the cross-crate discard risk.
+`KEEP` fragment and no linker flags).
 
-This multi-tiered strategy also hedges against
-[rust-lang/rust#67209](https://github.com/rust-lang/rust/issues/67209), an
-open compiler defect in which `#[used]` + `#[link_section]` statics defined in
-dependency (non-root) crates are silently discarded even when a `KEEP`
-directive is present.
+#### 4.5. Declaring a Suite by Hand
 
-#### 4.3. Concurrency & State Management (Eradicating `static mut`)
+Serves: FR-1, FR-2, FR-3, FR-4, FR-5, NFR-1
 
-To comply with Rust 2024/2027 and prevent undefined behavior from unsynchronized
-interrupt preemption, all global state variables are protected via thread-safe
-interior mutability.
-
-1. **Type-Safe Atomic Wrappers**: Configurable settings and execution indices
-   use atomic structures (like `AtomicU32Setting` and `AtomicBoolSetting`)
-   implementing the `Setting` trait.
-2. **Memory Ordering**: Telemetry and configuration variables use
-   `Ordering::Relaxed`. Since these variables do not synchronize access to other
-   shared buffers, `Relaxed` ordering eliminates the need for expensive memory
-   barrier instructions (`DMB`/`DSB`), saving clock cycles.
-3. **`SyncUnsafeCell`**: For complex data structures where atomic operations are
-   not suitable, `core::cell::SyncUnsafeCell` is used to manage raw pointers (
-   `*mut T`), isolating unsafe blocks strictly to the points of dereference.
-
-#### 4.4. Core Trait & Struct Definitions
-
-The core implementation in `control-rs-ets` defines the `SuiteDescriptor` and
-`ExecDescriptor` structures, along with the `Setting` trait:
+A suite is complete without any code generation. The following declaration is
+the reference form; any generator must produce an equivalent:
 
 ```rust
-pub struct ExecDescriptor {
-    pub description: &'static str,
-    pub name: &'static str,
-    pub test_fn: fn(),
+pub const SUPPLY_VOLTAGE: u32 = 12;
+pub static KP: TripleBuffer<u32> = TripleBuffer::new(1500);
+
+/// Checks that the plant model integrates.
+fn test_system_integrates() {
+    assert!((5..=24).contains(&SUPPLY_VOLTAGE));
+    assert!(KP.get() > 0);
 }
 
-pub type SettingsSlice = &'static [&'static dyn Setting];
+static CASES: [ExecDescriptor; 1] = [ExecDescriptor {
+    description: "Checks that the plant model integrates.",
+    name: "integrates",
+    test_fn: test_system_integrates,
+    profile: Profile::Full,
+}];
 
-pub struct SuiteDescriptor {
-    pub description: &'static str,
-    pub executables: &'static [ExecDescriptor],
-    pub name: &'static str,
-    pub settings: SettingsSlice,
-}
+static CONSTANTS: [ConstantDescriptor; 1] = [ConstantDescriptor {
+    description: "Nominal supply rail in volts.",
+    name: "SUPPLY_VOLTAGE",
+    value: SettingValue::U32(SUPPLY_VOLTAGE),
+}];
+
+static SETTINGS: [Setting; 1] = [Setting::new(
+    "KP",
+    "Proportional gain.",
+    &KP,
+)];
+
+static SUITE: SuiteDescriptor = SuiteDescriptor {
+    constants: &CONSTANTS,
+    description: "Plant model checks",
+    executables: &CASES,
+    name: "plant",
+    settings: &SETTINGS,
+};
+
+#[unsafe(link_section = ".ets_test_suites")]
+#[used]
+static SUITE_PTR: &SuiteDescriptor = &SUITE;
 ```
-
-The settings trait and its atomic implementations are defined as:
-
-```rust
-pub type SetResult = Result<(), &'static str>;
-
-pub trait Setting: Sync {
-    fn description(&self) -> &'static str;
-    fn expected_type(&self) -> SettingType;
-    fn get(&self) -> SettingValue;
-    fn name(&self) -> &'static str;
-    fn set(&self, value: SettingValue) -> SetResult;
-}
-
-pub enum SettingType {
-    Bool,
-    F32,
-    I32,
-    I8,
-    U16,
-    U32,
-    U64,
-    U8,
-}
-
-pub enum SettingValue {
-    Bool(bool),
-    F32(f32),
-    I32(i32),
-    I8(i8),
-    U16(u16),
-    U32(u32),
-    U64(u64),
-    U8(u8),
-}
-```
-
-```rust
-// An atomic setting implementation example from control-rs-ets
-pub struct AtomicU32Setting {
-    description: &'static str,
-    name: &'static str,
-    value: core::sync::atomic::AtomicU32,
-}
-
-impl AtomicU32Setting {
-    pub const fn new(name: &'static str, description: &'static str, initial_value: u32) -> Self {
-        Self {
-            description,
-            name,
-            value: core::sync::atomic::AtomicU32::new(initial_value),
-        }
-    }
-}
-
-impl Setting for AtomicU32Setting {
-    fn description(&self) -> &'static str { self.description }
-    fn expected_type(&self) -> SettingType { SettingType::U32 }
-    fn get(&self) -> SettingValue { SettingValue::U32(self.value.load(Ordering::Relaxed)) }
-    fn name(&self) -> &'static str { self.name }
-    fn set(&self, value: SettingValue) -> SetResult {
-        if let SettingValue::U32(v) = value {
-            self.value.store(v, Ordering::Relaxed);
-            Ok(())
-        } else {
-            Err("Type mismatch: expected U32")
-        }
-    }
-}
-```
-
-#### 4.5. Telemetry & Execution Lifecycle
-
-Interactive testing sessions follow a strict state-machine flow:
-
-1. **Deployment & Reset**: Firmware containing the test server and suites is
-   deployed to the target via the target cargo runner (or external programmer).
-   `control-rs-ets-host::ETSBridge` then connects to the already-running
-   target. Isolation is cooperative (`Command::TryReset`) plus process restart
-   on QEMU; a serial session without lab reset wiring cannot power-cycle the
-   board.
-2. **State Tracking**: Test execution status is evaluated via start and end
-   timestamps recorded on the target:
-    - **Pending**: No start timestamp recorded.
-    - **Running/Failed**: A start timestamp is recorded, but no end timestamp.
-      If the test panics, execution halts immediately and the end timestamp is
-      never written.
-    - **Passed**: Both start and end timestamps are successfully recorded.
-3. **Global Indicators**: Global trackers `CURRENT_SUITE` and `CURRENT_TEST` of
-   type `TestIndexIndicator` store the running indices, allowing panic handlers
-   to report precisely where a crash occurred.
 
 ---
 
@@ -310,197 +388,162 @@ Interactive testing sessions follow a strict state-machine flow:
   mechanism. `inventory` registers types from "any source file linked into your
   application" with no central list [4], but relies on runtime initialization
   functions similar to `__attribute__((constructor))` in C [4]. Its documented
-  platform support is restricted to hosted operating systems (Linux, macOS, iOS,
-  FreeBSD, Android, Windows, WebAssembly) [4]; bare-metal targets are not
-  supported. Similarly, `ctor` supplies constructors for hosted systems [5] and
-  explicitly subverts Rust's execution model before `main`. Loader-less embedded
-  targets lack dynamic loaders to execute pre-main constructors, and running code
-  before hardware clock/peripheral setup induces hardware lockups.
+  platform support is restricted to hosted operating systems; bare-metal targets
+  are not supported. Similarly, `ctor` supplies constructors for hosted
+  systems [5]
+  and explicitly subverts Rust's execution model before `main`.
 * **`static_init` runtime initialization**: Rejected. `static_init` is `no_std`
-  only on Linux or Redox using futex system calls, or relies on spin-loop runtime
-  features [6], neither of which is viable on bare metal.
-* **`linkme::DistributedSlice`**: Not adopted. `linkme` 0.3.37 is `#![no_std]` and handles `target_os = "none"` through the ELF `__start_`/`__stop_` section symbols (source of `linkme-impl` `declaration.rs`), so neither `std` nor element homogeneity rules it out: the `.ets_test_suites` section already holds a homogeneous slice of `&'static SuiteDescriptor`. The
-  hand-rolled mechanism is a linker fragment and two boundary symbols, already
-  shipped; on bare metal a custom `SECTIONS` script (for example
-  `cortex-m-rt`'s `link.x`) must still place the section explicitly, so `linkme`
-  would add a proc-macro dependency without removing linker-script work. It
-  also inherits the cross-crate discard risk ([2], [3]) that §4.1's `KEEP`
-  directive addresses.
-* **`embedded-test` test harness**: Rejected as the primary harness, though
-  acknowledged as relevant prior art. `embedded-test` reads test information
-  directly from the ELF file, flashes tests in batch, and resets the target device
-  between cases [7]. ETS instead runs a persistent on-target server that
-  dispatches tests interactively over a framed communication link, preserving
-  target state across an entire test suite.
-* **Command-line interface crates (`menu`, `embedded-cli`)**: Rejected for the
-  settings surface. `menu` provides interactive command-line interfaces for
-  `no_std` programs [8] and `embedded-cli` parses typed arguments via a
-  `FromArgument` trait [9]. Both focus on interactive on-target ASCII terminal
-  parsing, whereas ETS enforces structured, binary host-driven telemetry
-  (`host-comm-design.md`) without on-target string processing.
-* **Standard `cargo test` harness (libtest)**: Rejected. Requires host OS
-  allocations (dynamic heap, threads, standard I/O) that are unavailable on
-  bare-metal targets.
-* **Nightly `custom_test_frameworks` feature**: Rejected. Relies on unstable
-  compiler features (`#![feature(custom_test_frameworks)]`), violating stable
-  toolchain compilation constraints.
-* **`static mut` for state tracking**: Rejected. Violates Rust's strict
-  aliasing rules, introduces data race risks, and is deprecated in current Rust
-  editions. Interior mutability is achieved via target-safe atomic wrappers.
-* **Semihosting-only telemetry**: Rejected. Binds target execution to an active
-  JTAG/SWD debug probe, violating C-3 transport independence.
+  only on Linux or Redox using futex system calls [6], which is not viable on
+  bare metal.
+* **`linkme::DistributedSlice`**: Not adopted. `linkme` 0.3.37 [1] is `#![no_std]`
+  and handles `target_os = "none"` through ELF symbols, but the hand-rolled
+  mechanism is a linker fragment and two boundary symbols, already shipped; on
+  bare metal a custom `SECTIONS` script must still place the section explicitly,
+  so `linkme` would add a proc-macro dependency without removing linker-script
+  work.
+* **`static mut` for state tracking**: Rejected. Violates Rust's strict aliasing
+  rules, introduces data race risks and is deprecated in current Rust editions.
+
+---
 
 ### 6. Verification & Validation
 
-#### 6.1 Approach
+#### 6.1 Verification
 
-The implementation must produce evidence that every declared suite reaches the
-final binary regardless of which crate declared it, that the linker cannot
-discard registrations, that discovery reports exactly what was declared, and
-that none of this costs a heap allocation.
-
-| Method | Mechanism |
-|:-------|:----------|
-| Requirements-based test | Descriptor set recovered from the linked ELF compared against the source annotations |
-| Requirements-based test | The same comparison for suites declared in a dependency crate, not only in the top-level crate |
-| Requirements-based test | Target dynamic setting value modification via typed get/set accessors |
-| Compile-time shape check | Descriptor type mismatch between declaration and element is a compile error |
-| Static analysis | Section presence after linking with `--gc-sections` |
-| Resource usage evaluation | Execution overhead of an empty test function |
-| Static analysis | `cargo clippy-ci`; inspection for allocation in registration and discovery |
-| Inspection | Target architecture compilation across ARM-V6/7/8 and RISC-V |
-| Static analysis | Eradication of `static mut` in favor of atomic interior mutability wrappers |
-| Coverage measurement | `cargo coverage` on host-testable descriptor logic |
-
-The dependency-crate case is called out separately because it is the case that
-has been observed to fail in comparable schemes ([2], [3]).
-
-Target: 80% line coverage of host-testable descriptor and discovery logic,
-measured with `cargo coverage`.
-
-Excluded: the linker script and `build.rs` generation, whose correctness is
-observed through the ELF rather than through line coverage; and generated
-descriptor statics, which are data.
-
-1. **Multi-crate binary**: Build a firmware image whose suites are declared
-   across at least two crates and confirm all of them are discovered.
-2. **Hardware run**: Execute the discovered suites on a Teensy 4.1 through
-   `control-rs-ets-host`.
-3. **Downstream declaration**: Declare a suite in a crate outside this
-   workspace and confirm it registers, which is the property distributed
-   registration exists to provide [1].
+| Condition | Requirement | Method    | Target                                                                    | Criterion                                                                                                                          |
+|:----------|:------------|:----------|:--------------------------------------------------------------------------|:-----------------------------------------------------------------------------------------------------------------------------------|
+| VC-1.1    | FR-5        | `libtest` | `control_rs_ets::util::tests::test_get_suites_fn`                         | Discovered suites equal declared suites; section holds exactly 1 pointer per suite                                                 |
+| VC-2.1    | FR-2        | `libtest` | `control_rs_ets::tests::test_exec_descriptor_metadata`                    | Metadata matches source; invoking a case is 1 call through its `fn()` pointer                                                      |
+| VC-5.1    | FR-4        | `libtest` | `control_rs_ets::server::tests::test_server_set_setting`                  | Values read back equal values set; 0 torn reads                                                                                    |
+| VC-5.2    | FR-4        | `libtest` | `control_rs_ets::server::tests::test_server_set_setting_type_mismatch`    | `Setting::set` rejects mismatched `SettingValue` variants and unknown suite or setting names, leaving stored values unchanged      |
+| VC-5.3    | FR-4        | `libtest` | `control_rs_ets::server::tests::test_setting_value_partial_eq`            | Setting value equality comparison differentiates distinct types and magnitudes without type confusion                              |
+| VC-5.4    | FR-4        | `libtest` | `control_rs_ets::settings::tests::test_triple_buffer_size_bounds`         | For every `SettingValue` type, `size_of::<TripleBuffer<T>>()` ≤ 3·`size_of::<T>()` + 1, rounded up to `align_of::<T>()`           |
+| VC-6.1    | FR-6        | `libtest` | `control_rs_ets::tests::test_duplicate_constant_names_in_distinct_suites` | Two suites declaring constants with identical names resolve distinct values by suite identity and constant name.                   |
+| VC-7.1    | FR-7        | `libtest` | `control_rs_ets::tests::test_external_globals_are_not_suite_metadata`     | A test may reference external global state while discovery reports only constants and settings declared directly within its suite. |
+| VC-9.1    | NFR-1       | `gate`    | `clippy`                                                                  | Clippy verification passes without dynamic heap allocation (`alloc`) on target paths                                               |
+| VC-9.2    | NFR-1       | `libtest` | `control_rs_ets::tests::test_flash_descriptor_sizes`                      | 0 B static RAM; 32-bit / 64-bit, excluding strings: suite with section pointer ≤ 44 / 88 B, case ≤ 24 / 48 B, constant ≤ 32 / 48 B |
+| VC-10.1   | NFR-2       | `gate`    | `virtual-ets`                                                             | 100% of declared suites retained at every `opt-level` with `--gc-sections`                                                         |
+| VC-11.1   | C-1         | `gate`    | `clippy`                                                                  | The `clippy` quality gate passes, enforcing `#![no_std]` and zero dynamic heap allocation                                          |
+| VC-12.1   | C-2         | `gate`    | `clippy`                                                                  | The codebase contains zero occurrences of `static mut`                                                                             |
+| VC-13.1   | C-3         | `gate`    | `build`                                                                   | The test suite framework compiles across Cortex-M (v6-M, v7-M, v8-M) and RISC-V targets                                            |
+| VC-14.1   | FR-1        | `libtest` | `control_rs_ets::tests::test_descriptor_string_bounds`                     | Names ≤ 64 B and descriptions ≤ 384 B are accepted                                                                                 |
 
 #### 6.2 Acceptance
 
-| Claim | Oracle | Measure | Bound |
-|:------|:-------|:--------|:------|
-| Registration completeness | Source annotations across all crates in the binary | Descriptors in the ELF section | Exact set equality |
-| Dependency-crate registration | A suite declared in a dependency | Present in the final binary | Present |
-| Dynamic setting mutation | Host get/set commands | Atomic setting value on target | Exact value match |
-| Retention under GC | The same ELF linked with `--gc-sections` | Descriptors present | Unchanged |
-| Type safety | A descriptor of the wrong type | Build outcome | Compile error, not a runtime mismatch |
-| Discovery fidelity | Descriptors in the ELF | Suites and cases reported to the host | Exact set equality |
-| Execution overhead | Empty test function invocation | CPU clock cycles | <= 10 cycles |
-| Allocation freedom | Disassembly of a target build | Allocator symbols on the registration or discovery path | 0 |
-| Section cost | A suite of *n* cases | Flash bytes in the descriptor section | Linear in *n*, no per-suite fixed overhead beyond the header |
+| Claim                         | Oracle                                             | Measure                                                 | Bound                                          |
+|:------------------------------|:---------------------------------------------------|:--------------------------------------------------------|:-----------------------------------------------|
+| Registration completeness     | Source annotations across all crates in the binary | Descriptors in the ELF section                          | Exact set equality                             |
+| Dependency-crate registration | A suite declared in a dependency                   | Present in the final binary                             | Present                                        |
+| Parameter access              | `Setting::set` then `get` by name                  | Returned value                                          | Exact value match; mismatched type is an error |
+| Retention under GC            | The same ELF linked with `--gc-sections`           | Descriptors present                                     | Unchanged                                      |
+| Type safety                   | A descriptor of the wrong type                     | Build outcome                                           | Compile error, not a runtime mismatch          |
+| Allocation freedom            | Disassembly of a target build                      | Allocator symbols on the registration or discovery path | 0                                              |
+| Constant resolution           | Two suites declaring identical constant names      | Discovery and retrieval by `(suite, name)`              | Distinct values resolved without collision     |
+| Metadata boundary             | A test case accessing external global state        | Descriptors reported for that suite                     | External state absent from constants/settings  |
 
 #### 6.3 Limits
 
-- Telemetry delivery latency (<16 ms) and host UI frame pacing are verified
-  by `control-rs-tui` (`documentation/tui/tui-design.md`), not within target
-  test-suite crate scope.
 - ExecDescriptor attribute extensions (`#[should_panic]`, `#[ignore]`,
-  `#[timeout]`): These attributes are deferred to future revisions; test
-  execution in this release treats any target panic as an immediate suite
-  failure.
-- Linker behaviour outside the linkers the matrix uses. The section and script
-  coordination is exercised with those only, and the cross-crate hazard above
-  is linker-dependent.
+  `#[timeout]`): deferred; descriptors carry no such metadata in this revision.
+- Linker behaviour outside LLD and GNU ld. The section and script coordination
+  is exercised with those only.
 - Behaviour when two crates declare the same suite name. Deduplication is
   unspecified and untested.
-- Ordering of discovered suites. Nothing guarantees or tests a stable order
-  across builds, and the host must not depend on one.
-- Upper bound on suite or case count. No limit is stated and none is measured.
-- Interaction with link-time optimization. Registration is verified for the
-  workspace's current profile settings only.
 
 ### 7. Performance & Resource Considerations
 
-* **ROM/RAM Overhead**: To operate within the 32 KB Flash and 8 KB RAM budget,
-  the target Server uses zero heap allocations and avoids unnecessary string
-  formatting on-device. All descriptors reside strictly in Flash.
-* **Atomic Ordering**: Setting telemetry uses `Ordering::Relaxed` to bypass
-  ARM memory barrier instructions (`DMB`/`DSB`), which can take multiple
-  clock cycles.
-* **Critical Sections**: On ARMv6-M architectures, software-emulated CAS
-  operations disable interrupts. Developers must minimize the frequency of
-  setting updates during time-critical control loops to avoid inducing interrupt
-  latency jitter.
+| Limit | Formula or value | Class |
+|:--|:--|:--|
+| Suite Flash footprint | $(11 + 6n_c + 7n_s)W + (4W + 16)n_k$ | Derived |
+| `SuiteDescriptor` size | $11W$ (44 B at $W = 4$; 88 B at $W = 8$) | Derived |
+| `ExecDescriptor` size | $6W$ (24 B at $W = 4$; 48 B at $W = 8$) | Derived |
+| `ConstantDescriptor` size | $4W + 16$ (32 B at $W = 4$; 48 B at $W = 8$) | Derived |
+| `Setting` size | $7W$ (28 B at $W = 4$; 56 B at $W = 8$) | Derived |
+| Setting RAM (`TripleBuffer<T>`) | $\lceil (3s + 1)/a \rceil a$; $s$ without CAS | Derived |
+| Metadata static RAM | 0 B | Fixed |
+| Setting primitive types | 8 primitives (`bool`, `f32`, `i8`, `i32`, `u8`, `u16`, `u32`, `u64`) | Fixed |
+
+- **`ExecDescriptor` layout ($6W$)**: $2 \times 2W$ (`&str`) $+ W$ (`fn()`) $+ 1\text{ B}$ (`Profile`) $+ (W - 1)\text{ B}$ padding.
+- **`ConstantDescriptor` layout ($4W + 16$)**: $2 \times 2W$ (`&str`) $+ 16\text{ B}$ (`SettingValue`).
+- **`Setting` layout ($7W$)**: $2 \times 2W$ (`&str`) $+ 1W$ (`*const ()`) $+ 2 \times 1W$ (`fn()` pointers).
+- **`SuiteDescriptor` layout ($11W$)**: $2 \times 2W$ (`&str`) $+ 3 \times 2W$ (slices) $+ W$ (linker section pointer `SUITE_PTR`).
+- **`TripleBuffer<T>` RAM**: 3 slots of size $s$ plus 1 byte atomic tag, aligned to $a$: $\lceil (3s + 1)/a \rceil a$. Without CAS, single slot of size $s$.
+- **Zero static RAM at idle**: Compiled suite, case, and constant metadata reside in Flash ROM (`.rodata`), contributing 0 B to `.data` and `.bss`.
 
 ---
 
 ### 8. Risks & Open Questions
 
 * **Linker Compatibility**: Older GNU ld or LLVM lld versions may not respect
-  the `SHF_GNU_RETAIN` flag. Forcing symbol retention must rely heavily on the
-  `KEEP` directive inside the generated `ets_suites.x` script as a fail-safe.
-* **Cross-Crate Discovery (`rust-lang/rust#67209`)**: The open upstream defect
-  drops `#[used]` + `#[link_section]` statics defined in dependency crates
-  even with `KEEP`. Open question: must suites be declarable in separate
-  crates or only separate modules within one crate? Multi-module discovery is
-  unaffected; multi-crate discovery requires the retention strategy in §4.2 as
-  a hedge and must be validated per target.
-* **`ExecDescriptor` Attribute Extensibility**: While execution control
-  attributes such as `#[should_panic]`, `#[ignore]`, and `#[timeout]` are
-  standard in host harnesses, `ExecDescriptor` (§4.4) currently carries only
-  `description`, `name`, and `test_fn`. Prior art (`embedded-test`) encodes
-  these attributes as macro-generated ELF metadata rather than struct fields.
-  Open question: whether to add struct fields (bitflags, `Option<Duration>`)
-  or macro-time ELF metadata, under the zero-heap, Flash-resident constraint.
-* **Settings Registry Generalization**: The `Setting` registry fills a genuine
-  ecosystem gap. Open question whether it should eventually be generalized
-  into a small standalone crate rather than remaining internal to
-  `control-rs-ets`.
+  the `SHF_GNU_RETAIN` flag. Forcing symbol retention relies on the
+  `KEEP` directive inside the generated `ets_suites.x` script.
+* **Cross-Crate Discovery (`rust-lang/rust#67209`)**: Upstream defect may drop
+  `#[used]` statics in `.rlib` archives if no direct symbol reference exists.
+  Workspace
+  suites are linked via root-crate module inclusion.
+* **Architecture & Verification Update for FR-1, FR-3 and FR-4**: §4 specifies
+  read-only constant descriptors and lock-free `TripleBuffer<T>` setting
+  wrappers, eliminating legacy mutable setting alternatives.
 
 ---
 
 ### 9. Development Plan
 
-| Task / Feature                              | Description                                                                                                       | Estimated Effort |
-|:--------------------------------------------|:------------------------------------------------------------------------------------------------------------------|:-----------------|
-| **Step 1: Core Structs & Traits**           | Define `SuiteDescriptor`, `Setting` trait and type-safe atomic settings wrappers.                                 | 0.5 days         |
-| **Step 2: Linker Script & Injection**       | Develop the `build.rs` script to generate the custom `ets_suites.x` script fragment containing `KEEP` directives. | 0.5 days         |
-| **Step 3: Target Server State Machine**     | Implement the on-target Server's state machine, timestamp-based lifecycle tracking and panic handlers.            | 0.5 days         |
-| **Step 4: Host-Side Wire Discovery** - *Shipped* | Discovery-mode session in `control-rs-ets-host` (`TryReset` + `ListSuites`, `SuiteInfo`/`TestInfo` replies); no ELF parsing. | Complete         |
+| Phase                            | Delivers                                                             | Requirements                             | Effort | Status  |
+|:---------------------------------|:---------------------------------------------------------------------|:-----------------------------------------|:-------|:--------|
+| 1. Core Suite & Case Descriptors | `SuiteDescriptor`, `ExecDescriptor`, and distributed slice discovery | FR-1, FR-2, FR-5, NFR-1, NFR-2, C-1, C-3 | 3 days | Shipped |
+| 2. Read-Only Constant Manifest   | Read-only constant descriptors in Flash                              | FR-3, FR-6, FR-7, NFR-1                  | 2 days | Planned |
+| 3. Triple-Buffer Setting Wrapper | Triple-buffered dynamic settings                                     | FR-4, C-2                                | 2 days | Planned |
 
 ---
 
 ### 10. Revision History
 
-| Revision | Date               | Author          | Description                                                                                                  |
-|:---------|:-------------------|:----------------|:-------------------------------------------------------------------------------------------------------------|
-| 1.0      | August 29, 2026    | @MitchellDScott | Exportable test suites and descriptors; `ets_suites.x` linker discovery and ARMv6-M atomics.                 |
-| 2.0      | September 18, 2026 | @MitchellDScott | Moved to `documentation/ets/`; host tooling in `control-rs-ets-host`; citation pass; cooperative `TryReset`. |
-| 3.0      | September 25, 2026 | @MitchellDScott | Discovery over the wire, starting with `TargetInfo`; `control-rs-tui` edits settings (FR-2).                 |
+| Revision | Date              | Author                                        | Description                                                                                                                                                                                                                         |
+|:---------|:------------------|:----------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 1.0      | August 29, 2026   | @MitchellDScott                               | Initial exportable test suite design with linker-section discovery.                                                                                                                                                                 |
+| 2.0      | November 14, 2026 | @MitchellDScott, Antigravity, Claude Opus 5.5 | Replace suite and setting requirements with suite descriptors, read-only constants, triple-buffer dynamic settings, and distributed discovery. Affects C-1, C-2, C-3, FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, NFR-1, NFR-2. |
+| 3.0      | November 14, 2026 | @MitchellDScott, Antigravity                  | State suite, case, constant, setting, and discovery requirements as testable needs rather than architectural features. Affects C-1, C-2, C-3, FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, NFR-1, NFR-2.                               |
+| 4.0 | November 18, 2026 | Antigravity | Relocate descriptor and setting memory layout bounds to §7 limits. Affects FR-6, FR-7. |
 
 ---
 
 ## References
 
-[1] linkme, "linkme: safe cross-platform linker shenanigans," *GitHub, dtolnay/linkme*. [Online]. Available: https://github.com/dtolnay/linkme. Accessed: Aug. 7, 2026.
+[1] linkme, "linkme: safe cross-platform linker shenanigans," *GitHub,
+dtolnay/linkme* (Version 0.3.37), 2026. [Online].
+Available: https://github.com/dtolnay/linkme. Accessed: Aug. 7, 2026.
 
-[2] kcuzner, "Distributed slice members in dependency crates are discarded (Issue #36)," *GitHub, dtolnay/linkme*. [Online]. Available: https://github.com/dtolnay/linkme/issues/36. Accessed: Aug. 7, 2026.
+[2] kcuzner, "Distributed slice members in dependency crates are discarded
+(Issue #36)," *GitHub, dtolnay/linkme*, 2021. [Online].
+Available: https://github.com/dtolnay/linkme/issues/36. Accessed: Aug. 7, 2026.
 
-[3] jfrimmel, "#[link_section] is only usable from the root crate (Issue #67209)," *GitHub, rust-lang/rust*. [Online]. Available: https://github.com/rust-lang/rust/issues/67209. Accessed: Aug. 7, 2026.
+[3] jfrimmel, "#[link_section] is only usable from the root crate (Issue
+#67209)," *GitHub, rust-lang/rust*, 2019. [Online].
+Available: https://github.com/rust-lang/rust/issues/67209. Accessed: Aug. 7,
 
-[4] inventory, "inventory: typed distributed plugin registration," *GitHub, dtolnay/inventory*. [Online]. Available: https://github.com/dtolnay/inventory. Accessed: Aug. 7, 2026.
+2026.
 
-[5] ctor, "ctor," *docs.rs*. [Online]. Available: https://docs.rs/ctor/latest/ctor/. Accessed: Aug. 7, 2026.
+[4] inventory, "inventory: typed distributed plugin registration," *GitHub,
+dtolnay/inventory*, 2026. [Online].
+Available: https://github.com/dtolnay/inventory. Accessed: Aug. 7, 2026.
 
-[6] static_init, "static_init," *docs.rs*. [Online]. Available: https://docs.rs/static_init/latest/static_init/. Accessed: Aug. 7, 2026.
+[5] ctor, "ctor: module initialization functions," *GitHub, mmatyas/ctor*,
 
-[7] embedded-test, "embedded_test," *docs.rs*. [Online]. Available: https://docs.rs/embedded-test/latest/embedded_test/. Accessed: Aug. 7, 2026.
+2026. [Online]. Available: https://github.com/mmatyas/ctor. Accessed: Aug. 7,
+2026.
 
-[8] menu, "menu," *docs.rs*. [Online]. Available: https://docs.rs/menu/latest/menu/. Accessed: Aug. 7, 2026.
+[6] static_init, "static_init: safe initialization of statics," *crates.io*,
 
-[9] embedded-cli, "embedded-cli," *lib.rs (mirror of crates.io README)*. [Online]. Available: https://lib.rs/crates/embedded-cli. Accessed: Aug. 7, 2026.
+2026. [Online]. Available: https://crates.io/crates/static_init. Accessed: Aug.
+      7, 2026.
+
+[7] The Rust Project Developers, "Dynamically Sized Types," *The Rust Reference*,
+2026. [Online]. Available:
+https://doc.rust-lang.org/reference/dynamically-sized-types.html. Accessed:
+Nov. 18, 2026.
+
+[8] Rust Unsafe Code Guidelines Working Group, "Representation of function
+pointers," *Unsafe Code Guidelines Reference*, 2026. [Online]. Available:
+https://rust-lang.github.io/unsafe-code-guidelines/layout/function-pointers.html.
+Accessed: Nov. 18, 2026.

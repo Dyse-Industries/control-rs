@@ -11,6 +11,7 @@ Bai
 Batselier
 Bayraktar
 Bellotto
+Benchtop
 Bengolea
 Benner
 Bischof
@@ -36,6 +37,9 @@ Cholesky
 Claessen
 Clippy
 Cmp
+Cobertura
+Codec
+Codegen
 Codomain
 Cofer
 Coppit
@@ -111,6 +115,7 @@ IDEs
 IRQ
 ISR
 Igual
+Inspectable
 Ioannidis
 Isaev
 JUnit
@@ -126,6 +131,7 @@ Kincaid
 Kochenderfer
 Kolda
 Koo
+Koopman
 Krogh
 LAPACK's
 LLVM's
@@ -139,6 +145,7 @@ Liu
 Louvet
 Luenberger
 MCU's
+MCUs
 MLSys
 MSBs
 Maskable
@@ -188,6 +195,7 @@ Ramakrishnan
 Ratatui
 Redox
 Reitermarkus
+Renesas
 Renode
 Rierson
 Ronacher
@@ -230,6 +238,7 @@ Uncontended
 Unmqr
 Unnormalized
 Uno
+Unrequested
 Upscaling
 Vandebril
 Vandermonde
@@ -244,6 +253,7 @@ Wiels
 Wittenmark
 Wray
 Wycheproof
+Xtensa
 Yiu
 Zarantonello
 Zaytseva
@@ -275,6 +285,7 @@ az
 backend's
 backpropagation
 backtraces
+benchtop
 bijective
 biproper
 biquad
@@ -324,12 +335,14 @@ deserialized
 deserializer
 deserializing
 dest
+desynchronization
 det
 dimforge
 discretization
 discretizations
 discretize
 discretized
+docstrings
 doctest
 doctests
 doi
@@ -442,6 +455,7 @@ nextest
 noether
 nonsymmetric
 normwise
+ns
 num
 numCols
 numRows
@@ -472,12 +486,19 @@ ptr
 px
 rdesarz
 reachability
+readback
+rebases
 reconnections
 recurse
+recurses
 reentrancy
+reflashing
 reimplement
 reimplementing
 representability
+rescan
+rescanning
+rescans
 retagged
 retagging
 retarget
@@ -527,6 +548,7 @@ teardown
 tf
 tickless
 tiering
+timebase
 toolchain
 toolchains
 transcendentals
@@ -545,7 +567,9 @@ underflows
 unevaluable
 unexecuted
 unfused
+uninstrumented
 unquantized
+unreferenced
 unresearched
 unstabilized
 unstored
@@ -553,6 +577,7 @@ unsynchronized
 untraited
 untyped
 uom
+updatable
 uplink
 uplo
 usize
@@ -568,7 +593,10 @@ virtualenv
 virtualized
 vpetrigo
 vtable
+vtables
 wgpu
 workspace's
 xorshift
 xtask
+z-domain
+z-transform

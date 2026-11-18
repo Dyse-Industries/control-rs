@@ -48,8 +48,7 @@ exclude_re = [
     # The loop only skips the matrix update after the last coefficient, which
     # nothing reads; performing it too changes no result.
     "replace < with <= in StateSpace<T, NX, 1, 1>::to_transfer_function",
-    # Test modules compiled into the library for on-target execution
-    # (`cfg(any(test, feature = "ets"))`) are not recognized as test code.
+    # Test modules with sub-tests are excluded by module prefix.
     "tests::",
     # The test constant `U = f64::EPSILON / 2.0` (realization.rs, column 33)
     # has no enclosing function, so its mutants carry no `tests::` name. `%`

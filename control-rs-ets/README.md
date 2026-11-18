@@ -116,6 +116,13 @@ fn setup() -> Context<UartComms, SystemCPUUtils> {
 }
 ```
 
+## Examples
+
+Host-executable demonstration examples live under `examples/`:
+
+- `cargo run -p control-rs-ets --example cpu_profiler`: Demonstrates `CPUProfiler` trait hooks and stack watermarking.
+- `cargo run -p control-rs-ets --example ets_suite`: Demonstrates `#[ets_suite]` module macro transformation, inferred test cases, typed parameters, and zero-allocation execution.
+
 ## QA / Testing
 
 To ensure that the target-side abstractions, serialization and compilation

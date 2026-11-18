@@ -1,16 +1,16 @@
-# CPUProfiler Design Document
+# CPUProfiler (cpu-profiler)
 
-![Date Badge](https://img.shields.io/badge/Date-September_28,_2026-blue)
+![Date Badge](https://img.shields.io/badge/Date-August_29,_2026-blue)
 ![Author Badge](https://img.shields.io/badge/Author-@MitchellDScott-blueviolet)
-![Design Status Badge](https://img.shields.io/badge/Design%20Status-Stale-lightgrey)
+![Design Status Badge](https://img.shields.io/badge/Design%20Status-Draft-orange)
 
 ### 1. Introduction
 
-ETS requires target-specific hooks to measure performance
-metrics (clock cycles, elapsed execution time and stack usage). By defining a
-unified `CPUProfiler` trait within the `control-rs-ets::profiler` module,
-the server delegates the implementation of primitive hardware
-hooks to the end-user or silicon vendor.
+Measuring code on a microcontroller needs target-specific hooks for clock
+cycles, elapsed time, stack usage, interrupt isolation, and target reset/exit. The
+`CPUProfiler` trait in `control-rs-ets::profiler` defines those hooks.
+Implementations are supplied by the end user or silicon vendor, with built-in
+reference backends for ARM Cortex-M, RISC-V, and host targets.
 
 ---
 
@@ -18,57 +18,92 @@ hooks to the end-user or silicon vendor.
 
 #### 2.1 Functional Requirements
 
-- **FR-1 - Execution Duration Measurement**: Read a monotonically increasing CPU cycle count (
-  `get_cycles`), robust to hardware counter wraparound.
-- **FR-2 - Wall-Clock Timestamp Query**: Report elapsed time in nanoseconds (`get_nanos`).
-- **FR-3 - Call-Stack Watermark Inspection**: Read the active stack pointer (`get_sp`) and
-  the stack boundary (`get_stack_end`).
-- **FR-4 - High-Watermark Stack Profiling**: Paint the stack with a sentinel pattern
-  and scan for the peak-usage high-water mark.
-- **FR-5 - Atomic Section Profiling**: Run a closure with interrupts disabled and
-  disable interrupts permanently.
-- **FR-6 - Fallback Platform Provision**: Provide defaults for targets that do not
-  support these features.
+- **FR-1 — Monotonic Execution Cycle Measurement**: The profiler must provide monotonically increasing CPU cycle counts across executions. On targets lacking cycle-counting hardware (such as ARMv6-M), the profiler must indicate clock absence and report zero cycles without compilation or runtime failure.
+- **FR-2 — Wall-Clock Elapsed Time Acquisition**: The profiler must report monotonically non-decreasing wall-clock elapsed time in nanoseconds derived from hardware timers.
+- **FR-3 — Stack Boundary Inspection**: The profiler must inspect the active stack pointer and query linker-defined stack boundaries. Inspection operations must not corrupt or perturb active stack frames.
+- **FR-4 — Stack High-Watermark Measurement**: The profiler must determine peak stack memory consumption during execution by painting unused stack memory with a sentinel pattern and detecting the deepest watermark displacement. Painting must remain bounded between the stack boundary and the frame safety threshold.
+- **FR-7 — Test Interrupt Isolation**: The profiler must support scoped interrupt disabling (`disable_interrupts`) during critical test execution and permanent interrupt disabling (`disable_interrupts_permanently`) upon panic or fatal failure.
+- **FR-8 — Target Lifecycle Control**: The profiler must provide target control hooks to initiate a warm system reset (`reset`) or terminate execution in virtualized environments (`exit`).
+- **FR-9 — Composed Test Profiling**: The profiler must provide composed execution runners: `run_profiled` (combining stack tracking with interrupt-isolated cycle/nanosecond timing) and `run_profiled_unmasked` (combining stack tracking with unmasked cycle/nanosecond timing), returning `TestMetrics` containing elapsed cycles, peak stack depth, and duration in nanoseconds (`time_ns`).
 
 #### 2.2 Non-Functional Requirements
 
-- **NFR-1 - Deterministic Low Overhead**: Cycle and timer hooks must execute
-  within a few clock cycles so measurements do not perturb the code under test.
+- **NFR-1 — Deterministic Low Overhead**: Cycle and timer hooks execute within bounded clock cycles so measurements do not perturb the code under test.
+- **NFR-2 — Stack Profiling Memory Safety**: Stack painting and scanning are confined strictly to the memory region between `stack_end` and a safety margin below `sp`.
 
 #### 2.3 Constraints
 
-- **C-1 - Strict `#![no_std]`, Zero Heap**: Consistent with the rest of
-  `control-rs-ets`.
-- **C-2 - Target Architectures**: ARM Cortex-M (ARMv7-M, ARMv8-M) and RISC-V (
-  RV32/RV64). ARMv6-M has no DWT cycle counter; whether it is in scope is
-  open (§8, §9 Step 3).
+- **C-1 — Strict `#![no_std]`, Zero Heap**: Consistent with the rest of `control-rs-ets`, executing with zero dynamic heap allocation.
+- **C-2 — Target Architectures**: Support ARM Cortex-M (ARMv6-M, ARMv7-M, ARMv8-M), RISC-V (RV32, RV64), and Host mock.
 
 ---
 
 ### 3. Technical Overview
 
-This project provides hardware specific hooks through a trait to keep the
-server hardware-agnostic.
+The profiler packages hardware hooks and timing primitives into composed test runners.
+A caller invokes `run_profiled` for interrupt-isolated profiling, `run_profiled_unmasked`
+for profiling with interrupts active, or directly uses `run_clock` and `run_stack` primitives.
+All composed profiling runs return `TestMetrics`.
+
+```mermaid
+flowchart TD
+    RUN["Caller / Runner"]
+
+    subgraph Profiler ["control-rs-ets::profiler"]
+        TR["CPUProfiler trait"]
+        TM["TestMetrics"]
+        RC["run_clock / run_stack"]
+        RP["run_profiled / run_profiled_unmasked"]
+        TR --> RC
+        RC --> RP
+        RP --> TM
+    end
+
+    subgraph Backends ["Implementations"]
+        ARM["CortexMProfiler (DWT and SysTick)"]
+        RV["RiscvProfiler (mcycle and time CSR)"]
+        HOST["HostCPUProfiler (mock)"]
+    end
+
+    RUN -->|"run_profiled / run_profiled_unmasked"| TR
+    TR -.-> ARM
+    TR -.-> RV
+    TR -.-> HOST
+```
 
 ---
 
 ### 4. Architecture
 
-#### 4.1. The CPUProfiler Trait
+#### 4.1. The CPUProfiler Trait and TestMetrics
 
-The core of the abstraction is the `CPUProfiler` trait, defined in
+Serves: FR-1, FR-2, FR-3, FR-4, FR-7, FR-8, FR-9, NFR-1, NFR-2, C-1
+
+Performance metrics measured during test execution are recorded in `TestMetrics`, defined
+in `control-rs-ets::profiler`:
+
+```rust
+/// Performance metrics measured during a test execution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TestMetrics {
+    /// Number of elapsed CPU cycles.
+    pub cycles: u64,
+    /// Peak stack usage in bytes.
+    pub stack_peak: u32,
+    /// Elapsed wall-clock time in nanoseconds.
+    pub time_ns: u64,
+}
+```
+
+The core of the hardware execution abstraction is the `CPUProfiler` trait, defined in
 `control-rs-ets::profiler`:
 
 ```rust
 pub trait CPUProfiler {
-    /// Board identifier for `Telemetry::TargetInfo`; `0` when unknown.
-    fn board_id(&self) -> u16 {
-        0
-    }
-
-    /// Core clock in hertz for `Telemetry::TargetInfo`; `0` when unknown.
-    fn core_clock_hz(&self) -> u32 {
-        0
+    /// Whether this profiler has a cycle-accurate hardware clock.
+    /// Returns false on architectures lacking DWT or cycle counters (for example, ARMv6-M).
+    fn has_clock(&self) -> bool {
+        true
     }
 
     /// Disables interrupts and runs the given closure, returning its result.
@@ -85,14 +120,6 @@ pub trait CPUProfiler {
     /// Exits the application/environment using target-specific mechanisms.
     fn exit(&self) -> ! {
         loop {}
-    }
-
-    /// FPU bits for `Telemetry::TargetInfo`: bit 0 single, bit 1 double,
-    /// derived from the compilation target by default.
-    fn fpu_flags(&self) -> u8 {
-        let single = u8::from(cfg!(target_abi = "eabihf") || cfg!(target_feature = "f"));
-        let double = u8::from(cfg!(target_feature = "d"));
-        single | (double << 1)
     }
 
     /// Get the current CPU cycle count.
@@ -117,23 +144,65 @@ pub trait CPUProfiler {
     fn reset(&self) -> ! {
         loop {}
     }
+
+    /// Runs a test function and returns elapsed (cycles, nanoseconds).
+    #[inline(never)]
+    fn run_clock(&self, f: fn()) -> (u64, u64) {
+        let c0 = self.get_cycles();
+        let t0 = self.get_nanos();
+        f();
+        let t1 = self.get_nanos();
+        let c1 = self.get_cycles();
+        // Difference modulo 2^w ensures wrapped counter reads report true count.
+        (c1.wrapping_sub(c0), t1.saturating_sub(t0))
+    }
+
+    /// Executes a closure inside a stack-painted bracket, returning the closure result and peak stack usage in bytes.
+    fn run_stack<F, R>(&self, f: F) -> (R, u32)
+    where
+        F: FnOnce() -> R,
+    {
+        let sp = self.get_sp();
+        // SAFETY: paint_stack enforces safety margins to protect active stack frames.
+        unsafe {
+            self.paint_stack(sp);
+        }
+        let res = f();
+        // SAFETY: read_stack_peak queries relative to the same sp reference point.
+        let peak = unsafe { self.read_stack_peak(sp) };
+        (res, peak)
+    }
+
+    /// Runs a test function within a stack-painted and interrupt-isolated bracket, returning `TestMetrics`.
+    fn run_profiled(&self, f: fn()) -> TestMetrics {
+        let ((cycles, nanos), stack_peak) =
+            self.run_stack(|| self.disable_interrupts(|| self.run_clock(f)));
+        TestMetrics {
+            cycles,
+            stack_peak,
+            time_ns: nanos,
+        }
+    }
+
+    /// Runs a test function within a stack-painted bracket with interrupts unmasked, returning `TestMetrics`.
+    fn run_profiled_unmasked(&self, f: fn()) -> TestMetrics {
+        let ((cycles, nanos), stack_peak) =
+            self.run_stack(|| self.run_clock(f));
+        TestMetrics {
+            cycles,
+            stack_peak,
+            time_ns: nanos,
+        }
+    }
 }
 ```
-
-`board_id`, `core_clock_hz` and `fpu_flags` feed `Telemetry::TargetInfo`
-(`host-comm-design.md` §4.2.1). `CortexMProfiler` and `RiscvProfiler` return
-their configured `clock_frequency` from `core_clock_hz`; no shipped profiler
-sets a board ID.
-
----
-
 
 The Cortex-M cycle source is the DWT cycle counter, exposed by the `cortex-m`
 peripheral access crate as a `cyccnt` register that is absent on Armv6-M
 [1]. That absence is why FR-1 is a trait method rather than a
 direct register read: a target without DWT supplies its own implementation.
 
-Interrupt control (FR-5) is expressed through the portable critical-section
+Interrupt control (FR-7) is expressed through the portable critical-section
 abstraction, which exists because there is otherwise no universal API across
 targets [2].
 
@@ -142,52 +211,94 @@ maximum stack depth a task has reached" [3]. The approach is "very
 common in embedded systems and is used by both FreeRTOS and Zephyr RTOS"
 [4], and Zephyr exposes the same idea through
 `k_thread_stack_space_get`, which reports unused stack when its init-stacks
-options are enabled [5].
+options are enabled [5]. Stack painting operates within `[stack_end, sp]`.
+To eliminate artificial measurement dead-zones and report true zero-floor stack
+usage for leaf operations, target implementations (`CortexMProfiler`, `RiscvProfiler`)
+use zero-frame inline assembly with `options(nostack)` and scratch registers.
+Because no stack frame or return address is pushed below `sp`, sentinels can safely
+fill unused memory up to `sp` without risking overwriting return addresses.
 
-#### 4.2. Implementations and Mock Profilers
+**Critical Implementor Pattern**: Implementors of custom bare-metal profilers must
+follow the zero-frame pattern (`#[inline(always)]` with `options(nostack)` inline
+assembly, or a dedicated naked/assembly routine). If an implementation allocates a
+conventional stack frame (saving `LR` or callee-saved registers below `sp`) and
+paints up to `sp`, it will overwrite its own return address with sentinels and trigger
+an immediate `HardFault` or trap upon return.
 
-Rather than exposing a default stub struct, target platforms implement
-`CPUProfiler` directly. For host-side testing, the codebase provides mock
-profilers that return zeroed/dummy metrics:
+
+
+#### 4.2. Default Architecture Profilers and Dependency Gating
+
+Serves: FR-1, FR-7, FR-8, C-2
+
+To provide out-of-the-box convenience without forcing architecture dependencies
+on custom platforms, `control-rs-ets` supplies optional default reference implementations:
+* `CortexMProfiler`: Uses standard ARM DWT cycle counting, SysTick timing, `cortex_m::interrupt` critical sections (`disable_interrupts`, `disable_interrupts_permanently`), and `SCB::sys_reset` (`reset`).
+* `RiscvProfiler`: Uses standard RISC-V `mcycle` and `time` CSR registers and `riscv::interrupt` global interrupt masking (`disable_interrupts`, `disable_interrupts_permanently`).
+* `HostCPUProfiler`: Provides a zeroed mock implementation for host-side testing.
+
+To prevent architecture-specific crates from being compiled on incompatible platforms or
+bloating targets that do not use them, architectural dependencies are gated strictly by
+target architecture `cfg` attributes (without combining arch and feature flags):
+* `cortex-m` dependency and `CortexMProfiler` are gated behind `[target.'cfg(target_arch = "arm")'.dependencies]` and `#[cfg(target_arch = "arm")]`.
+* `riscv` dependency and `RiscvProfiler` are gated behind `[target.'cfg(any(target_arch = "riscv32", target_arch = "riscv64"))'.dependencies]` and `#[cfg(any(target_arch = "riscv32", target_arch = "riscv64"))]`.
+* Host builds (`x86_64`, `aarch64`) compile `control-rs-ets` with zero architecture dependencies.
 
 ```rust
 pub struct HostCPUProfiler;
 
 impl CPUProfiler for HostCPUProfiler {
-    fn exit(&self) -> ! {
-        panic!("exit called");
-    }
     fn get_cycles(&self) -> u64 { 0 }
     fn get_nanos(&self) -> u64 { 0 }
     fn get_sp(&self) -> usize { 0 }
     fn get_stack_end(&self) -> usize { 0 }
-    fn reset(&self) -> ! {
-        panic!("reset called");
-    }
-    // paint_stack, read_stack_peak, disable_interrupts and
-    // disable_interrupts_permanently use the trait's provided defaults (FR-6).
+    unsafe fn paint_stack(&self, _sp: usize) {}
+    unsafe fn read_stack_peak(&self, _sp: usize) -> u32 { 0 }
 }
 ```
 
 ---
 
-#### 4.3. User implementation
+#### 4.3. Board-Level and Custom Target Implementations
 
-The developer implements `CPUProfiler` for their target platform. For
-example, on an ARM Cortex-M architecture:
+Serves: FR-1, FR-7, FR-8, C-2
+
+The fundamental motivation for the `CPUProfiler` trait is supporting diverse
+processors and board-level hardware environments without burdening callers
+with vendor peripheral drivers. Where an implementation lives depends on the
+target:
+* **Standard Cores**: May use the built-in `CortexMProfiler` or `RiscvProfiler`.
+* **Non-Standard & Diverse Silicon (for example, ARMv6-M)**: Silicon lacking DWT (such
+  as Cortex-M0/M0+, RP2040, or STM32F0) or targets running under an RTOS provide
+  their own `CPUProfiler` implementation in their application or board-support crate.
+
+For example, on an ARMv6-M RP2040 target, the board crate provides a custom
+profiler using the RP2040 64-bit microsecond hardware timer:
 
 ```rust
-struct CortexMProfiler;
+pub struct Rp2040Profiler {
+    core_freq_hz: u32,
+}
 
-impl CPUProfiler for CortexMProfiler {
+impl CPUProfiler for Rp2040Profiler {
+    fn has_clock(&self) -> bool {
+        true
+    }
+
     fn get_cycles(&self) -> u64 {
-        // Read DWT cycle counter
-        read_dwt_cyccnt()
+        // Derive execution cycles from the 64-bit hardware microsecond timer
+        self.get_nanos() * (self.core_freq_hz as u64) / 1_000_000_000
     }
 
     fn get_nanos(&self) -> u64 {
-        // Retrieve time in nanoseconds
-        read_systick_nanos()
+        // Read RP2040 hardware timer registers (TIMEHW / TIMELW)
+        let timer_hw = 0x4005_4008 as *const u32;
+        let timer_lw = 0x4005_400C as *const u32;
+        unsafe {
+            let high = core::ptr::read_volatile(timer_hw) as u64;
+            let low = core::ptr::read_volatile(timer_lw) as u64;
+            ((high << 32) | low) * 1000
+        }
     }
 
     fn get_sp(&self) -> usize {
@@ -199,8 +310,15 @@ impl CPUProfiler for CortexMProfiler {
     }
 
     fn get_stack_end(&self) -> usize {
-        // Retrieve linker script symbol address
-        0
+        unsafe extern "C" { static mut _stack_end: u32; }
+        core::ptr::addr_of!(_stack_end) as usize
+    }
+
+    fn disable_interrupts<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce() -> R,
+    {
+        cortex_m::interrupt::free(|_| f())
     }
 
     fn disable_interrupts_permanently(&self) {
@@ -216,8 +334,7 @@ impl CPUProfiler for CortexMProfiler {
 `reset()` performs a host-commanded warm reboot. ETS's panic path calls it
 after the host sends `Command::TryReset`; on Cortex-M it is
 `SCB::sys_reset`, which can leave peripherals and active DMA running
-(`embedded-test-server-design.md` §4.4). A watchdog-starvation hard reset is
-deferred with the task watchdog (`embedded-test-server-design.md` §4.3).
+(`embedded-test-server-design.md` §4.6).
 
 ---
 
@@ -228,8 +345,7 @@ deferred with the task watchdog (`embedded-test-server-design.md` §4.3).
   [6] via traits requiring a clock read and an output sink [7]. However,
   `embedded-profiling` has not released since version 0.3.0 in December 2021 [8],
   and its trait covers only elapsed time snapshots without cycle counting, stack
-  introspection, or interrupt control. Reimplementing the unified `CPUProfiler`
-  trait in-house minimizes dependencies and tightly couples lifecycle hooks to ETS.
+  introspection, or interrupt control. Implementing `CPUProfiler` in-house minimizes dependencies.
 * **Static stack analysis instead of painting**: Rejected as the primary
   measure, retained as a complement. `cargo-call-stack` is a whole-program stack
   analyzer but relies on experimental `-Z stack-sizes` [9], and inline assembly
@@ -248,67 +364,56 @@ deferred with the task watchdog (`embedded-test-server-design.md` §4.3).
   target independence constraints.
 * **Separated clock and test executor traits**: Rejected. Splitting profiling
   into distinct clock and test executor interfaces requires target implementations
-  to duplicate test execution and timing math. Consolidating hooks into
-  `CPUProfiler` restricts target code to raw hardware reads while the ETS server
-  orchestrates execution and telemetry.
-* **Direct `critical-section` dependency for interrupt control**: Considered for
-  future deduplication. `critical_section::with(|cs| ...)` mirrors
-  `disable_interrupts<F, R>` and allows shared implementations across Cortex-M
-  and RISC-V.
-* **External GPIO pin toggling**: Rejected for automated test telemetry. Toggling
-  hardware pins allows external instrumentation (for example, logic analyzers) to measure
-  timings, but requires dedicated physical I/O and host capture hardware,
-  precluding headless CI and QEMU execution.
-* **Dynamic heap and multicore profiling**: Deferred as non-goals for single-core
-  deterministic `no_std` / `no_alloc` targets.
+  to manage multiple lifetimes and structures.
+* **Host mock verification for hardware drivers**: Rejected as the sole verification
+  method. Testing `CPUProfiler` purely through host mocks verifies only that mock stubs
+  return predetermined values, leaving real hardware interactions (DWT cycle counting,
+  SysTick interrupt roll-overs, CSR reads, and inline assembly stack inspection)
+  unverified. On-target checks run under QEMU through the `virtual-ets` gate
+  and on physical hardware via board examples; the harness that hosts them is specified
+  in `embedded-test-server-design.md` §4.3.
+
+---
 
 ### 6. Verification & Validation
 
-#### 6.1 Approach
+#### 6.1 Verification
 
-The implementation must produce evidence that cycle and time sources agree with
-each other and with the configured clock, that stack measurement never reads
-outside the stack region, and that the profiling wrapper's own overhead is
-small enough not to distort what it measures.
-
-| Method | Mechanism |
-|:-------|:----------|
-| Back-to-back comparison | `get_cycles()` delta against `get_nanos()` across a proven delay loop (`cortex_m::asm::delay`) |
-| Requirements-based test | `#[test]` on mock profilers over wraparound, zero-length and maximal intervals |
-| Requirements-based test | `#[test]` over every combination of the target's hard-float, single-precision and double-precision properties for the `fpu_flags` default |
-| Static analysis | Linker-symbol bounds check on `paint_stack` and `read_stack_peak` against `_stack_start` and `_stack_end` |
-| Metamorphic relation | Painting then running a known-depth call chain; measured peak must increase monotonically with depth |
-| Resource usage evaluation | Overhead of the generic wrapper and the critical-section closure, measured in cycles |
-| On-target execution | ETS suites on every supported architecture |
-| Static analysis | `cargo clippy-ci`; inspection for allocation |
-| Coverage measurement | `cargo coverage` on mock-profiler paths |
-
-Target: 85% line coverage of the host-testable profiler logic, measured with
-`cargo coverage`.
-
-Excluded: target-specific register reads, which require hardware or an
-emulator; and the painting routine itself, whose effect is observed through the
-peak measurement rather than through line execution.
-
-* **On-target suite**: Run the profiling suite on a physical Teensy 4.1 and
-  under QEMU for each architecture, confirming cycle, duration and stack
-  figures are produced and self-consistent.
-* **User implementation**: Implement the trait for a board outside this
-  workspace following §4.3 and confirm the ETS reports its telemetry unchanged.
+| Condition | Requirement | Method    | Target                                                                                          | Criterion                                                                                                       |
+|:----------|:------------|:----------|:------------------------------------------------------------------------------------------------|:------------------------------------------------------------------------------------------------|
+| VC-1.2    | FR-1        | `gate`    | `build`                                                                                         | ARMv6-M (`thumbv6m-none-eabi`) compiles cleanly without DWT dependencies with `has_clock` returning false       |
+| VC-1.3    | FR-1        | `gate`    | `virtual-ets`                                                                                   | On target, cycles advance monotonically across a known delay |
+| VC-2.1    | FR-2        | `gate`    | `virtual-ets`                                                                                   | On target, elapsed nanoseconds advance monotonically          |
+| VC-2.2    | FR-2        | `libtest` | `control_rs_ets::profiler::tests::test_systick_nanos_boundary_cases`                            | Sub-microsecond and rollover boundary timer samples convert cleanly without arithmetic underflow or timestamp jitter |
+| VC-2.3    | FR-2        | `libtest` | `control_rs_ets::profiler::tests::test_naive_systick_rollover_flaw_and_hardened_resolution`     | SysTick hardware counter reload and pending IRQ rollovers do not cause backward time jumps or non-monotonic values |
+| VC-3.1    | FR-3        | `gate`    | `virtual-ets`                                                                                   | On target, `get_sp` lies within the linker stack limits  |
+| VC-4.1    | FR-4        | `libtest` | `control_rs_ets::profiler::tests::test_default_profiler_methods`                                 | Stack sentinel painting and peak scanning on synthetic buffer detects watermark displacement without corruption |
+| VC-4.2    | FR-4        | `gate`    | `virtual-ets`                                                                                   | On target, the measured peak covers real call frames      |
+| VC-4.3    | FR-4, NFR-2 | `libtest` | `control_rs_ets::profiler::tests::test_stack_paint_exhaustion_clamp` | When `sp` is at or below `stack_end`, `paint_stack` writes no memory and `read_stack_peak` returns 0 |
+| VC-4.4    | FR-4        | `libtest` | `control_rs_ets::profiler::tests::test_default_profiler_methods`                                 | Untouched sentinel words remain intact during high-watermark scanning, reporting zero usage (0 B) when no frames are displaced |
+| VC-7.1    | FR-7        | `libtest` | `control_rs_ets::profiler::tests::test_default_profiler_methods`                                 | `disable_interrupts` executes the supplied closure and returns its value, and `disable_interrupts_permanently` completes without panic |
+| VC-7.2    | FR-7        | `gate`    | `virtual-ets`                                                                                   | On target, `disable_interrupts` masks hardware interrupts during test execution and restores interrupt state upon return |
+| VC-7.3    | FR-9        | `libtest` | `control_rs_ets::profiler::tests::test_run_profiled_composition`                                 | `run_profiled` verifies call order, asserts interrupts disabled across `run_clock`, and returns accurate `TestMetrics` |
+| VC-7.4    | FR-9        | `libtest` | `control_rs_ets::profiler::tests::test_run_profiled_unmasked_composition`                        | `run_profiled_unmasked` verifies call order, asserts interrupts remain unmasked across `run_clock`, and returns accurate `TestMetrics` |
+| VC-8.1    | FR-8        | `libtest` | `control_rs_ets::util::tests::test_handle_failure_comms_disabled`                               | Target reset and exit hooks are invoked on catastrophic failure and virtual runner teardown |
+| VC-8.2    | FR-8        | `gate`    | `virtual-ets`                                                                                   | On target under QEMU, `exit` and `reset` hooks cleanly terminate or restart the virtual target |
+| VC-10.1   | NFR-1       | `gate`    | `virtual-ets` | Cycle and nanosecond hooks execute deterministically without dynamic allocation or unbounded loops across target architectures |
+| VC-11.1   | NFR-2       | `libtest` | `control_rs_ets::profiler::tests::test_default_profiler_methods`                                 | Sentinel writes operate strictly within `[stack_end, sp]`, never writing above `sp`                                  |
+| VC-12.1   | C-1         | `gate`    | `clippy`                                                                                        | The `clippy` quality gate outcome reports `Pass`, verifying `#![no_std]` without heap allocation                |
+| VC-13.1   | C-2         | `gate`    | `build`, `virtual-ets` | `control-rs-ets` compiles for the host and links into the QEMU firmware for `thumbv7em-none-eabihf`, `thumbv7em-none-eabi`, `riscv32imac-unknown-none-elf` and `riscv64gc-unknown-none-elf` |
 
 #### 6.2 Acceptance
 
 | Claim | Oracle | Measure | Bound |
 |:------|:-------|:--------|:------|
-| Cycle and time agreement | `cortex_m::asm::delay(n)` at a known core frequency | Relative error between the cycle delta and the derived nanoseconds | ≤ 1% over intervals ≥ 10,000 cycles |
-| Counter wraparound | Mock profiler stepped across the 32-bit boundary | Reported delta | Correct modulo the counter width, never negative |
-| Stack bounds | Linker symbols `_stack_start`, `_stack_end` | Addresses touched by paint and scan | All within `[_stack_end, _stack_start]` |
-| Peak monotonicity | Call chains of increasing known depth | Reported peak | Non-decreasing with depth |
-| Wrapper overhead | Empty measured region | Cycles attributed to the wrapper | ≤ 1% of the shortest measured interval in the suite |
+| Cycle and time agreement | `cortex_m::asm::delay(n)` at a known core frequency | Relative error between the cycle delta and the derived nanoseconds | ≤ 1% for $T \ge 100(r + \delta/f)$ up to maximum masked duration |
+| Stack bounds | Linker symbols `_stack_start`, `_stack_end` queried | Addresses touched by paint and scan | All within `[_stack_end, _stack_start]`, paint stops at `sp` |
+| Peak monotonicity | Calibrated call chains of increasing known depth | Reported peak | Non-decreasing with depth, matching frame bounds with 4 B resolution and 0 B untouched baseline |
+| Wrapper overhead | Empty measured region on target | Cycles attributed to the wrapper | ≤ 50 clock cycles |
 
-The cycle bound applies only above 10,000 cycles because at shorter intervals
-the wrapper overhead is a significant fraction of the measurement, which is the
-same reason the overhead itself is bounded.
+The agreement bound applies for intervals above the floor $T \ge 100(r + \delta/f)$
+because at shorter intervals tare dispatch overhead $\delta$ and timer quantization
+$r$ dominate relative error.
 
 #### 6.3 Limits
 
@@ -325,64 +430,56 @@ same reason the overhead itself is bounded.
   not claimed to be comparable to each other.
 - Long-interval measurement. Nothing bounds error accumulation across intervals
   longer than one counter period.
+- ARMv8-M builds. No gate builds an ARMv8-M target, so C-2 is shown for
+  ARMv7-M, RV32, RV64 and the host only.
 
 ### 7. Performance and Resource Considerations
 
-* **Hook latency**: The `get_cycles()` and `get_nanos()` hooks must execute
-  deterministically and as close to zero-overhead as possible (typically within
-  a few clock cycles).
-* **Closure Execution Overhead**: The `disable_interrupts<F, R>` wrapper
-  introduces critical section overhead. Implementations must minimize the setup
-  and teardown instructions around the closure to avoid artificially elevating
-  interrupt latency or masking real-time deadlines.
-* **Scan Time Complexity**: The `read_stack_peak()` method relies on scanning
-  memory linearly for sentinel values. This operation is $O(N)$ relative to the
-  size of the stack and executes during post-test reporting to avoid perturbing
-  active test execution.
+| Limit | Formula or value | Class |
+|:--|:--|:--|
+| Counter width $w$ | DWT: 32; RISC-V `mcycle`: 64; ESP32-C6 `mpccr`: 32; ARMv6-M: none | Hardware |
+| Cycle resolution | $1/f$ | Hardware |
+| Cycle range | $(2^w - 1)/f$ | Hardware |
+| Duration resolution $r$ | $r = \max(1\ \text{ns}, 1/f_t)$ | Fixed / Hardware |
+| Dispatch tare offset $\delta$ | $\le 50$ cycles | Chosen |
+| Dispatch tare spread | $\le 4$ cycles | Chosen |
+| Agreement floor | $T \ge 100(r + \delta/f)$ ($\le 1\%$ relative error) | Derived |
+| Maximum masked duration | One time-base period $T_{\text{tick}}$ without interrupts ($1\ \text{ms}$ nominal) (D3) | Hardware |
+| Stack resolution; guard | 4 B; 0 B guard (zero-frame paint to `sp`) | Fixed |
+| FPU exception frame | Extended frame of 26 words ($104/108\ \text{B}$) | Hardware |
+
+- **Agreement floor**: Below $100(r + \delta/f)$, tare dispatch overhead $\delta$ and timer quantization $r$ exceed 1% relative error.
+- **Maximum masked duration (D3)**: The hardware down-counter covers one tick interval $T_{\text{tick}}$ ($1\ \text{ms}$ nominal); `get_nanos()` recovers at most one pending rollover flag without interrupts. Masked cases longer than $T_{\text{tick}}$ report valid cycle counts up to $(2^w - 1)/f$, but wall-clock duration under-reports unless unmasked.
+- **Zero-frame stack guard**: Using `options(nostack)` with scratch registers ensures no stack frame or return address is allocated below `sp`, guaranteeing true 0 B guard for leaf calls.
+- **FPU exception frame**: Cores with an active FPU push an extended frame of 26 words ($104/108\ \text{B}$) [13, §B1.5.7] during hardware exception entry.
 
 ---
 
 ### 8. Risks and Open Questions
 
 * **Register Overflows**: `CortexMProfiler::get_cycles()` casts the 32-bit DWT
-  counter to `u64` with no wraparound handling; at typical core clocks it
-  wraps within seconds to tens of seconds. `dwt-systick-monotonic`'s `extend`
-  technique (compare against last reading, track the high 32 bits, driven by a
-  periodic interrupt) is a proven reference implementation; verify against
-  `rtic-monotonics` (its actively maintained successor) before committing,
-  since `dwt-systick-monotonic` last released in 2022. Open question whether
-  ETS's polling cadence is frequent enough to observe every
-  wraparound without a dedicated interrupt. On RISC-V, RV32's `mcycle` is also
-  32 bits (with a separate `mcycleh` CSR); whether `RiscvProfiler` combines
-  them into a full 64-bit value is unverified.
+  counter to `u64`. At typical core clock frequencies (hundreds of MHz), the
+  32-bit counter rolls over within tens of seconds. Test cases measured by ETS
+  run for bounded millisecond durations well below the rollover period.
 * **ARMv6-M Support**: `cortex-m` gates `DWT::cycle_count()` behind
-  `#[cfg(not(armv6m))]`: Cortex-M0/M0+ have no DWT cycle counter, so
-  `CortexMProfiler` as written fails to compile on those cores. Open question
-  whether ARMv6-M is in scope: if so, a SysTick-derived fallback (the
-  `rtic-monotonics` pattern, lower resolution) is required; if not, record the
-  restriction as an explicit non-goal.
+  `#[cfg(not(armv6m))]`. Cortex-M0/M0+ have no DWT cycle counter. `CPUProfiler::has_clock()`
+  informs the caller that cycle clock profiling is unavailable on ARMv6-M.
 * **Stack Bounds Calculation**: Determining the absolute bottom of the stack
   safely requires linker script symbols or target-specific runtime boundaries.
   Board-level implementations must standardize linker symbol exports to prevent
   boundary miscalculation.
-* **Clock Skew and Power Saving**: Running tests in reduced-power or
-  dynamic-frequency states alters hardware cycle counters and timer prescalers,
-  degrading profiling accuracy. Test suites requiring high-precision timing
-  must enforce fixed core frequencies.
-* **Unsafe Code Proliferation**: Users must implement unsafe functions for
-  their profiler to work. Link-time protection (`flip-link`) can complement,
-  but not remove, the unsafe paint/scan implementations.
 
 ---
 
 ### 9. Development Plan
 
-| Task / Feature                           | Description                                                                                                     | Status / Effort |
-|:-----------------------------------------|:----------------------------------------------------------------------------------------------------------------|:----------------|
-| **Step 1: Trait & Target Impls**         | Define `CPUProfiler` and implement `CortexMProfiler`/`RiscvProfiler` in `control-rs-ets::profiler`.             | Shipped         |
-| **Step 2: Overflow-Safe Cycle Counting** | Add DWT wraparound handling (extend technique) and verify RV32 `mcycle`/`mcycleh` combination.                  | 0.5 day         |
-| **Step 3: ARMv6-M Decision**             | Either add a SysTick-only fallback for Cortex-M0/M0+ or document the restriction as a non-goal.                 | 0.5 day         |
-| **Step 4: Overflow Protection** | Evaluate `flip-link` complementary protection. Static-analyzer integration is dropped with that design (withdrawn 2026-09-14). | 1.0 day |
+| Phase | Delivers | Requirements | Effort | Status |
+|:------|:---------|:-------------|:-------|:-------|
+| 1. Core Trait & Hardware Target Impls | `CPUProfiler` trait and `HostCPUProfiler` mock | FR-1, FR-2, FR-3, FR-4, FR-7, FR-8, NFR-1, NFR-2, C-1 | 3 days | Shipped |
+| 2. Architecture Compatibility & Fallback | ARMv6-M (`has_clock` false), RISC-V, ARMv7-M, ARMv8-M support | FR-1, C-2 | 2 days | Shipped |
+| 3. Hardware SysTick Resolution & Rollover Hardening | `calculate_systick_nanos`, pending IRQ rollover detection | FR-2, NFR-1 | 2 days | Shipped |
+| 4. Stack High-Watermark Painting & Bounds Inspection | `paint_stack`, `read_stack_peak`, safety margin bounds | FR-3, FR-4, NFR-2 | 2 days | Shipped |
+| 5. Composed Execution Runners | `run_profiled`, `run_profiled_unmasked`, and `TestMetrics` in profiler | FR-9 | 1 day | Planned |
 
 ---
 
@@ -391,9 +488,8 @@ same reason the overhead itself is bounded.
 | Revision | Date               | Author          | Description                                                        |
 |:---------|:-------------------|:----------------|:-------------------------------------------------------------------|
 | 1.0      | August 29, 2026    | @MitchellDScott | `CPUProfiler` trait with DWT and `mcycle` cycle counters.          |
-| 2.0      | September 18, 2026 | @MitchellDScott | Moved to `documentation/ets/`; citation and structure pass.        |
-| 3.0      | September 25, 2026 | @MitchellDScott | `TargetInfo` provided methods; static-analyzer references removed. |
-| 4.0      | October 1, 2026    | @MitchellDScott | Host-testable `fpu_flags` default.                                 |
+| 2.0 | November 8, 2026 | @MitchellDScott, Claude Opus 5.5, Antigravity | Bound strictly to hardware CPUProfiler hooks (cycles, nanoseconds, stack painting/bounds, interrupt isolation, target reset/exit). Pruned CycleClock, JitterStats, and ProfileStats to ETS-3. Affects FR-1, FR-5, FR-6, FR-7, FR-8. |
+| 3.0 | November 18, 2026 | Antigravity | Report durations in nanoseconds, calculate cycles modulo 2^w, and specify limits in §7. Affects FR-9. |
 
 ---
 
@@ -422,3 +518,7 @@ same reason the overhead itself is bounded.
 [11] rtic-rs, *rtic-monotonics* (Version 2.2.1). [Online]. Available: https://docs.rs/rtic-monotonics/latest/rtic_monotonics/systick/. Accessed: Aug. 7, 2026.
 
 [12] SEGGER Microcontroller GmbH, "What is SystemView?," *SEGGER product documentation*. [Online]. Available: https://www.segger.com/products/development-tools/systemview/technology/what-is-systemview/. Accessed: Aug. 7, 2026.
+
+[13] Arm Limited, "Armv7-M Architecture Reference Manual," ARM DDI 0403E.e, 2021.
+[Online]. Available: https://developer.arm.com/documentation/ddi0403/latest.
+Accessed: Oct. 13, 2026.

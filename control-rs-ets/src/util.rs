@@ -410,6 +410,16 @@ mod tests {
         assert_eq!(suites.len(), 2);
         assert_eq!(suites.first().unwrap().name, "s1");
         assert_eq!(suites.get(1).unwrap().name, "s2");
+
+        // Boundary: empty section (start == end)
+        let empty = unsafe { get_suites(start, start) };
+        assert_eq!(empty.len(), 0);
+        assert!(empty.is_empty());
+
+        // Boundary: reversed pointers (stop < start) saturate to zero length without underflow
+        let reversed = unsafe { get_suites(end, start) };
+        assert_eq!(reversed.len(), 0);
+        assert!(reversed.is_empty());
     }
 
     #[test]
