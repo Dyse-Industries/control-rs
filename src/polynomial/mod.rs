@@ -34,9 +34,9 @@
     clippy::too_many_arguments
 )]
 
-#[cfg(any(test, feature = "ets"))]
+#[cfg(test)]
 /// Polynomial module unit tests.
-pub mod tests;
+mod tests;
 
 use crate::math::complex_num::Complex;
 use crate::math::dsp::{Convolution, DefaultDsp};

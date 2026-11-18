@@ -374,7 +374,7 @@ whose `mac` issues the target's fused instruction, shipped beside
 `CmsisDspBlas` in `examples/subprograms/thumbv7em/` (§9). `MulAcc` is a
 separate trait rather than a `Scalar` supertrait, so existing `Scalar`
 implementors outside the crate do not break; consumers bound
-`T: Scalar + MulAcc`. [ADR-0003](../adr/0003-mul-acc-accumulation-primitive.md)
+`T: Scalar + MulAcc`. [ADR-0002](../adr/0002-mul-acc-accumulation-primitive.md)
 records the decision.
 
 ---
@@ -623,7 +623,7 @@ for Complex<T>`). Every implementor must name `Real` and provide
     `Signed::abs` uses `saturating_abs`, so `MIN` saturates to `MAX` instead of
     panicking in debug builds and wrapping in release builds. A component
     type that implements `Neg` without `SaturatingNeg` no longer has `conj`
-    (ADR-0003).
+    (ADR-0002).
 
 ---
 
@@ -649,7 +649,7 @@ for Complex<T>`). Every implementor must name `Real` and provide
 | 2.0      | September 24, 2026 | @MitchellDScott                    | Total arithmetic contract (FR-6).                                                            |
 | 3.0      | September 25, 2026 | @MitchellDScott                    | `Quantized` is `Scalar` only where `1` is representable.                                     |
 | 4.0      | October 16, 2026   | @MitchellDScott, Claude Sonnet 5.5 | Multiply accumulate (FR-7) and the test-suite verification table.                            |
-| 5.0      | October 19, 2026   | @MitchellDScott, Claude Sonnet 5.5 | `MulAcc` cites ADR-0003; integer coverage and saturating `conj` and `abs`.                   |
+| 5.0      | October 19, 2026   | @MitchellDScott, Claude Sonnet 5.5 | `MulAcc` cites ADR-0002; integer coverage and saturating `conj` and `abs`.                   |
 | 6.0 | October 23, 2026 | Antigravity, @MitchellDScott, Claude Opus 5.5 | Negative-trait conditions use compile_fail doctests; doc-status targets name the document ID. |
 | 6.1 | October 23, 2026 | @MitchellDScott, Antigravity | Migrate circular self-targeting conditions to gate method. |
 

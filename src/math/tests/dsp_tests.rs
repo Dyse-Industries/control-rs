@@ -18,7 +18,6 @@ mod dsp_debug_contract_tests {
     }
 }
 
-#[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod dsp_test_suite {
     #![allow(clippy::indexing_slicing)]
 
@@ -116,7 +115,7 @@ pub mod dsp_test_suite {
 
     // --- Convolution Tests ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies convolution calculation against the identity (impulse of amplitude 1) kernel.
     fn test_dsp_convolution_identity() {
         let input = [1.0, 2.0, 3.0];
@@ -128,7 +127,7 @@ pub mod dsp_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies convolution with a shifted/delayed impulse.
     fn test_dsp_convolution_with_impulse() {
         let input = [1.0, 2.0, 3.0];
@@ -141,7 +140,7 @@ pub mod dsp_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies convolution between two boxcar signals.
     fn test_dsp_convolution_boxcar() {
         let input = [1.0, 1.0];
@@ -154,7 +153,7 @@ pub mod dsp_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_dsp_convolve_dimension_mismatch() {
         let input = [1.0, 2.0];
         let kernel = [1.0, 1.0];
@@ -165,7 +164,7 @@ pub mod dsp_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies convolution handles empty input or empty kernel arrays gracefully.
     fn test_dsp_convolution_empty() {
         let input = [];
@@ -179,7 +178,7 @@ pub mod dsp_test_suite {
         DefaultDsp::convolve_input(&input2, &kernel2, &mut output2).unwrap();
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// An empty operand returns early and leaves a non-empty output untouched.
     fn test_dsp_convolution_empty_operand_leaves_output() {
         let mut out_a = [9.0_f64; 3];
@@ -191,7 +190,7 @@ pub mod dsp_test_suite {
         assert!(out_b.iter().all(|v| (*v - 9.0).abs() < f64::EPSILON));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Leaves `output[expected_len..]` unchanged when the buffer is longer
     /// than `input_len + kernel_len - 1`.
     fn test_dsp_convolution_leftover_output_tail() {
@@ -207,7 +206,7 @@ pub mod dsp_test_suite {
         _assert_close(output[4], 99.0, 0.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Integer [`Scalar`] convolution through [`DefaultDsp`].
     fn test_dsp_convolution_integer_scalar() {
         let input = [1i32, 2, 3];
@@ -219,23 +218,23 @@ pub mod dsp_test_suite {
 
     // --- FFT / IFFT Tests ---
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies forward FFT of a time-domain impulse signal results in flat frequency magnitude.
     fn test_dsp_fft_impulse() {
         _fft_impulse_is_ones::<FFT_N>();
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_dsp_fft_impulse_n1() {
         _fft_impulse_is_ones::<1>();
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_dsp_fft_impulse_n16() {
         _fft_impulse_is_ones::<FFT_N16>();
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Isolates [`FFT::fft_complex`] on a complex impulse.
     fn test_dsp_fft_complex_impulse() {
         let mut data = [Complex::<f64>::default(); FFT_N];
@@ -248,7 +247,7 @@ pub mod dsp_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies forward FFT of a DC (constant 1.0) signal concentrated in the zero-frequency bin.
     fn test_dsp_fft_dc() {
         let input = [1.0; FFT_N];
@@ -267,7 +266,7 @@ pub mod dsp_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_dsp_fft_asymmetric_ramp() {
         // Analytical 4-point DFT of [1.0, 2.0, 3.0, 4.0]:
         // X[0] = 1 + 2 + 3 + 4 = 10
@@ -288,7 +287,7 @@ pub mod dsp_test_suite {
         _assert_close(output[3].im, -2.0, tol);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Cosine at bin `k=1` occupies bins 1 and `N-1` with amplitude `N/2`.
     fn test_dsp_fft_known_bin_sinusoid() {
         let n_f = f64::from(u32::try_from(FFT_N).unwrap());
@@ -313,7 +312,7 @@ pub mod dsp_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_dsp_fft_parseval() {
         let mut input = [0.0f64; FFT_N];
         for (i, val) in input.iter_mut().enumerate() {
@@ -323,7 +322,7 @@ pub mod dsp_test_suite {
         _parseval_real_fft(&[1.0; FFT_N16]);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     fn test_dsp_fft_hermitian_symmetry() {
         let mut input = [0.0f64; FFT_N];
         for (i, val) in input.iter_mut().enumerate() {
@@ -337,7 +336,7 @@ pub mod dsp_test_suite {
         _hermitian_real_fft(&input16);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies that running forward FFT and then inverse IFFT returns the original signal.
     fn test_dsp_fft_ifft_roundtrip() {
         let mut input = [0.0f64; FFT_N];
@@ -357,7 +356,7 @@ pub mod dsp_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies implementation of the Map and Bijection traits on [`DefaultDsp`].
     fn test_dsp_fft_map_and_bijection_traits() {
         let time_signal = [1.0, 0.0, 0.0, 0.0];
@@ -367,7 +366,7 @@ pub mod dsp_test_suite {
         _assert_close(recovered[0], 1.0, _fft_tol(4));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies Continuous/Discrete associated-type round-trip and Map wiring.
     fn test_dsp_continuous_discrete_roundtrip() {
         let plant = DummyContinuous;

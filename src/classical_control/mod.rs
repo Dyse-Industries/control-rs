@@ -49,6 +49,9 @@ pub mod response;
 pub mod routh;
 pub mod step;
 
+#[cfg(test)]
+mod tests;
+
 /// Canonical type-level encoding of `Const<N>`.
 pub(crate) type TypeNum<const N: usize> = <Const<N> as Dim>::TypeNum;
 
@@ -126,11 +129,4 @@ impl From<RootError> for ClassicalError {
     fn from(e: RootError) -> Self {
         Self::Root(e)
     }
-}
-
-/// Force-linked ETS suite descriptors of the realization and PID tests.
-#[cfg(all(feature = "ets", not(test)))]
-pub mod suites {
-    pub use super::pid::tests::SUITE_DESCRIPTOR_PTR as pid;
-    pub use super::realization::tests::SUITE_DESCRIPTOR_PTR as realization;
 }

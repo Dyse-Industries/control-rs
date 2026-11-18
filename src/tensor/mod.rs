@@ -37,9 +37,9 @@
     clippy::missing_safety_doc
 )]
 
-#[cfg(any(test, feature = "ets"))]
+#[cfg(test)]
 /// Tensor module unit tests.
-pub mod tests;
+mod tests;
 
 pub use crate::math::fixed_num::Quantized;
 use crate::math::num_traits::{Float, Scalar, Zero};

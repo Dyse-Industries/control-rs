@@ -40,9 +40,9 @@
 pub mod decomposition;
 pub mod specialized;
 
-#[cfg(any(test, feature = "ets"))]
+#[cfg(test)]
 /// Matrix module unit tests.
-pub mod tests;
+mod tests;
 
 pub use decomposition::{
     CholeskyDecomposition, LdltDecomposition, LuDecomposition, QrDecomposition,

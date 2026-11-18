@@ -1,4 +1,4 @@
-//! Process-level tests of the `valgrind`, `regression` and `ets` binaries.
+//! Process-level tests of the `valgrind` and `regression` binaries.
 //!
 //! The external tools they drive (`cargo`, `valgrind`) are replaced by small
 //! shell scripts placed first on `PATH`.
@@ -15,8 +15,6 @@ mod tool_process {
     const BUDGETS: &str = "[budgets]\n\"x/*\" = \"1 ms\"\n";
 
     const CLEAN_VALGRIND: &str = "exit 0";
-
-    const ETS_BIN: &str = env!("CARGO_BIN_EXE_ets");
 
     const REGRESSION_BIN: &str = env!("CARGO_BIN_EXE_regression");
 
@@ -174,38 +172,6 @@ mod tool_process {
         let text = text(&out);
         assert!(text.contains("verification FAILED: 1/1"), "{text}");
         assert!(text.contains("exceeded cycle budget"), "{text}");
-        let _ = fs::remove_dir_all(&root);
-    }
-
-    // --- ets --------------------------------------------------------------------
-
-    #[test]
-    fn ets_help_prints_usage() {
-        let root = scratch("ets_help");
-        let out = run(ETS_BIN, &root, &["--help"]);
-        assert_eq!(out.status.code(), Some(0));
-        assert!(text(&out).contains("Usage:"));
-        let _ = fs::remove_dir_all(&root);
-    }
-
-    #[test]
-    fn ets_fails_and_records_a_target_that_cannot_run() {
-        let root = scratch("ets_fail");
-        let out = run(
-            ETS_BIN,
-            &root,
-            &[
-                "--out",
-                "results.json",
-                "teensy",
-                "--port",
-                "/dev/control-rs-no-such-port",
-            ],
-        );
-        assert_eq!(out.status.code(), Some(1), "{}", text(&out));
-        assert!(text(&out).contains("1 of 1 target(s)"));
-        let recorded = fs::read_to_string(root.join("results.json")).unwrap();
-        assert!(recorded.contains("\"passed\": false"), "{recorded}");
         let _ = fs::remove_dir_all(&root);
     }
 }

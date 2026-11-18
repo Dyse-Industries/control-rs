@@ -215,7 +215,7 @@ editing tools; and any systems-engineering view.
    condition may name multiple:
 
    | Method            | Target format                                  | Result log (`target/ci-artifacts/`)                                      |
-            |:------------------|:-----------------------------------------------|:-------------------------------------------------------------------------|
+                  |:------------------|:-----------------------------------------------|:-------------------------------------------------------------------------|
    | `libtest`         | `crate::module::tests::test_name`              | `test.log` (`test <path> ... ok`)                                        |
    | `libtest` doctest | `crate::<file> - <item>`                       | `test.log` (`test <file> - <item> (line N) ... ok`)                      |
    | `kani`            | `crate::module::proofs::harness_name`          | `kani.log` (`Checking harness <path>...`)                                |

@@ -1,4 +1,4 @@
-# ADR-0003: Accumulate recurrences through the `MulAcc` trait
+# ADR-0002: Accumulate recurrences through the `MulAcc` trait
 
 ![Date Badge](https://img.shields.io/badge/Date-October_16,_2026-blue)
 ![Status Badge](https://img.shields.io/badge/ADR%20Status-Proposed-orange)

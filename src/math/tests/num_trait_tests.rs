@@ -21,7 +21,6 @@
 //! fallback tests exercise implementation details of the `Trig`/`Float`
 //! traits rather than a separately numbered requirement.
 
-#[cfg_attr(not(test), control_rs_macros::ets_suite)]
 pub mod num_trait_test_suite {
     use crate::assert_almost_eq;
     use crate::math::CartesianQuadrant2D;
@@ -352,7 +351,7 @@ pub mod num_trait_test_suite {
         }
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// `Scalar::clamp` bounds a value; equality returns the value unchanged.
     fn test_scalar_clamp_bounds() {
         // Called through the trait: `f64::clamp` would shadow the method.
@@ -367,7 +366,7 @@ pub mod num_trait_test_suite {
         assert_eq!(clamp(0.0, -1.0, -0.0), 0.0_f64.to_bits());
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies properties of the Scalar trait across all supported
     /// primitive types (FR-3 of `num-traits-design.md`).
     fn test_num_trait_scalar_properties() {
@@ -391,7 +390,7 @@ pub mod num_trait_test_suite {
         assert_eq!(Scalar::clamp(7_u8, 0, 3), 3);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies Conjugate and Scalar projection methods across real and complex numbers (FR-3/FR-5 of `num-traits-design.md`).
     fn test_num_trait_conjugate_and_scalar_projections() {
         // Real scalars: conjugation is identity
@@ -411,7 +410,7 @@ pub mod num_trait_test_suite {
         assert_almost_eq!(z.abs2(), 25.0);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies commutative, associative, distributive and identity axioms
     /// of the Integer trait (FR-2 of `num-traits-design.md`).
     fn test_num_trait_integer_axioms() {
@@ -420,7 +419,7 @@ pub mod num_trait_test_suite {
         _check_integer_axioms(&3_u8, &4_u8, &5_u8);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies commutative, associative, distributive and identity axioms
     /// of the Float trait (FR-2 of `num-traits-design.md`).
     fn test_num_trait_float_axioms() {
@@ -428,7 +427,7 @@ pub mod num_trait_test_suite {
         _check_float_axioms(&2.0f64, &3.0f64, &4.0f64);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies the `AdditiveGroup` opt-in (identity and inverse) for signed
     /// integers, floats and `Complex<T>`, none of which are exercised by
     /// the Integer/Float axiom checks above (FR-1 of
@@ -439,7 +438,7 @@ pub mod num_trait_test_suite {
         _check_additive_group_axioms(&Complex::new(1.0f32, 2.0f32));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies `CartesianQuadrant2D` coordinate parsing for cardinal directions and quadrants.
     fn test_num_trait_cartesian_plane_quadrants_legacy() {
         assert_eq!(
@@ -480,7 +479,7 @@ pub mod num_trait_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies general Float trait properties including NAN/INF behavior
     /// and epsilons and drives the `Radical`/`Exponential`/`Trig` property
     /// checks (FR-1 + FR-2 of `num-traits-design.md`).
@@ -489,21 +488,19 @@ pub mod num_trait_test_suite {
         _float_property_check::<f64>();
     }
 
-    #[cfg(test)]
     #[test]
     #[should_panic(expected = "Input is outside the mathematical domain")]
     fn _test_float_f32_panics() {
         _radical_property_panic_check::<f32>();
     }
 
-    #[cfg(test)]
     #[test]
     #[should_panic(expected = "Input is outside the mathematical domain")]
     fn _test_float_f64_panics() {
         _radical_property_panic_check::<f64>();
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies standard identities (one/zero) for floating point and
     /// integer types (FR-1 of `num-traits-design.md`).
     fn test_num_trait_identities_zero_one() {
@@ -518,7 +515,7 @@ pub mod num_trait_test_suite {
         assert!(!1i32.is_zero());
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies sign-checking methods (positive/negative) for floating
     /// point types (FR-1 of `num-traits-design.md`, `Signed`).
     fn test_num_trait_sign_positive_negative() {
@@ -531,7 +528,7 @@ pub mod num_trait_test_suite {
         assert!(!0.0f32.is_sign_negative());
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies hypotenuse (Euclidean distance) calculations.
     fn test_num_trait_hypot_length() {
         let a = 3.0f32;
@@ -539,7 +536,7 @@ pub mod num_trait_test_suite {
         assert_almost_eq!(a.hypot(b), 5.0, 1e-5_f32);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies custom atan2 implementation outputs across boundary angles and quadrants.
     fn test_num_trait_atan2_quadrants() {
         // Origin
@@ -582,7 +579,7 @@ pub mod num_trait_test_suite {
         ); // Q4
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies hyperbolic functions (cosh, sinh) for floating point numbers.
     fn test_num_trait_hyperbolic_functions() {
         // cosh
@@ -598,7 +595,7 @@ pub mod num_trait_test_suite {
         assert!((sinh_val_neg - expected_sinh_neg).abs() < 1e-6);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies absolute value behavior of standard integers, including
     /// saturating `|MIN| -> MAX` (FR-1 of `num-traits-design.md`, `Signed`).
     fn test_num_trait_integer_absolute_value() {
@@ -625,7 +622,7 @@ pub mod num_trait_test_suite {
         assert_eq!(Signed::abs(-1isize), 1isize);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies custom Cartesian quadrant mapping logic.
     fn test_num_trait_cartesian_quadrants_custom() {
         // Standard Quadrants
@@ -653,14 +650,14 @@ pub mod num_trait_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Statically verifies the compile-time presence of `Unsigned`,
     /// `Integer` and `SaturatingInteger` on every unsigned primitive
     /// (FR-1 + FR-2 of `num-traits-design.md`).
     /// `AdditiveGroup`/`Signed` being withheld from these same types is a
     /// negative compile-time property, verified separately by the
     /// `compile_fail` doctest on `num_traits`'s module documentation
-    /// (this suite lives behind `#[cfg(any(test, feature = "ets"))]`,
+    /// (this suite lives behind `#[cfg(test)]`,
     /// which `rustdoc` doctest extraction does not set).
     fn test_num_trait_unsigned_integer_markers() {
         fn assert_is_unsigned_integer<
@@ -676,7 +673,7 @@ pub mod num_trait_test_suite {
         assert_is_unsigned_integer::<usize>();
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Statically verifies the compile-time presence of `Scalar` on every
     /// integer and float primitive, signed and unsigned (FR-3 of
     /// `num-traits-design.md`).
@@ -699,7 +696,7 @@ pub mod num_trait_test_suite {
         assert_is_scalar::<f64>();
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies the default atan2 implementation fallback branches on custom `TestFloat` type.
     fn test_num_trait_default_atan2_fallbacks() {
         let two = TestFloat(2.0);
@@ -734,7 +731,7 @@ pub mod num_trait_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies cartesian quadrant parsing compilation coverage on f32 and f64.
     fn test_num_trait_cartesian_plane_axis_coords_coverage() {
         // Test f32 axis combinations explicitly
@@ -774,7 +771,7 @@ pub mod num_trait_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies fallible math operations (TryAdd/Sub/Mul/Div) on complex
     /// numbers, transitively exercising `Complex<T>: Scalar` (FR-3 of
     /// `num-traits-design.md`).
@@ -804,7 +801,7 @@ pub mod num_trait_test_suite {
         )
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies the float `MulAcc` is the unfused multiply and add, bit for
     /// bit (`num-traits-design.md` FR-7).
     fn test_mul_acc_float_unfused() {
@@ -816,7 +813,7 @@ pub mod num_trait_test_suite {
         assert_eq!(got32.to_bits(), (lhs32 * rhs32 + acc32).to_bits());
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies integer chains keep an intermediate sum outside `[MIN, MAX]`
     /// exactly and clamp once (`num-traits-design.md` FR-7).
     fn test_mul_acc_integer_exact_chain() {
@@ -840,7 +837,7 @@ pub mod num_trait_test_suite {
         );
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies `Complex<T>` components equal the four-term formula exactly
     /// (`num-traits-design.md` FR-7).
     fn test_mul_acc_complex_formula() {
@@ -851,7 +848,7 @@ pub mod num_trait_test_suite {
         assert_eq!(got, Complex::new(5 + 2 * -4 - 3 * 7, -3 + 2 * 7 + 3 * -4));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies `Complex` integer `MulAcc` keeps the exact `Acc` product when
     /// an imaginary part is `T::MIN` (`num-traits-design.md` FR-7).
     fn test_mul_acc_complex_min_imag() {
@@ -878,7 +875,7 @@ pub mod num_trait_test_suite {
         assert_eq!(got, Complex::new(22_768, 0));
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies `Complex<Fixed>` `MulAcc` keeps the exact `Acc` product when
     /// an imaginary part is `MIN` and `MAX` (`num-traits-design.md` FR-7).
     fn test_mul_acc_complex_fixed_full_scale() {
@@ -894,7 +891,7 @@ pub mod num_trait_test_suite {
         assert_eq!(Complex::<Q>::from_acc(acc).re.to_bits(), 1);
     }
 
-    #[cfg_attr(test, test)]
+    #[test]
     /// Verifies an external type implementing `MulAcc` compiles against a
     /// generic `T: Scalar + MulAcc` consumer (`num-traits-design.md` FR-7).
     fn test_mul_acc_open_trait() {

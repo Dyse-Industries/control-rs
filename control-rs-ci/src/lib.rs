@@ -27,8 +27,6 @@ pub mod diff_trigger;
 
 pub mod error;
 
-pub mod ets;
-
 pub mod gate;
 
 pub mod metrics;

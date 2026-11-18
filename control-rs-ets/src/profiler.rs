@@ -59,7 +59,7 @@ pub trait CPUProfiler {
     /// Disables interrupts and runs the given closure, returning its result.
     ///
     /// This ensures that the test function is executed without interruption, preventing context
-    /// switches or interrupt service routines (ISRs) from corrupting the timing/cycle measurements.
+    /// switches or interrupt service routines from corrupting the timing/cycle measurements.
     ///
     /// # Generic Arguments
     /// * `F` - A closure with no arguments.
@@ -408,7 +408,7 @@ impl CPUProfiler for RiscvProfiler {
     }
 
     fn disable_interrupts_permanently(&self) {
-        // SAFETY: Disabling global interrupts permanently is safe and ensures that no ISRs execute
+        // SAFETY: Disabling global interrupts permanently is safe and ensures that no ISR executes
         // during panic/failure recovery.
         unsafe {
             riscv::interrupt::disable();
