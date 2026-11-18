@@ -253,6 +253,7 @@ Wiels
 Wittenmark
 Wray
 Wycheproof
+Xtensa
 Yiu
 Zarantonello
 Zaytseva
@@ -454,6 +455,7 @@ nextest
 noether
 nonsymmetric
 normwise
+ns
 num
 numCols
 numRows
@@ -485,6 +487,7 @@ px
 rdesarz
 reachability
 readback
+rebases
 reconnections
 recurse
 recurses
@@ -493,6 +496,9 @@ reflashing
 reimplement
 reimplementing
 representability
+rescan
+rescanning
+rescans
 retagged
 retagging
 retarget

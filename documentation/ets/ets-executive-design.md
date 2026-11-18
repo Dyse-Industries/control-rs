@@ -35,7 +35,7 @@ parameter mutation.
   `Passed`, `Failed`) for every executed case.
 - **FR-4 - Target Profiling & Resource Measurement**: The executive profiling
   bracket shall dispatch execution based on the case's profile arm: measuring
-  elapsed CPU clock cycles, monotonic execution duration in microseconds and
+  elapsed CPU clock cycles, monotonic execution duration in nanoseconds and
   peak
   stack memory consumption under critical section isolation for `Profile::Full`,
   under unmasked interrupts for `Profile::Unmasked`, and executing bare `f()`
@@ -64,8 +64,8 @@ parameter mutation.
   the suite dispatch abstraction must introduce minimal latency (bounded to
   fewer than 20 clock cycles on target architectures) so as not to distort
   micro-benchmark timings.
-- **NFR-2 - Microsecond Telemetry Timestamp Precision**: Diagnostic error logs
-  and execution metrics must derive timestamps with microsecond resolution
+- **NFR-2 - Nanosecond Telemetry Timestamp Precision**: Diagnostic error logs
+  and execution metrics must report timestamps and durations with nanosecond resolution
   from monotonic platform nanosecond clocks.
 - **NFR-3 - Timing-Critical Zero-Allocation Logging**: The executive logging,
   state transition, metric reporting, and discovery streaming paths must format
@@ -78,9 +78,8 @@ parameter mutation.
   (`control-rs-ets`) must compile on bare-metal targets under `#![no_std]` with
   strictly zero dynamic heap allocation.
 - **C-2 - Bounded Flash and RAM Footprint**: The target executive implementation
-  (excluding test payloads) must consume under 32 KB Flash memory and under 8 KB
-  RAM, with zero-suite baseline static RAM under 2 KB and test suite descriptors
-  residing in Flash ROM.
+  (excluding test payloads) must operate within the Flash and RAM ceilings
+  specified in §7, with test suite descriptors residing in Flash ROM.
 
 ---
 
@@ -267,7 +266,7 @@ self .context.comms.send_telemetry( & Telemetry::MetricReport {
 suite_id,
 test_id,
 cycles: m.cycles,
-time_us: m.time_us,
+time_ns: m.time_ns,
 stack_peak: m.stack_peak,
 }) ?;
 }
@@ -288,12 +287,12 @@ sequenceDiagram
         Server ->> + Prof: run_profiled(test_fn) [paint, disable_interrupts, run_clock, scan]
         Prof ->> + Test: Invoke test_fn()
         Test -->> - Prof: Return
-        Prof -->> - Server: TestMetrics { cycles, time_us, stack_peak }
+        Prof -->> - Server: TestMetrics { cycles, time_ns, stack_peak }
     else Profile::Unmasked
         Server ->> + Prof: run_profiled_unmasked(test_fn) [paint, run_clock, scan]
         Prof ->> + Test: Invoke test_fn()
         Test -->> - Prof: Return
-        Prof -->> - Server: TestMetrics { cycles, time_us, stack_peak }
+        Prof -->> - Server: TestMetrics { cycles, time_ns, stack_peak }
     else Profile::Off
         Server ->> + Test: Invoke test_fn()
         Test -->> - Server: Return
@@ -301,7 +300,7 @@ sequenceDiagram
     Server ->> Ind: set_idle(), set_idle() [δ_ctx_idle]
     Server ->> Host: Telemetry::TestStateChange (TestState::Passed) [δ_tx_pass]
     opt If metrics present (Full or Unmasked)
-        Server ->> Host: Telemetry::MetricReport { cycles, time_us, stack_peak } [δ_tx_metric]
+        Server ->> Host: Telemetry::MetricReport { cycles, time_ns, stack_peak } [δ_tx_metric]
     end
     Server ->> Host: flush()
 ```
@@ -404,10 +403,7 @@ pub fn handle_failure<C: HostComms, P: CPUProfiler>(
 
 `FailureBufWriter` guarantees zero dynamic heap allocation and enforces strict
 capacity limits, cleanly truncating messages that exceed 256 bytes without
-panicking or writing out of bounds. This 256-byte message buffer, combined with
-up to 128 bytes for forensic file/line location and 16 bytes for wire metadata,
-guarantees that forensic failure reports fit entirely within the 512-byte
-single-frame payload ceiling (`host-comm` C-2).
+panicking or writing out of bounds.
 
 #### 4.6. Platform Struct: Hardware Identity
 
@@ -483,7 +479,7 @@ the execution loop:
 | VC-2.3    | FR-2        | `libtest` | `control_rs_ets::server::tests::test_server_discovery`                                     | Discovery command streams target info, suites, executables, and settings                                                                                                                                                                                                                 |
 | VC-3.1    | FR-3        | `libtest` | `control_rs_ets::server::tests::test_server_run_test`                                      | Test execution emits `Running` and `Passed` lifecycle transitions; FR-3 holds iff both conditions hold                                                                                                                                                                                   |
 | VC-3.2    | FR-3        | `libtest` | `control_rs_ets::server::tests::test_index_indicator`                                      | Thread-safe atomic indicators track active suite and test indices and reset to idle                                                                                                                                                                                                      |
-| VC-4.1    | FR-4        | `libtest` | `control_rs_ets::server::tests::profiling_reports_elapsed_cycles_and_microseconds`         | Execution bracket reports non-zero elapsed cycles, microsecond duration, and stack peak; FR-4 holds iff all conditions hold                                                                                                                                                              |
+| VC-4.1    | FR-4        | `libtest` | `control_rs_ets::server::tests::profiling_reports_elapsed_cycles_and_nanoseconds`          | Execution bracket reports non-zero elapsed cycles, nanosecond duration, and stack peak; FR-4 holds iff all conditions hold                                                                                                                                |
 | VC-4.2    | FR-4        | `libtest` | `control_rs_ets::server::tests::test_server_metric_report_flush_error`                     | Metric report transmission flushes telemetry frames to host transport                                                                                                                                                                                                                    |
 | VC-4.3    | FR-4        | `libtest` | `control_rs_ets::server::tests::test_host_cpu_profile_utils`                               | Profiler execution bracket exercises cycle and duration measurement hooks                                                                                                                                                                                                                |
 | VC-4.4    | FR-4        | `libtest` | `control_rs_ets::server::tests::test_server_profile_arms`                                  | 3-row table-driven test verifying executive dispatch across `Full`, `Unmasked`, and `Off`: `Full` runs with masked interrupts and sends MetricReport; `Unmasked` runs with unmasked interrupts and sends MetricReport; `Off` runs bare and sends no MetricReport while emitting `Passed` |
@@ -499,7 +495,7 @@ the execution loop:
 | VC-7.2    | FR-7        | `libtest` | `control_rs_ets::server::tests::test_server_ok_to_reset`                                   | Cooperative reset command triggers target reset sequence                                                                                                                                                                                                                                 |
 | VC-7.3    | FR-7        | `libtest` | `control_rs_ets::server::tests::test_server_exit`                                          | Exit routine closes communications before invoking target exit hook                                                                                                                                                                                                                      |
 | VC-10.1   | NFR-1       | `libtest` | `control_rs_ets::server::tests::test_server_run_test`                                      | Indirect case dispatch via function pointer introduces low latency                                                                                                                                                                                                                       |
-| VC-10.2   | NFR-2       | `libtest` | `control_rs_ets::server::tests::log_timestamps_are_in_microseconds`                        | Diagnostic error logs and execution metrics derive timestamps with microsecond resolution                                                                                                                                                                                                |
+| VC-10.2   | NFR-2       | `libtest` | `control_rs_ets::server::tests::log_timestamps_are_in_nanoseconds`                         | Diagnostic error logs and execution metrics derive timestamps with nanosecond resolution                                                                                                                                                                  |
 | VC-10.3   | NFR-3       | `libtest` | `control_rs_ets::util::tests::the_buffer_writer_fills_its_buffer_exactly_and_refuses_more` | Formatting and logging operate with zero dynamic heap allocations on hot path                                                                                                                                                                                                            |
 | VC-26.1   | C-1         | `gate`    | `build`                                                                                    | `control-rs-ets` compiles cleanly for bare-metal targets under `#![no_std]`                                                                                                                                                                                                              |
 | VC-26.2   | C-2         | `libtest` | `control_rs_ets::tests::test_flash_descriptor_sizes`                                       | Descriptors and runtime state structures reside within bounded memory footprints                                                                                                                                                                                                         |
@@ -522,21 +518,34 @@ the execution loop:
   cannot be preempted by `Command::TryReset`; infinite loops in test cases
   require
   hardware watchdog timer reset or external reset line.
-- **Fixed 256-byte panic buffer (`L-2`)**: `FailureBufWriter` formats payloads
-  into a static 256-byte stack buffer; longer messages truncate cleanly at 256
-  bytes.
+- **Fixed panic buffer (`L-2`)**: `FailureBufWriter` formats payloads into a
+  static stack buffer sized per §7; longer messages truncate cleanly at buffer
+  capacity without panicking.
 
 ---
 
 ### 7. Performance & Resource Considerations
 
-- **Zero Allocations**: All formatting and dispatch routines operate strictly on
-  stack or static buffers.
-- **Microsecond Clock Precision**: Profiling durations derive directly from
-  hardware timer nanoseconds converted to microseconds.
-- **Footprint**: Compiled executive logic contributes fewer than 12 KB Flash
-  and under 2 KB static RAM overhead; complete runtime with parameter buffers stays
-  bounded within 8 KB RAM.
+| Limit | Formula or value | Class |
+|:--|:--|:--|
+| Core Flash ceiling | $\le 32$ KB | Chosen |
+| Executive Flash share | $\le 12$ KB | Chosen |
+| Core static RAM, zero suites | $\le 2$ KB | Chosen |
+| Core peak stack | $\le 2$ KB | Chosen |
+| Runtime RAM ceiling | $\le 8$ KB | Chosen |
+| Suite capacity | 65,536 IDs (65,535 user suites + `diagnostics` at 0) | Fixed |
+| Idle poll interval | $\le 100\ \mu\text{s}$ | Chosen |
+| Fault record transmission start | $\le 1\ \text{ms}$ | Chosen |
+| Fault target reset or halt | $\le 1\ \text{s}$ | Chosen |
+| Software reset latency | $\le 10\ \text{ms}$ | Chosen |
+| Target ready post-reset | $\le 1\ \text{s}$ | Chosen |
+| Emulator exit latency | $\le 100\ \text{ms}$ | Chosen |
+
+- **Footprint budget**: 12 KB executive + 20 KB buffer/profiler/comms fits within 32 KB Flash; 2 KB static RAM + 2 KB stack leaves 4 KB headroom inside 8 KB ceiling.
+- **Latency budgets**: 100 µs idle poll balances responsiveness with CPU load; 1 s timeout bounds unacknowledged crash recovery.
+- **Nanosecond precision**: All telemetry timestamps and durations are reported in integer nanoseconds (`time_ns`).
+
+*All executive routines operate on statically allocated memory with zero dynamic heap allocation.*
 
 ---
 
@@ -563,7 +572,7 @@ the execution loop:
 | Revision | Date              | Author          | Description                                                                                                                                            |
 |:---------|:------------------|:----------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------|
 | 1.0      | November 10, 2026 | @MitchellDScott | Initial component design doc extracted from lead subsystem architecture.                                                                               |
-| 1.1      | November 17, 2026 | Antigravity     | Add 3-arm profile dispatch, conditional metric reporting, and VC-4.4. Affects C-1, C-2, FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, NFR-1, NFR-2, NFR-3. |
+| 2.0 | November 18, 2026 | Antigravity | Report durations in nanoseconds, relocate panic partition sentence to host-comm, and specify footprint in §7. Affects C-1, C-2, FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, NFR-1, NFR-2, NFR-3. |
 
 ---
 

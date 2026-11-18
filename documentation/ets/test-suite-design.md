@@ -380,21 +380,6 @@ static SUITE: SuiteDescriptor = SuiteDescriptor {
 static SUITE_PTR: &SuiteDescriptor = &SUITE;
 ```
 
-#### 4.6. Memory Layout and Descriptor Size Bounds
-
-Serves: FR-1, FR-4, NFR-1
-
-To guarantee zero static RAM consumption at idle and bounded Flash ROM overhead, descriptors and parameter cells follow deterministic Rust type layout rules [7], [8]:
-
-* **Dynamically Sized Types & Fat Pointers**: Under standard Rust layout, slice references (`&[T]`) and string slices (`&str`) are fat pointers composed of two machine words: address and length [7]. Function pointers (`fn()`) have the ABI, size, and alignment of a single C function pointer (`usize`) [8].
-* **Descriptor Size Invariants (Excluding Strings)**:
-  - `ExecDescriptor` (name, desc, `fn()`, `Profile`): At 32-bit: $2 \times 8\text{ B}$ (two fat pointers) + 4 B (`fn()` pointer) + 1 B (`Profile` enum) + 3 B padding $\le 24\text{ B}$. At 64-bit: $2 \times 16\text{ B} + 8\text{ B} + 1\text{ B} + 7\text{ B} \le 48\text{ B}$.
-  - `ConstantDescriptor` (name, desc, `SettingValue`): At 32-bit: $\le 32\text{ B}$; at 64-bit: $\le 48\text{ B}$.
-  - `SettingDescriptor` (name, desc, `Setting` wrapper): At 32-bit: $\le 28\text{ B}$; at 64-bit: $\le 56\text{ B}$.
-  - `SuiteDescriptor` (name, desc, 3 slice references + section pointer): At 32-bit: $\le 44\text{ B}$; at 64-bit: $\le 88\text{ B}$.
-* **`TripleBuffer<T>` Bounds**: Holds three contiguous slots of type `T` plus an atomic state byte (`AtomicU8`), rounded up to the alignment of `T`:
-  $$\text{size\_of::<TripleBuffer<T>>()} \le 3 \cdot \text{size\_of::<T>()} + 1,\quad \text{rounded up to } \text{align\_of::<T>()}$$
-
 ---
 
 ### 5. Alternatives
@@ -467,10 +452,23 @@ To guarantee zero static RAM consumption at idle and bounded Flash ROM overhead,
 
 ### 7. Performance & Resource Considerations
 
-* **ROM/RAM Overhead**: To operate within strict bare-metal budgets, all suite
-  and case metadata resides strictly in Flash. `TripleBuffer<T>` setting wrappers
-  allocate no dynamic heap and require only static triple-buffer slots and a
-  single atomic state byte (or a single `UnsafeCell<T>` slot on ARMv6-M) in RAM.
+| Limit | Formula or value | Class |
+|:--|:--|:--|
+| Suite Flash footprint | $(11 + 6n_c + 7n_s)W + (4W + 16)n_k$ | Derived |
+| `SuiteDescriptor` size | $11W$ (44 B at $W = 4$; 88 B at $W = 8$) | Derived |
+| `ExecDescriptor` size | $6W$ (24 B at $W = 4$; 48 B at $W = 8$) | Derived |
+| `ConstantDescriptor` size | $4W + 16$ (32 B at $W = 4$; 48 B at $W = 8$) | Derived |
+| `Setting` size | $7W$ (28 B at $W = 4$; 56 B at $W = 8$) | Derived |
+| Setting RAM (`TripleBuffer<T>`) | $\lceil (3s + 1)/a \rceil a$; $s$ without CAS | Derived |
+| Metadata static RAM | 0 B | Fixed |
+| Setting primitive types | 8 primitives (`bool`, `f32`, `i8`, `i32`, `u8`, `u16`, `u32`, `u64`) | Fixed |
+
+- **`ExecDescriptor` layout ($6W$)**: $2 \times 2W$ (`&str`) $+ W$ (`fn()`) $+ 1\text{ B}$ (`Profile`) $+ (W - 1)\text{ B}$ padding.
+- **`ConstantDescriptor` layout ($4W + 16$)**: $2 \times 2W$ (`&str`) $+ 16\text{ B}$ (`SettingValue`).
+- **`Setting` layout ($7W$)**: $2 \times 2W$ (`&str`) $+ 1W$ (`*const ()`) $+ 2 \times 1W$ (`fn()` pointers).
+- **`SuiteDescriptor` layout ($11W$)**: $2 \times 2W$ (`&str`) $+ 3 \times 2W$ (slices) $+ W$ (linker section pointer `SUITE_PTR`).
+- **`TripleBuffer<T>` RAM**: 3 slots of size $s$ plus 1 byte atomic tag, aligned to $a$: $\lceil (3s + 1)/a \rceil a$. Without CAS, single slot of size $s$.
+- **Zero static RAM at idle**: Compiled suite, case, and constant metadata reside in Flash ROM (`.rodata`), contributing 0 B to `.data` and `.bss`.
 
 ---
 
@@ -506,7 +504,7 @@ To guarantee zero static RAM consumption at idle and bounded Flash ROM overhead,
 | 1.0      | August 29, 2026   | @MitchellDScott                               | Initial exportable test suite design with linker-section discovery.                                                                                                                                                                 |
 | 2.0      | November 14, 2026 | @MitchellDScott, Antigravity, Claude Opus 5.5 | Replace suite and setting requirements with suite descriptors, read-only constants, triple-buffer dynamic settings, and distributed discovery. Affects C-1, C-2, C-3, FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, FR-8, NFR-1, NFR-2. |
 | 3.0      | November 14, 2026 | @MitchellDScott, Antigravity                  | State suite, case, constant, setting, and discovery requirements as testable needs rather than architectural features. Affects C-1, C-2, C-3, FR-1, FR-2, FR-3, FR-4, FR-5, FR-6, FR-7, NFR-1, NFR-2.                               |
-| 3.1      | November 17, 2026 | Antigravity                                   | Add Profile arm to ExecDescriptor and test suite requirements. Affects FR-6, FR-7.                                                                                                                                                  |
+| 4.0 | November 18, 2026 | Antigravity | Relocate descriptor and setting memory layout bounds to §7 limits. Affects FR-6, FR-7. |
 
 ---
 

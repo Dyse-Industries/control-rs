@@ -234,7 +234,7 @@ pub struct MetricReport {
     pub stack_peak: u32,
     pub suite_id: u16,
     pub test_id: u16,
-    pub time_us: u64,
+    pub time_ns: u64,
 }
 ```
 
@@ -327,20 +327,19 @@ integrity validation:
 * **Integrity Check**: A 2-byte (big-endian) CRC-16 checksum (calculated using
   `CRC_16_IBM_SDLC` [3], [7]) appended at the end of the frame payload, computed
   strictly over the `postcard` payload slice (`payload[..len]`).
-* **Error Detection Scope & Bounds**: By the burst-detection theorem [6, Theorem 2],
-  CRC-16 detects all burst errors of length $b \le 16\text{ bits}$. For random bit
-  inversions over payloads up to 512 bytes (4,096 bits), the 0x1021 polynomial
-  guarantees a minimum Hamming Distance of 4 ($HD \ge 4$), detecting all 1-, 2-, and
-  3-bit errors [5]. Header errors outside the CRC span are detected and rejected by
-  reader state validation: byte sequence desynchronization in the sync header resets
-  the reader to `WaitStart1`, and corrupted length prefixes that exceed the buffer
-  ceiling ($> 512\text{ B}$) immediately abort the frame.
+* **Resynchronization and Interleaved Log Preservation (D6)**: On a CRC-16
+  failure or invalid length prefix (> 512 B), the host `FrameReader` emits the
+  initial sync byte `0xAA` to the host log text sink and re-feeds the remaining
+  buffered bytes starting from `sync + 1` (`0x55`). This guarantees that
+  interleaved firmware log text remains exact even when raw log text happens to
+  contain the sync sequence `0xAA 0x55`, and bounds frame loss to at most the
+  single corrupted frame without requiring a header CRC. The target reader rescans
+  its internal buffer following the same pattern (without a log sink).
 * **Single-Pass Decoding**: The host `FrameReader` processes incoming streams
   statefully byte-by-byte, checking for the sync header, validating lengths and
   confirming the CRC-16 checksum before deserializing. Stream bytes received
-  outside a frame while waiting in `WaitStart1` are forwarded to host log output
-  (printed by the runner and displayed in the TUI log pane) while the reader
-  continues decoding telemetry frames.
+  outside a frame while waiting in `WaitStart1` are forwarded directly to host
+  log output while the reader continues decoding telemetry frames.
 
 #### 4.5. Target Peripheral Driver Integration
 
@@ -448,11 +447,27 @@ Target: 90% line coverage of the `comms` module, measured with
 
 ### 7. Performance & Resource Considerations
 
-* **Buffer Bounds**: Message buffers are sized to `MAX_FRAME_SIZE = 518` bytes,
-  fitting comfortably in small embedded RAM targets without dynamic heap.
-* **Deterministic Single-Pass Framing**: Framing and CRC-16 calculations execute
-  in bounded linear time over static buffers without memory allocation, ensuring
-  minimal jitter on active execution loops.
+| Limit | Formula or value | Class |
+|:--|:--|:--|
+| Payload ceiling $P$ | $\le 512$ B | Chosen |
+| Framing overhead | 6 B ($2\text{ B sync} + 2\text{ B len} + 2\text{ B CRC}$) | Fixed |
+| Frame capacity | $P + 6 \le 518$ B | Derived |
+| Record capacity | 65,536 (`u16` id) | Fixed |
+| Discovery partition | Name $\le 64$ B; Description $\le 384$ B; IDs 16 B; Headroom 48 B | Derived |
+| Fault record partition | Location $\le 128$ B; Message $\le 256$ B; Metadata 16 B; Headroom 112 B | Derived |
+| CRC-16 error detection | $HD \ge 4$ for payload $\le 512$ B (4,096 bits); all bursts $\le 16$ bits | Derived |
+| Frame loss per event | $\le 1$ frame (via sync rescan mechanism) | Derived |
+| Serialization jitter | $\le 10\ \mu\text{s}$ ($10^{-5} f$ cycles) | Chosen |
+| UART 115,200 rate | $R = 11,520$ B/s ($45.0\text{ ms}$ per 518-B frame) | Protocol |
+| USB FS bulk rate | $R = 1,216,000$ B/s ($0.43\text{ ms}$ per 518-B frame) | Hardware |
+| USB HS bulk rate | $R = 53,248,000$ B/s ($9.7\ \mu\text{s}$ per 518-B frame) | Hardware |
+
+- **Single-frame discovery and fault records**: $64 + 384 + 16 = 464\text{ B} \le 512\text{ B}$; $128 + 256 + 16 = 400\text{ B} \le 512\text{ B}$.
+- **Framing loss isolation**: Emitting `0xAA` on CRC failure and rescanning from `sync + 1` ensures at most the single corrupted frame is lost while keeping interleaved log text exact.
+- **Error detection**: Polynomial `0x1021` guarantees $HD \ge 4$ up to 4,096 bits [5] and catches all burst errors $\le 16$ bits.
+- **Jitter budget**: $10\ \mu\text{s}$ represents $\le 1\%$ of a 1 kHz control loop deadline ($1,000\ \mu\text{s}$).
+
+*All telemetry framing operates strictly on pre-allocated static buffers with zero dynamic heap allocation.*
 
 ---
 
@@ -463,11 +478,10 @@ Target: 90% line coverage of the `comms` module, measured with
   of sync headers and CRC-16 ensures corrupted packets are dropped rather than
   executed.
 * **Interleaved Log Stream Separation**: A `HostComms` implementation may carry
-  firmware log text and telemetry packets across a single shared stream. If raw
-  log text contains the two-byte sequence `0xAA 0x55`, CRC-16 verification
-  rejects the false frame start and the reader resynchronizes cleanly, ensuring
-  an interleaved byte stream emerges as exactly the original log text and exactly
-  the valid telemetry frames.
+  firmware log text and telemetry packets across a single shared stream. Under
+  mechanism D6, if log text contains `0xAA 0x55`, CRC-16 failure causes `0xAA` to
+  be forwarded as log text while the reader rescans from `0x55`, guaranteeing that
+  no log characters are dropped and telemetry decoding recovers immediately.
 
 ---
 
@@ -486,7 +500,7 @@ Target: 90% line coverage of the `comms` module, measured with
 |:---------|:------------------|:----------------|:-------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | 1.0      | August 29, 2026   | @MitchellDScott | `HostComms` transport trait, telemetry framing and the `serial2` host transport.                                                                                   |
 | 2.0      | November 8, 2026  | @MitchellDScott | Requirement traceability matrix, PROTOCOL_VERSION and TargetInfo wire contract, and golden wire vectors. Affects C-2, FR-2, FR-3, FR-6, FR-9, NFR-1, NFR-2, NFR-3. |
-| 3.0 | November 18, 2026 | Antigravity | Clarify CRC-16 payload coverage, burst error and Hamming distance detection bounds. Affects FR-7. |
+| 3.0 | November 18, 2026 | Antigravity | Adopt D6 sync rescan mechanism, report durations in nanoseconds, and relocate protocol limits to §7. Affects FR-7. |
 
 ---
 

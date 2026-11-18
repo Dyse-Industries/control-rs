@@ -24,7 +24,7 @@ reference backends for ARM Cortex-M, RISC-V, and host targets.
 - **FR-4 — Stack High-Watermark Measurement**: The profiler must determine peak stack memory consumption during execution by painting unused stack memory with a sentinel pattern and detecting the deepest watermark displacement. Painting must remain bounded between the stack boundary and the frame safety threshold.
 - **FR-7 — Test Interrupt Isolation**: The profiler must support scoped interrupt disabling (`disable_interrupts`) during critical test execution and permanent interrupt disabling (`disable_interrupts_permanently`) upon panic or fatal failure.
 - **FR-8 — Target Lifecycle Control**: The profiler must provide target control hooks to initiate a warm system reset (`reset`) or terminate execution in virtualized environments (`exit`).
-- **FR-9 — Composed Test Profiling**: The profiler must provide composed execution runners: `run_profiled` (combining stack tracking with interrupt-isolated cycle/nanosecond timing) and `run_profiled_unmasked` (combining stack tracking with unmasked cycle/nanosecond timing), returning `TestMetrics` containing elapsed cycles, peak stack depth, and duration in microseconds.
+- **FR-9 — Composed Test Profiling**: The profiler must provide composed execution runners: `run_profiled` (combining stack tracking with interrupt-isolated cycle/nanosecond timing) and `run_profiled_unmasked` (combining stack tracking with unmasked cycle/nanosecond timing), returning `TestMetrics` containing elapsed cycles, peak stack depth, and duration in nanoseconds (`time_ns`).
 
 #### 2.2 Non-Functional Requirements
 
@@ -90,8 +90,8 @@ pub struct TestMetrics {
     pub cycles: u64,
     /// Peak stack usage in bytes.
     pub stack_peak: u32,
-    /// Elapsed wall-clock time in microseconds.
-    pub time_us: u64,
+    /// Elapsed wall-clock time in nanoseconds.
+    pub time_ns: u64,
 }
 ```
 
@@ -153,7 +153,8 @@ pub trait CPUProfiler {
         f();
         let t1 = self.get_nanos();
         let c1 = self.get_cycles();
-        (c1.saturating_sub(c0), t1.saturating_sub(t0))
+        // Difference modulo 2^w ensures wrapped counter reads report true count.
+        (c1.wrapping_sub(c0), t1.saturating_sub(t0))
     }
 
     /// Executes a closure inside a stack-painted bracket, returning the closure result and peak stack usage in bytes.
@@ -179,7 +180,7 @@ pub trait CPUProfiler {
         TestMetrics {
             cycles,
             stack_peak,
-            time_us: nanos / 1000,
+            time_ns: nanos,
         }
     }
 
@@ -190,7 +191,7 @@ pub trait CPUProfiler {
         TestMetrics {
             cycles,
             stack_peak,
-            time_us: nanos / 1000,
+            time_ns: nanos,
         }
     }
 }
@@ -224,10 +225,7 @@ conventional stack frame (saving `LR` or callee-saved registers below `sp`) and
 paints up to `sp`, it will overwrite its own return address with sentinels and trigger
 an immediate `HardFault` or trap upon return.
 
-On cores with an active hardware FPU, hardware exception entry pushes an extended
-frame of 26 words (104 or 108 B) [13, §B1.5.7]; full exception stack safety is
-verified statically via `cargo-call-stack` [9] rather than assuming the profiler
-guard covers an in-flight FPU exception.
+
 
 #### 4.2. Default Architecture Profilers and Dependency Gating
 
@@ -408,14 +406,14 @@ after the host sends `Command::TryReset`; on Cortex-M it is
 
 | Claim | Oracle | Measure | Bound |
 |:------|:-------|:--------|:------|
-| Cycle and time agreement | `cortex_m::asm::delay(n)` at a known core frequency | Relative error between the cycle delta and the derived nanoseconds | ≤ 1% over intervals ≥ 10,000 cycles |
+| Cycle and time agreement | `cortex_m::asm::delay(n)` at a known core frequency | Relative error between the cycle delta and the derived nanoseconds | ≤ 1% for $T \ge 100(r + \delta/f)$ up to maximum masked duration |
 | Stack bounds | Linker symbols `_stack_start`, `_stack_end` queried | Addresses touched by paint and scan | All within `[_stack_end, _stack_start]`, paint stops at `sp` |
 | Peak monotonicity | Calibrated call chains of increasing known depth | Reported peak | Non-decreasing with depth, matching frame bounds with 4 B resolution and 0 B untouched baseline |
 | Wrapper overhead | Empty measured region on target | Cycles attributed to the wrapper | ≤ 50 clock cycles |
 
-The cycle bound applies only above 10,000 cycles because at shorter intervals
-the wrapper overhead is a significant fraction of the measurement, which is the
-same reason the overhead itself is bounded.
+The agreement bound applies for intervals above the floor $T \ge 100(r + \delta/f)$
+because at shorter intervals tare dispatch overhead $\delta$ and timer quantization
+$r$ dominate relative error.
 
 #### 6.3 Limits
 
@@ -437,17 +435,23 @@ same reason the overhead itself is bounded.
 
 ### 7. Performance and Resource Considerations
 
-* **Hook latency**: The `get_cycles()` and `get_nanos()` hooks must execute
-  deterministically and as close to zero-overhead as possible (typically within
-  a few clock cycles).
-* **Closure Execution Overhead**: The `disable_interrupts<F, R>` wrapper
-  introduces critical section overhead. Implementations must minimize the setup
-  and teardown instructions around the closure to avoid artificially elevating
-  interrupt latency or masking real-time deadlines.
-* **Scan Time Complexity**: The `read_stack_peak()` method relies on scanning
-  memory linearly for sentinel values. This operation is $O(N)$ relative to the
-  size of the stack and executes during post-test reporting to avoid perturbing
-  active test execution.
+| Limit | Formula or value | Class |
+|:--|:--|:--|
+| Counter width $w$ | DWT: 32; RISC-V `mcycle`: 64; ESP32-C6 `mpccr`: 32; ARMv6-M: none | Hardware |
+| Cycle resolution | $1/f$ | Hardware |
+| Cycle range | $(2^w - 1)/f$ | Hardware |
+| Duration resolution $r$ | $r = \max(1\ \text{ns}, 1/f_t)$ | Fixed / Hardware |
+| Dispatch tare offset $\delta$ | $\le 50$ cycles | Chosen |
+| Dispatch tare spread | $\le 4$ cycles | Chosen |
+| Agreement floor | $T \ge 100(r + \delta/f)$ ($\le 1\%$ relative error) | Derived |
+| Maximum masked duration | One time-base period $T_{\text{tick}}$ without interrupts ($1\ \text{ms}$ nominal) (D3) | Hardware |
+| Stack resolution; guard | 4 B; 0 B guard (zero-frame paint to `sp`) | Fixed |
+| FPU exception frame | Extended frame of 26 words ($104/108\ \text{B}$) | Hardware |
+
+- **Agreement floor**: Below $100(r + \delta/f)$, tare dispatch overhead $\delta$ and timer quantization $r$ exceed 1% relative error.
+- **Maximum masked duration (D3)**: The hardware down-counter covers one tick interval $T_{\text{tick}}$ ($1\ \text{ms}$ nominal); `get_nanos()` recovers at most one pending rollover flag without interrupts. Masked cases longer than $T_{\text{tick}}$ report valid cycle counts up to $(2^w - 1)/f$, but wall-clock duration under-reports unless unmasked.
+- **Zero-frame stack guard**: Using `options(nostack)` with scratch registers ensures no stack frame or return address is allocated below `sp`, guaranteeing true 0 B guard for leaf calls.
+- **FPU exception frame**: Cores with an active FPU push an extended frame of 26 words ($104/108\ \text{B}$) [13, §B1.5.7] during hardware exception entry.
 
 ---
 
@@ -485,7 +489,7 @@ same reason the overhead itself is bounded.
 |:---------|:-------------------|:----------------|:-------------------------------------------------------------------|
 | 1.0      | August 29, 2026    | @MitchellDScott | `CPUProfiler` trait with DWT and `mcycle` cycle counters.          |
 | 2.0 | November 8, 2026 | @MitchellDScott, Claude Opus 5.5, Antigravity | Bound strictly to hardware CPUProfiler hooks (cycles, nanoseconds, stack painting/bounds, interrupt isolation, target reset/exit). Pruned CycleClock, JitterStats, and ProfileStats to ETS-3. Affects FR-1, FR-5, FR-6, FR-7, FR-8. |
-| 3.0 | November 17, 2026 | Antigravity | Add TestMetrics and composed run_profiled runners to CPUProfiler. Affects FR-9. |
+| 3.0 | November 18, 2026 | Antigravity | Report durations in nanoseconds, calculate cycles modulo 2^w, and specify limits in §7. Affects FR-9. |
 
 ---
 
